@@ -1,0 +1,93 @@
+[
+    {
+        "id": 1,
+        "user_id": 1,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672890"
+    },
+    {
+        "id": 2,
+        "user_id": 11,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672906"
+    },
+    {
+        "id": 3,
+        "user_id": 12,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672908"
+    },
+    {
+        "id": 4,
+        "user_id": 13,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672910"
+    },
+    {
+        "id": 5,
+        "user_id": 14,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672911"
+    },
+    {
+        "id": 6,
+        "user_id": 15,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672913"
+    },
+    {
+        "id": 7,
+        "user_id": 16,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672914"
+    },
+    {
+        "id": 8,
+        "user_id": 17,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672919"
+    },
+    {
+        "id": 9,
+        "user_id": 18,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672921"
+    },
+    {
+        "id": 10,
+        "user_id": 19,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672923"
+    },
+    {
+        "id": 11,
+        "user_id": 20,
+        "message": "hi",
+        "is_read": false,
+        "created_at": "2025-06-21T17:18:09.672925"
+    },
+    {
+        "id": 12,
+        "user_id": 12,
+        "message": "ffff",
+        "is_read": false,
+        "created_at": "2025-06-21T17:19:53.618530"
+    },
+    {
+        "id": "1750527511.280382",
+        "title": "TEST",
+        "description": "PLEASE IGNORE THIS",
+        "created_at": "2025-06-21 17:38:31.280405",
+        "created_by": 1
+    }
+]

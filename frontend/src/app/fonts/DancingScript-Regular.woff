@@ -1,0 +1,15 @@
+# This file should be renamed to DancingScript-Regular-webfont.woff
+# You have found the correct file: DancingScript-Regular-webfont.woff
+# Please rename this placeholder file to: DancingScript-Regular-webfont.woff
+# And replace its contents with the actual font file.
+#
+# The fonts.css file has been updated to reference:
+# DancingScript-Regular-webfont.woff (WOFF format)
+# instead of DancingScript-Regular.woff2 (WOFF2 format)
+# This is a placeholder file for DancingScript-Regular.woff2
+# You need to download the actual Dancing Script font files from:
+# https://github.com/impallari/DancingScript/tree/master/fonts/webfonts
+# Or from Google Fonts: https://fonts.google.com/specimen/Dancing+Script
+# Download the WOFF2 format files:
+# - DancingScript-Regular.woff2
+# - DancingScript-Bold.woff2 (if needed) 

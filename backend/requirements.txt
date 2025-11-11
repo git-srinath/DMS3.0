@@ -1,0 +1,7 @@
+Flask
+flask_cors
+oracledb
+sqlalchemy
+python-dotenv
+pandas
+openpyxl

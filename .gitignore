@@ -1,0 +1,33 @@
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Environment files
+.env
+*.env
+backend/.env
+frontend/.env.local
+
+# Python cache
+__pycache__/
+*.py[cod]
+backend/__pycache__/
+backend/modules/**/__pycache__/
+backend/database/__pycache__/
+
+# Logs and local data
+*.log
+backend/dwtool.log
+
+# Databases / generated files
+*.sqlite
+*.sqlite3
+backend/database/database_instance/sqlite_app.db
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Nested repo placeholder
+DMS/
