@@ -71,23 +71,37 @@ class DWToolLogger:
         username = self._get_username()
         return f"{timestamp} : {username} : {level} : {message}"
     
-    def info(self, message):
-        """Log an info message"""
+    def debug(self, message, *args):
+        """Log a debug message. Supports format strings: debug("format %s", arg)"""
+        if args:
+            message = message % args if '%' in message else message.format(*args)
+        formatted_message = self._format_message('debug', message)
+        if self._should_log(message):
+            self.logger.debug(formatted_message)
+    
+    def info(self, message, *args):
+        """Log an info message. Supports format strings: info("format %s", arg)"""
+        if args:
+            message = message % args if '%' in message else message.format(*args)
         formatted_message = self._format_message('info', message)
         if self._should_log(message):
             self.logger.info(formatted_message)
     
-    def warning(self, message):
-        """Log a warning message"""
+    def warning(self, message, *args):
+        """Log a warning message. Supports format strings: warning("format %s", arg)"""
+        if args:
+            message = message % args if '%' in message else message.format(*args)
         formatted_message = self._format_message('warning', message)
         if self._should_log(message):
             self.logger.warning(formatted_message)
     
-    def error(self, message, exc_info=False):
+    def error(self, message, *args, **kwargs):
         """
-        Log an error message
+        Log an error message. Supports format strings: error("format %s", arg)
         exc_info parameter is ignored - no tracebacks are included by default
         """
+        if args:
+            message = message % args if '%' in message else message.format(*args)
         formatted_message = self._format_message('error', message)
         # Always set exc_info to False to avoid tracebacks
         if self._should_log(message):
@@ -113,15 +127,22 @@ class DWToolLogger:
 logger = DWToolLogger()
 
 # Export the logger functions for easy import
-def info(message):
-    logger.info(message)
+def debug(message, *args):
+    """Log a debug message. Supports format strings: debug("format %s", arg)"""
+    logger.debug(message, *args)
 
-def warning(message):
-    logger.warning(message)
+def info(message, *args):
+    """Log an info message. Supports format strings: info("format %s", arg)"""
+    logger.info(message, *args)
 
-def error(message, exc_info=False):
-    # Ignore exc_info parameter, always pass False
-    logger.error(message, exc_info=False)
+def warning(message, *args):
+    """Log a warning message. Supports format strings: warning("format %s", arg)"""
+    logger.warning(message, *args)
+
+def error(message, *args, exc_info=False):
+    """Log an error message. Supports format strings: error("format %s", arg)"""
+    # exc_info parameter is ignored - no tracebacks are included by default
+    logger.error(message, *args)
 
 def exception(message):
     # Use error instead of exception to avoid traceback

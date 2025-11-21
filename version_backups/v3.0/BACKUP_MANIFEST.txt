@@ -1,0 +1,62 @@
+VERSION 3.0 BACKUP MANIFEST
+===========================
+Backup Date: November 13, 2025
+Status: Stable & Production Ready
+
+FILES TO BACKUP:
+================
+
+Backend Files:
+1. backend/modules/mapper/pkgdwmapr_python.py
+2. backend/modules/mapper/mapper.py  
+3. backend/modules/helper_functions.py
+4. backend/database/dbconnect.py
+
+Frontend Files:
+5. frontend/src/app/mapper_module/ReferenceForm.js
+
+Documentation Files:
+6. TARGET_CONNECTION_IMPLEMENTATION_COMPLETE.md
+7. TARGET_CONNECTION_PROGRESS.md
+8. TESTING_GUIDE.md
+9. VERSION_3.0_README.md (this directory)
+
+RESTORE INSTRUCTIONS:
+====================
+
+To restore from backup folder:
+-------------------------------
+1. Navigate to version_backups/v3.0/
+2. Copy files from backup to original locations:
+
+Backend:
+- Copy backend/modules/mapper/*.py to ../../backend/modules/mapper/
+- Copy backend/modules/*.py to ../../backend/modules/
+- Copy backend/database/*.py to ../../backend/database/
+
+Frontend:
+- Copy frontend/src/app/mapper_module/*.js to ../../frontend/src/app/mapper_module/
+
+To restore from ZIP archive (if created):
+-----------------------------------------
+1. Extract version_3.0_backup.zip
+2. Copy files to their respective locations as shown above
+3. Restart backend and frontend servers
+
+DATABASE REQUIREMENTS:
+=====================
+Ensure DWMAPR table has TRGCONID column:
+
+ALTER TABLE DWMAPR ADD (TRGCONID NUMBER);
+ALTER TABLE DWMAPR ADD CONSTRAINT FK_DWMAPR_TRGCONID 
+    FOREIGN KEY (TRGCONID) REFERENCES DWDBCONDTLS(CONID);
+
+VERIFICATION:
+============
+After restore, verify:
+- Backend starts without errors
+- Frontend compiles successfully
+- Mapper Module shows "Target Connection" dropdown
+- Connection selection is mandatory
+- Database operations work correctly
+

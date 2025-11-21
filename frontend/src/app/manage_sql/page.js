@@ -65,6 +65,11 @@ const ManageSQLPage = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
   const [validationStatus, setValidationStatus] = useState(null);
+  
+  // Connection states
+  const [connections, setConnections] = useState([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState(null);
+  const [fetchingConnections, setFetchingConnections] = useState(false);
 
   // SQL History states
   const [sqlHistory, setSqlHistory] = useState([]);
@@ -81,6 +86,7 @@ const ManageSQLPage = () => {
 
   useEffect(() => {
     fetchAllSqlCodes();
+    fetchConnections();
   }, []);
 
   const showSnackbar = (message, severity = 'info') => {
@@ -111,6 +117,26 @@ const ManageSQLPage = () => {
     }
   };
 
+  const fetchConnections = async () => {
+    setFetchingConnections(true);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/manage-sql/get-connections`);
+      const result = await response.json();
+      
+      if (Array.isArray(result)) {
+        setConnections(result);
+      } else {
+        console.error('Unexpected connections response:', result);
+        setConnections([]);
+      }
+    } catch (error) {
+      console.error('Error fetching connections:', error);
+      setConnections([]);
+    } finally {
+      setFetchingConnections(false);
+    }
+  };
+
   const fetchSqlLogic = async (sqlCode) => {
     if (!sqlCode) return;
     
@@ -122,18 +148,21 @@ const ManageSQLPage = () => {
       if (result.success) {
         setSqlContent(result.data.sql_content || '');
         setOriginalSqlContent(result.data.sql_content || '');
+        setSelectedConnectionId(result.data.connection_id || null);
         setValidationStatus(null);
         showSnackbar(`Successfully loaded SQL logic for ${sqlCode}`, 'success');
       } else {
         showSnackbar(result.message || 'Failed to fetch SQL logic', 'error');
         setSqlContent('');
         setOriginalSqlContent('');
+        setSelectedConnectionId(null);
       }
     } catch (error) {
       console.error('Error fetching SQL logic:', error);
       showSnackbar('Network error while fetching SQL logic', 'error');
       setSqlContent('');
       setOriginalSqlContent('');
+      setSelectedConnectionId(null);
     } finally {
       setFetchingLogic(false);
     }
@@ -180,7 +209,8 @@ const ManageSQLPage = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sql_content: sqlContent
+          sql_content: sqlContent,
+          connection_id: selectedConnectionId // Pass connection ID for validation
         })
       });
       
@@ -219,7 +249,11 @@ const ManageSQLPage = () => {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/manage-sql/save-sql`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql_code: codeToSave, sql_content: sqlContent }),
+        body: JSON.stringify({ 
+          sql_code: codeToSave, 
+          sql_content: sqlContent,
+          connection_id: selectedConnectionId // Include connection ID
+        }),
       });
       const result = await response.json();
       
@@ -248,6 +282,7 @@ const ManageSQLPage = () => {
     } else {
       setSqlContent('');
       setOriginalSqlContent('');
+      setSelectedConnectionId(null);
       setValidationStatus(null);
     }
   };
@@ -263,6 +298,7 @@ const ManageSQLPage = () => {
     setNewSqlCode('');
     setSqlContent('');
     setOriginalSqlContent('');
+    setSelectedConnectionId(null);
     setValidationStatus(null);
   };
   
@@ -335,11 +371,11 @@ const ManageSQLPage = () => {
       color: 'text.primary' // Use theme text color
     }}>
       <Container maxWidth={false} sx={{ py: 2, px: 3, mb: 4 }}>
-        {/* Top Control Bar - Removed the box container */}
+        {/* Top Control Bar - SQL Code and Connection on same line */}
         <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
           {isCreating ? (
             <>
-              <Grid item xs>
+              <Grid item xs={12} md={4}>
                 <TextField
                   label="New SQL Code Name"
                   variant="outlined"
@@ -350,24 +386,74 @@ const ManageSQLPage = () => {
                   helperText="No spaces allowed"
                 />
               </Grid>
-              <Grid item>
-                <Button onClick={handleCancelCreate} size="small">Cancel</Button>
+              <Grid item xs={12} md={4}>
+                <Autocomplete
+                  value={connections.find(conn => conn.conid === selectedConnectionId) || null}
+                  onChange={(event, newValue) => setSelectedConnectionId(newValue ? newValue.conid : null)}
+                  options={connections}
+                  getOptionLabel={(option) => `${option.connm} (${option.dbhost}/${option.dbsrvnm})`}
+                  loading={fetchingConnections}
+                  size="small"
+                  renderInput={(params) => (
+                    <Tooltip title="Select source database connection. Leave empty to use metadata connection.">
+                      <TextField {...params} label="Source Connection (Optional)" />
+                    </Tooltip>
+                  )}
+                  renderOption={(props, option) => (
+                    <Box component="li" {...props}>
+                      <Box>
+                        <Typography variant="body2" fontWeight="medium">{option.connm}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {option.dbhost} / {option.dbsrvnm}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Button onClick={handleCancelCreate} size="small" variant="outlined">Cancel</Button>
               </Grid>
             </>
           ) : (
             <>
-              <Grid item xs={6} md={4}>
+              <Grid item xs={12} md={3}>
                 <Autocomplete
                   value={selectedSqlCode}
                   onChange={handleSelectCode}
                   options={sqlCodes}
                   loading={fetchingCodes}
                   size="small"
-                  renderInput={(params) => <TextField {...params} label="Select SQL Code" />}
+                  renderInput={(params) => <TextField {...params} label="1. Select SQL Code" />}
                 />
               </Grid>
-              <Grid item>
-                <Box sx={{ display: 'flex', gap: 1 }}>
+              <Grid item xs={12} md={4}>
+                <Autocomplete
+                  value={connections.find(conn => conn.conid === selectedConnectionId) || null}
+                  onChange={(event, newValue) => setSelectedConnectionId(newValue ? newValue.conid : null)}
+                  options={connections}
+                  getOptionLabel={(option) => `${option.connm} (${option.dbhost}/${option.dbsrvnm})`}
+                  loading={fetchingConnections}
+                  size="small"
+                  renderInput={(params) => (
+                    <Tooltip title="Select source database connection. Leave empty to use metadata connection.">
+                      <TextField {...params} label="2. Source Connection (Optional)" />
+                    </Tooltip>
+                  )}
+                  renderOption={(props, option) => (
+                    <Box component="li" {...props}>
+                      <Box>
+                        <Typography variant="body2" fontWeight="medium">{option.connm}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {option.dbhost} / {option.dbsrvnm}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                />
+              </Grid>
+              <Grid item xs={12} md={5}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                   <Button 
                     onClick={handleViewHistory} 
                     disabled={!selectedSqlCode || fetchingHistory}
@@ -375,7 +461,7 @@ const ManageSQLPage = () => {
                     variant="outlined"
                     startIcon={<History />}
                     sx={{ 
-                      minWidth: '100px',
+                      minWidth: '90px',
                       height: '36px'
                     }}
                   >
@@ -387,7 +473,7 @@ const ManageSQLPage = () => {
                     variant="outlined"
                     startIcon={<Add />}
                     sx={{ 
-                      minWidth: '100px',
+                      minWidth: '90px',
                       height: '36px'
                     }}
                   >
@@ -400,7 +486,7 @@ const ManageSQLPage = () => {
                     variant="outlined"
                     startIcon={<Refresh />}
                     sx={{ 
-                      minWidth: '100px',
+                      minWidth: '90px',
                       height: '36px'
                     }}
                   >

@@ -10,10 +10,48 @@ import json
 import traceback
 from modules.logger import logger, info, warning, error, exception
 from datetime import datetime
+from modules.jobs.pkgdwprc_python import (
+    JobSchedulerService,
+    ScheduleRequest,
+    ImmediateJobRequest,
+    HistoryJobRequest,
+    SchedulerValidationError,
+    SchedulerRepositoryError,
+    SchedulerError,
+)
 dotenv.load_dotenv()
 ORACLE_SCHEMA = os.getenv("SCHEMA")
 # Create blueprint
 jobs_bp = Blueprint('jobs', __name__)
+
+
+def _parse_date(value):
+    if value in (None, "", "null"):
+        return None
+    try:
+        return datetime.strptime(value[:10], '%Y-%m-%d').date()
+    except ValueError as exc:
+        raise SchedulerValidationError(f"Invalid date format: {value}") from exc
+
+
+def _optional_int(value):
+    if value in (None, "", "null"):
+        return None
+    return int(value)
+
+
+def _parse_datetime(value):
+    if value in (None, "", "null"):
+        return None
+    try:
+        # Handle ISO strings with timezone or milliseconds
+        sanitized = value.replace('Z', '+00:00')
+        return datetime.fromisoformat(sanitized)
+    except ValueError:
+        try:
+            return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+        except ValueError as exc:
+            raise SchedulerValidationError(f"Invalid datetime format: {value}") from exc
 
 
 
@@ -443,367 +481,259 @@ def get_error_details(job_id):
 # save or update job schedule
 @jobs_bp.route('/save_job_schedule', methods=['POST'])
 def save_job_schedule():
+    data = request.json or {}
+    conn = None
     try:
-        data = request.json
-        
-        # Required fields
-        job_flow_id = data.get('JOBFLWID')
-        map_ref = data.get('MAPREF')
-        frequency_code = data.get('FRQCD')
-        frequency_day = data.get('FRQDD')
-        frequency_hour = data.get('FRQHH')
-        frequency_minute = data.get('FRQMI')
-        start_date = data.get('STRTDT')
-        end_date = data.get('ENDDT')
-        
         conn = create_oracle_connection()
-
-        # Ensure job is disabled before saving the new schedule details
-
-
-
-        try:
-            cursor = conn.cursor()
-            # Call the Oracle package function
-            sql = f"""
-            DECLARE
-                v_jobschid NUMBER;
-            BEGIN
-                v_jobschid := {ORACLE_SCHEMA}.PKGDWPRC.CREATE_JOB_SCHEDULE(
-                    p_mapref => :p_mapref,
-                    p_frqcd => :p_frqcd,
-                    p_frqdd => :p_frqdd,
-                    p_frqhh => :p_frqhh,
-                    p_frqmi => :p_frqmi,
-                    p_strtdt => TO_DATE(:p_strtdt, 'YYYY-MM-DD'),
-                    p_enddt => TO_DATE(:p_enddt, 'YYYY-MM-DD')
-                );
-                :job_schedule_id := v_jobschid;
-            END;
-            """
-            
-            # Prepare the parameters
-            job_schedule_id = cursor.var(int)
-            
-            # Handle end_date, which can be null
-            end_date_param = end_date if end_date else None
-            
-            # Execute the PL/SQL block
-            cursor.execute(sql, {
-                'p_mapref': map_ref,
-                'p_frqcd': frequency_code,
-                'p_frqdd': frequency_day,
-                'p_frqhh': frequency_hour,
-                'p_frqmi': frequency_minute,
-                'p_strtdt': start_date,
-                'p_enddt': end_date_param,
-                'job_schedule_id': job_schedule_id
-            })
-            
-            # Commit the transaction
-            conn.commit()
-            
-            return jsonify({
-                'success': True,
-                'message': 'Job schedule saved successfully',
-                'job_schedule_id': job_schedule_id.getvalue()
-            })
-            
-        except Exception as e:
-            conn.rollback()
-            error_message = str(e)
-            print(f"Database error in save_job_schedule: {error_message}")
-            return jsonify({
-                'success': False,
-                'message': f'Database error: {error_message}'
-            }), 500
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        print(f"Error in save_job_schedule: {str(e)}")
+        service = JobSchedulerService(conn)
+        schedule_request = ScheduleRequest(
+            mapref=data.get('MAPREF'),
+            frequency_code=data.get('FRQCD'),
+            frequency_day=data.get('FRQDD'),
+            frequency_hour=_optional_int(data.get('FRQHH')),
+            frequency_minute=_optional_int(data.get('FRQMI')),
+            start_date=_parse_date(data.get('STRTDT')),
+            end_date=_parse_date(data.get('ENDDT')),
+        )
+        result = service.create_job_schedule(schedule_request)
+        return jsonify({
+            'success': True,
+            'message': result.message,
+            'job_schedule_id': result.job_schedule_id,
+            'status': result.status
+        })
+    except SchedulerValidationError as exc:
         return jsonify({
             'success': False,
-            'message': f'An error occurred while saving the job schedule: {str(e)}'
+            'message': str(exc)
+        }), 400
+    except SchedulerRepositoryError as exc:
+        return jsonify({
+            'success': False,
+            'message': f'Database error: {str(exc)}'
         }), 500
+    except Exception as exc:
+        error(f"Error in save_job_schedule: {exc}")
+        return jsonify({
+            'success': False,
+            'message': f'Unexpected error: {str(exc)}'
+        }), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 
 # save save parent and child job.
 @jobs_bp.route('/save_parent_child_job', methods=['POST'])
 def save_parent_child_job():
-    try:
-        data = request.json
-        
-        # Required fields
-        parent_map_reference = data.get('PARENT_MAP_REFERENCE')
-        child_map_reference = data.get('CHILD_MAP_REFERENCE')
-        
-        # Validate required fields
-        if not parent_map_reference or not child_map_reference:
-            return jsonify({
-                'success': False,
-                'message': 'Missing required parameters: PARENT_MAP_REFERENCE or CHILD_MAP_REFERENCE'
-            }), 400
-            
-        conn = create_oracle_connection()
-        try:
-            cursor = conn.cursor()
-            
-            # Call the Oracle package procedure
-            sql = """
-            BEGIN
-                TRG.PKGDWPRC.CREATE_JOB_DEPENDENCY(
-                    p_parent_mapref => :parent_map_reference,
-                    p_child_mapref => :child_map_reference
-                );
-            END;
-            """
-            
-            # Execute the PL/SQL block
-            cursor.execute(sql, {
-                'parent_map_reference': parent_map_reference,
-                'child_map_reference': child_map_reference
-            })
-            
-            # Commit the transaction
-            conn.commit()
-            
-            return jsonify({
-                'success': True,
-                'message': 'Parent-child job relationship saved successfully'
-            })
-            
-        except Exception as e:
-            conn.rollback()
-            error_message = str(e)
-            print(f"Database error in save_parent_child_job: {error_message}")
-            return jsonify({
-                'success': False,
-                'message': f'Database error: {error_message}'
-            }), 500
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        error(f"Error in save_parent_child_job: {str(e)}", exc_info=True)
+    data = request.json or {}
+    parent_map_reference = data.get('PARENT_MAP_REFERENCE')
+    child_map_reference = data.get('CHILD_MAP_REFERENCE')
+
+    if not parent_map_reference or not child_map_reference:
         return jsonify({
             'success': False,
-            'message': f'An error occurred while saving the parent-child job relationship: {str(e)}'
-        }), 500
+            'message': 'Missing required parameters: PARENT_MAP_REFERENCE or CHILD_MAP_REFERENCE'
+        }), 400
+
+    conn = None
+    try:
+        conn = create_oracle_connection()
+        service = JobSchedulerService(conn)
+        service.create_job_dependency(parent_map_reference, child_map_reference)
+        return jsonify({
+            'success': True,
+            'message': 'Parent-child job relationship saved successfully'
+        })
+    except SchedulerValidationError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    except SchedulerRepositoryError as exc:
+        return jsonify({'success': False, 'message': f'Database error: {str(exc)}'}), 500
+    except Exception as exc:
+        error(f"Error in save_parent_child_job: {exc}", exc_info=True)
+        return jsonify({'success': False, 'message': str(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 
 # schedule job
 @jobs_bp.route('/enable_disable_job', methods=['POST'])
 def enable_disable_job():
- 
-    data = request.json
+    data = request.json or {}
     map_ref = data.get('MAPREF')
     job_flag = data.get('JOB_FLG')
-    conn = create_oracle_connection()
-    try:
-        cursor = conn.cursor()
-        query = f""" 
-        BEGIN
-          {ORACLE_SCHEMA}.PKGDWPRC.ENABLE_DISABLE_SCHEDULE(:map_ref, :job_flag);
-        END;
-        """
-        cursor.execute(query, {'map_ref': map_ref, 'job_flag': job_flag})
-        conn.commit()
-        if job_flag == 'E':
-            return jsonify({
-                'success': True,
-                'message': 'Job enabled successfully'
-            })
-        elif job_flag == 'D':
-            return jsonify({
-                'success': True,
-                'message': 'Job disabled successfully'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Invalid job flag'
-            }), 400 
-    except Exception as e:
-        conn.rollback()
-        error_message = str(e)
-        print(f"Database error in enable_disable_job: {error_message}")
+    if not map_ref or job_flag not in {'E', 'D'}:
         return jsonify({
             'success': False,
-            'message': f'Database error: {error_message}'
-        }), 500
+            'message': 'Invalid or missing parameters'
+        }), 400
+    conn = None
+    try:
+        conn = create_oracle_connection()
+        service = JobSchedulerService(conn)
+        service.enable_disable_schedule(map_ref, job_flag)
+        message = 'Job enabled successfully' if job_flag == 'E' else 'Job disabled successfully'
+        return jsonify({'success': True, 'message': message})
+    except SchedulerValidationError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+    except SchedulerRepositoryError as exc:
+        return jsonify({'success': False, 'message': f'Database error: {str(exc)}'}), 500
+    except Exception as exc:
+        error(f"Error in enable_disable_job: {exc}")
+        return jsonify({'success': False, 'message': str(exc)}), 500
     finally:
-        conn.close()
+        if conn:
+            conn.close()
         
 
 
 
 
 def call_schedule_regular_job_async(p_mapref):
-    def background_job():
-        connection = None
-        cursor = None
-        try:
-            print(f"Starting background job scheduling for {p_mapref}")
-            connection = create_oracle_connection()
-            cursor = connection.cursor()
-            
-            sql = """
-            DECLARE
-              v_mapref VARCHAR2(100) := :p_mapref;
-            BEGIN
-              PKGDWPRC.SCHEDULE_JOB_IMMEDIATE(p_mapref => v_mapref);
-            END;
-            """
-            
-            # Execute with named parameters
-            cursor.execute(sql, p_mapref=p_mapref)
-            connection.commit()
-            
-            print(f"Job {p_mapref} scheduled for immediate execution successfully")
-            
-        except Exception as e:
-            error_message = f"Exception while scheduling job {p_mapref}: {str(e)}"
-            print(f"Error: {error_message}")
-            if connection:
-                try:
-                    connection.rollback()
-                except:
-                    pass
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
-            if connection:
-                try:
-                    connection.close()
-                except:
-                    pass
-    
-    # Start the background thread
-    thread = threading.Thread(target=background_job, daemon=True)
-    thread.start()
-    return True, f"Job {p_mapref} execution started in background"
+    conn = None
+    try:
+        conn = create_oracle_connection()
+        service = JobSchedulerService(conn)
+        request_id = service.queue_immediate_job(
+            ImmediateJobRequest(mapref=p_mapref)
+        )
+        return True, f"Job {p_mapref} queued for immediate execution (request_id={request_id})"
+    except SchedulerError as exc:
+        return False, str(exc)
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        if conn:
+            conn.close()
 
 
 def call_schedule_history_job_async(p_mapref, p_strtdt, p_enddt, p_tlflg):
-    def background_job():
-        connection = None
-        cursor = None
-        try:
-            info(f"Starting background history job scheduling for {p_mapref} from {p_strtdt} to {p_enddt}")
-            connection = create_oracle_connection()
-            cursor = connection.cursor()
-            
-            sql = f"""
-            DECLARE
-              v_mapref VARCHAR2(100) := :p_mapref;
-              v_strtdt DATE := TO_DATE(:p_strtdt, 'YYYY-MM-DD');
-              v_enddt DATE := TO_DATE(:p_enddt, 'YYYY-MM-DD');
-              v_tlflg VARCHAR2(1) := :p_tlflg;
-            BEGIN
-              {ORACLE_SCHEMA}.PKGDWPRC.SCHEDULE_HISTORY_JOB_IMMEDIATE(
-                p_mapref => v_mapref,
-                p_strtdt => v_strtdt,
-                p_enddt => v_enddt,
-                p_tlflg => v_tlflg
-              );
-            END;
-            """
-            
-            # Execute with named parameters
-            cursor.execute(sql, {
-                'p_mapref': p_mapref,
-                'p_strtdt': p_strtdt,
-                'p_enddt': p_enddt,
-                'p_tlflg': p_tlflg
-            })
-            connection.commit()
-            
-            info(f"History job {p_mapref} scheduled for immediate execution successfully")
-            
-        except Exception as e:
-            error_message = f"Exception while scheduling history job {p_mapref}: {str(e)}"
-            error(f"Error: {error_message}")
-            if connection:
-                try:
-                    connection.rollback()
-                except:
-                    pass
-        finally:
-            if cursor:
-                try:
-                    cursor.close()
-                except:
-                    pass
-            if connection:
-                try:
-                    connection.close()
-                except:
-                    pass
-    
-    # Start the background thread
-    thread = threading.Thread(target=background_job, daemon=True)
-    thread.start()
-    return True, f"History job {p_mapref} execution started in background (from {p_strtdt} to {p_enddt})"
-
-
-def call_schedule_immediate_job(connection, p_mapref):
-    cursor = None
+    conn = None
     try:
-        cursor = connection.cursor()
-        p_err = cursor.var(oracledb.STRING, 2000)  
-        sql = """
-
-        DECLARE
-          v_mapref VARCHAR2(100) := :p_mapref;
-        BEGIN
-          PKGDWPRC.SCHEDULE_JOB_IMMEDIATE(p_mapref => v_mapref);
-        END;
-        """
-        
-        # Execute with named parameters
-        cursor.execute(
-            sql,
-            p_mapref=p_mapref,
+        conn = create_oracle_connection()
+        service = JobSchedulerService(conn)
+        request_id = service.queue_history_job(
+            HistoryJobRequest(
+                mapref=p_mapref,
+                start_date=_parse_date(p_strtdt),
+                end_date=_parse_date(p_enddt),
+                truncate_flag=p_tlflg or 'N'
+            )
         )
-        connection.commit()
-        
-        # Get the error message (if any)
-        error_message = p_err.getvalue()
-        
-        if error_message:
-            return False, error_message
-        else:
-            return True, f"Job {p_mapref} scheduled for immediate execution"
-    
-    except Exception as e:
-        error_message = f"Exception while deleting mapping detail: {str(e)}"
-        return False, error_message
+        return True, (
+            f"History job {p_mapref} queued "
+            f"(request_id={request_id}, {p_strtdt} to {p_enddt})"
+        )
+    except SchedulerError as exc:
+        return False, str(exc)
+    except Exception as exc:
+        return False, str(exc)
     finally:
-        if cursor:
-            cursor.close()
+        if conn:
+            conn.close()
 
 
 def check_job_already_running(connection, p_mapref):
+    """
+    Check if a job is already running.
+    A job is considered running if it has status 'IP' (In Progress) or 'CLAIMED' 
+    and was started recently (within the last 24 hours).
+    This prevents false positives from old stuck records.
+    """
     cursor = None
     try:
         cursor = connection.cursor()
         sql = """
-        SELECT COUNT(*) FROM DWPRCLOG  WHERE MAPREF=:p_mapref AND status='IP'
+        SELECT COUNT(*) FROM DWPRCLOG  
+        WHERE MAPREF=:p_mapref 
+        AND status IN ('IP', 'CLAIMED')
+        AND strtdt > SYSTIMESTAMP - INTERVAL '24' HOUR
         """
         cursor.execute(sql, {'p_mapref': p_mapref})
         count = cursor.fetchone()[0]
         return count > 0
     except Exception as e:
+        # On error, return False to allow job execution
+        error(f"Error checking if job is running: {str(e)}")
         return False
     finally:
         if cursor:
-            cursor.close()  
+            cursor.close()
+
+
+def reset_stuck_jobs(connection, p_mapref=None):
+    """
+    Reset stuck jobs (jobs with status 'IP' that have been running for more than 24 hours).
+    This allows jobs that are truly stuck to be reset so they can be re-executed.
+    
+    Args:
+        connection: Database connection
+        p_mapref: Optional mapref to reset only specific job. If None, resets all stuck jobs.
+    
+    Returns:
+        Tuple of (count_reset, list of reset prcids)
+    """
+    cursor = None
+    try:
+        cursor = connection.cursor()
+        
+        if p_mapref:
+            # First, get the PRCIDs that will be reset
+            cursor.execute("""
+                SELECT PRCID FROM DWPRCLOG 
+                WHERE MAPREF = :p_mapref 
+                AND status = 'IP'
+                AND strtdt < SYSTIMESTAMP - INTERVAL '24' HOUR
+            """, {'p_mapref': p_mapref})
+            reset_prcids = [row[0] for row in cursor.fetchall()]
+            
+            # Reset specific job
+            sql = """
+            UPDATE DWPRCLOG 
+            SET status = 'FAILED',
+                endtime = SYSTIMESTAMP,
+                errmsg = 'Job reset: Was stuck in IP status for more than 24 hours'
+            WHERE MAPREF = :p_mapref 
+            AND status = 'IP'
+            AND strtdt < SYSTIMESTAMP - INTERVAL '24' HOUR
+            """
+            cursor.execute(sql, {'p_mapref': p_mapref})
+            connection.commit()
+            count = cursor.rowcount
+        else:
+            # First, get the PRCIDs and MAPREFs that will be reset
+            cursor.execute("""
+                SELECT PRCID, MAPREF FROM DWPRCLOG 
+                WHERE status = 'IP'
+                AND strtdt < SYSTIMESTAMP - INTERVAL '24' HOUR
+            """)
+            reset_prcids = [(row[0], row[1]) for row in cursor.fetchall()]
+            
+            # Reset all stuck jobs
+            sql = """
+            UPDATE DWPRCLOG 
+            SET status = 'FAILED',
+                endtime = SYSTIMESTAMP,
+                errmsg = 'Job reset: Was stuck in IP status for more than 24 hours'
+            WHERE status = 'IP'
+            AND strtdt < SYSTIMESTAMP - INTERVAL '24' HOUR
+            """
+            cursor.execute(sql)
+            connection.commit()
+            count = cursor.rowcount
+        
+        return count, reset_prcids
+    except Exception as e:
+        error(f"Error resetting stuck jobs: {str(e)}")
+        connection.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+
 
 # Schedule the job immediately
 @jobs_bp.route('/schedule-job-immediately', methods=['POST'])
@@ -862,105 +792,185 @@ def schedule_job_immediately():
 # stop a running job
 @jobs_bp.route('/stop-running-job', methods=['POST'])
 def stop_running_job():
-    try:
-        data = request.json
-        p_mapref = data.get('mapref')
-        p_strtdt = data.get('startDate')
-        p_force = data.get('force', 'N')  # Default to graceful stop if not provided
-        
-        info(f"Stopping job: {p_mapref}, Start Date: {p_strtdt}, Force: {p_force}")
-        
-        if not p_mapref or not p_strtdt:
-            return jsonify({
-                'success': False,
-                'message': 'Missing required parameters: mapref or startDate'
-            }), 400
-        
-        # Format already provided as YYYY-MM-DD HH:MM:SS from frontend
-        oracle_date = p_strtdt
-        
-        # If it's not in the expected format, try to parse it
-        if not (len(p_strtdt) >= 10 and p_strtdt[4] == '-' and p_strtdt[7] == '-'):
-            try:
-                from datetime import datetime
-                # Try to parse the ISO format date
-                if 'T' in p_strtdt:
-                    # Handle ISO format with timezone info
-                    date_obj = datetime.fromisoformat(p_strtdt.replace('Z', '+00:00'))
-                else:
-                    # Handle simple date format
-                    date_obj = datetime.strptime(p_strtdt, '%Y-%m-%d')
-                    
-                # Format date in a way Oracle will definitely understand
-                oracle_date = date_obj.strftime('%Y-%m-%d %H:%M:%S')
-                info(f"Parsed date: {oracle_date}")
-            except Exception as e:
-                warning(f"Error parsing date: {str(e)}. Using original date string.")
-                oracle_date = p_strtdt
-            
-        conn = create_oracle_connection()
-        try:
-            cursor = conn.cursor()
-            
-            # Call the Oracle package procedure with a simpler date format
-            sql = f"""
-            DECLARE
-                v_err VARCHAR2(4000);
-            BEGIN
-                {ORACLE_SCHEMA}.PKGDWPRC.STOP_RUNNING_JOB(
-                    p_mapref => :p_mapref,
-                    p_strtdt => TO_DATE(:p_strtdt, 'YYYY-MM-DD HH24:MI:SS'),
-                    p_force => :p_force,
-                    p_err => v_err
-                );
-                :error_message := v_err;
-            END;
-            """
-            
-            # Prepare the parameters
-            error_message = cursor.var(oracledb.STRING, 4000)
-            
-            # Execute the PL/SQL block
-            cursor.execute(sql, {
-                'p_mapref': p_mapref,
-                'p_strtdt': oracle_date,
-                'p_force': p_force,
-                'error_message': error_message
-            })
-            
-            # Commit the transaction
-            conn.commit()
-            
-            # Check if there was an error
-            if error_message.getvalue():
-                warning(f"Error stopping job: {error_message.getvalue()}")
-                return jsonify({
-                    'success': False,
-                    'message': f'Error stopping job: {error_message.getvalue()}'
-                }), 500
-            
-            info(f"Job {p_mapref} stopped successfully")
-            print({error_message.getvalue()})
-            return jsonify({
-                'success': True,
-                'message': f'Job {p_mapref} has been stopped successfully : {error_message.getvalue()}'
-            })
-            
-        except Exception as e:
-            conn.rollback()
-            error_message = str(e)
-            exception(f"Database error in stop_running_job: {error_message}")
-            return jsonify({
-                'success': False,
-                'message': f'Database error: {error_message}'
-            }), 500
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        error(f"Error in stop_running_job: {str(e)}", exc_info=True)
+    data = request.json or {}
+    p_mapref = data.get('mapref')
+    p_strtdt = data.get('startDate')
+    p_force = data.get('force', 'N')
+
+    if not p_mapref or not p_strtdt:
         return jsonify({
             'success': False,
-            'message': f'An error occurred while stopping the job: {str(e)}'
+            'message': 'Missing required parameters: mapref or startDate'
+        }), 400
+
+    try:
+        start_dt = _parse_datetime(p_strtdt)
+    except SchedulerValidationError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+
+    conn = None
+    try:
+        conn = create_oracle_connection()
+        service = JobSchedulerService(conn)
+        request_id = service.request_job_stop(p_mapref, start_dt, p_force)
+        info(f"Stop requested for job {p_mapref} (request_id={request_id})")
+        return jsonify({
+            'success': True,
+            'message': f'Stop request queued (request_id={request_id})'
+        })
+    except SchedulerRepositoryError as exc:
+        return jsonify({'success': False, 'message': f'Database error: {str(exc)}'}), 500
+    except Exception as exc:
+        error(f"Error in stop_running_job: {exc}", exc_info=True)
+        return jsonify({'success': False, 'message': str(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
+
+
+# Reset stuck jobs endpoint
+@jobs_bp.route('/reset-stuck-jobs', methods=['POST'])
+def reset_stuck_jobs_endpoint():
+    """
+    Reset stuck jobs (jobs with status 'IP' that have been running for more than 24 hours).
+    This allows jobs that are truly stuck to be reset so they can be re-executed.
+    """
+    try:
+        data = request.json or {}
+        p_mapref = data.get('mapref')  # Optional: if provided, only reset this specific job
+        
+        conn = create_oracle_connection()
+        try:
+            count, reset_prcids = reset_stuck_jobs(conn, p_mapref)
+            
+            if count > 0:
+                if p_mapref:
+                    message = f"Reset {count} stuck job(s) for {p_mapref}. PRCIDs: {reset_prcids}"
+                else:
+                    message = f"Reset {count} stuck job(s). Affected jobs: {reset_prcids}"
+                info(message)
+                return jsonify({
+                    'success': True,
+                    'message': message,
+                    'count': count,
+                    'reset_prcids': reset_prcids
+                })
+            else:
+                message = f"No stuck jobs found to reset" + (f" for {p_mapref}" if p_mapref else "")
+                return jsonify({
+                    'success': True,
+                    'message': message,
+                    'count': 0
+                })
+        finally:
+            conn.close()
+    except Exception as e:
+        error(f"Error in reset_stuck_jobs_endpoint: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error resetting stuck jobs: {str(e)}'
+        }), 500
+
+
+# Diagnostic endpoint to check scheduler queue status
+@jobs_bp.route('/check_scheduler_queue', methods=['GET'])
+def check_scheduler_queue():
+    """
+    Diagnostic endpoint to check the status of queued jobs.
+    Helps verify if scheduler service is processing requests.
+    """
+    try:
+        conn = create_oracle_connection()
+        try:
+            # Check queue status
+            queue_query = """
+                SELECT 
+                    request_id,
+                    mapref,
+                    request_type,
+                    status,
+                    requested_at,
+                    claimed_at,
+                    claimed_by,
+                    completed_at,
+                    CASE 
+                        WHEN status = 'NEW' AND requested_at < SYSTIMESTAMP - INTERVAL '5' MINUTE 
+                        THEN 'STUCK'
+                        ELSE 'OK'
+                    END as queue_health
+                FROM DWPRCREQ
+                ORDER BY requested_at DESC
+                FETCH FIRST 20 ROWS ONLY
+            """
+            cursor = conn.cursor()
+            cursor.execute(queue_query)
+            columns = [col[0] for col in cursor.description]
+            queue_rows = cursor.fetchall()
+            
+            queue_data = []
+            for row in queue_rows:
+                row_dict = {}
+                for i, col in enumerate(columns):
+                    value = row[i]
+                    if hasattr(value, 'isoformat'):
+                        row_dict[col] = value.isoformat()
+                    else:
+                        row_dict[col] = str(value) if value is not None else None
+                queue_data.append(row_dict)
+            
+            # Count by status
+            status_counts = {}
+            for row in queue_data:
+                status = row.get('STATUS', 'UNKNOWN')
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            # Check for stuck jobs
+            stuck_jobs = [r for r in queue_data if r.get('QUEUE_HEALTH') == 'STUCK']
+            
+            # Check recent process logs
+            process_log_query = """
+                SELECT 
+                    mapref,
+                    status,
+                    strtdt,
+                    enddt,
+                    reccrdt
+                FROM DWPRCLOG
+                WHERE reccrdt >= SYSDATE - 1/24
+                ORDER BY reccrdt DESC
+                FETCH FIRST 10 ROWS ONLY
+            """
+            cursor.execute(process_log_query)
+            process_logs = []
+            for row in cursor.fetchall():
+                process_logs.append({
+                    'mapref': row[0],
+                    'status': row[1],
+                    'strtdt': row[2].isoformat() if row[2] else None,
+                    'enddt': row[3].isoformat() if row[3] else None,
+                    'reccrdt': row[4].isoformat() if row[4] else None,
+                })
+            
+            return jsonify({
+                'success': True,
+                'queue_summary': {
+                    'total_requests': len(queue_data),
+                    'status_counts': status_counts,
+                    'stuck_jobs_count': len(stuck_jobs),
+                    'recent_process_logs': len(process_logs)
+                },
+                'queue_details': queue_data,
+                'recent_process_logs': process_logs,
+                'diagnostics': {
+                    'scheduler_running': 'UNKNOWN - Check scheduler service logs',
+                    'recommendation': 'If status=NEW jobs exist, ensure scheduler service is running'
+                }
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
     

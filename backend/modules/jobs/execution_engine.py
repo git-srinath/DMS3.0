@@ -1,0 +1,893 @@
+from __future__ import annotations
+
+import json
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
+import oracledb
+
+from database.dbconnect import create_oracle_connection
+from modules.common.id_provider import next_id as get_next_id
+from modules.logger import info, warning, error, debug
+from modules.jobs.pkgdwprc_python import JobRequestType, SchedulerRepositoryError
+from modules.jobs.scheduler_models import QueueRequest
+
+
+def _read_lob(value):
+    if hasattr(value, "read"):
+        data = value.read()
+        if isinstance(data, bytes):
+            return data.decode("utf-8")
+        return data
+    return value
+
+
+def _generate_numeric_id(cursor, entity_name: str) -> int:
+    """Generate numeric ID using configured strategy, fallback to timestamp on error."""
+    try:
+        return int(get_next_id(cursor, entity_name))
+    except Exception as exc:
+        warning(f"ID provider failed for {entity_name}: {exc}. Falling back to timestamp.")
+        return int(datetime.utcnow().timestamp() * 1000)
+
+
+class JobExecutionEngine:
+    """
+    Executes queued job requests by running generated Python job flows or
+    placeholder logic for other job types.
+    """
+
+    def execute(self, request: QueueRequest) -> Dict[str, Any]:
+        if request.request_type == JobRequestType.IMMEDIATE:
+            return self._execute_job_flow(request.mapref, request.payload)
+        if request.request_type == JobRequestType.HISTORY:
+            return self._execute_history_job(request)
+        if request.request_type == JobRequestType.REPORT:
+            return self._execute_report_job(request)
+        if request.request_type == JobRequestType.STOP:
+            return self._handle_stop_request(request)
+        if request.request_type == JobRequestType.REFRESH_SCHEDULE:
+            info("Refresh schedule request processed (no-op)")
+            return {"status": "SUCCESS", "message": "Schedule refresh acknowledged"}
+        raise ValueError(f"Unsupported request type: {request.request_type}")
+
+    # ------------------------------------------------------------------ #
+    # Job flow execution
+    # ------------------------------------------------------------------ #
+    def _execute_job_flow(self, mapref: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle both payload structures:
+        # 1. payload = {"params": {...}} (nested)
+        # 2. payload = {...} (params directly, for immediate jobs)
+        if "params" in payload:
+            params = payload.get("params", {})
+        else:
+            # If no "params" key, treat entire payload as params
+            params = payload
+        
+        # Log parameters for debugging
+        debug(f"Executing job flow for {mapref} with params: {params}")
+        
+        context = None
+        source_conn = None
+        target_conn = None
+        
+        with self._db_connection() as (conn, cursor):
+            job_flow = self._load_job_flow(cursor, mapref)
+            if not job_flow:
+                raise SchedulerRepositoryError(f"No active job flow found for {mapref}")
+
+            # Get source connection if SQLCONID is specified
+            sqlconid = job_flow.get("SQLCONID")
+            debug(f"SQLCONID from job flow: {sqlconid}")
+            if sqlconid:
+                try:
+                    from database.dbconnect import create_target_connection
+                    source_conn = create_target_connection(sqlconid)
+                    if source_conn:
+                        info(f"Using source connection (ID: {sqlconid}) for SELECT queries")
+                    else:
+                        warning(f"Source connection ID {sqlconid} not found, using metadata connection for source")
+                except Exception as e:
+                    error(f"Failed to create source connection {sqlconid}: {e}. Using metadata connection for source.")
+                    import traceback
+                    debug(f"Source connection creation traceback: {traceback.format_exc()}")
+            else:
+                debug("No SQLCONID specified in job flow, using metadata connection for source queries")
+            
+            # Get target connection if TRGCONID is specified
+            trgconid = job_flow.get("TRGCONID")
+            debug(f"TRGCONID from job flow: {trgconid}")
+            if trgconid:
+                try:
+                    from database.dbconnect import create_target_connection
+                    target_conn = create_target_connection(trgconid)
+                    if target_conn:
+                        # Verify the target connection can access the schema
+                        try:
+                            test_cursor = target_conn.cursor()
+                            # Try to query the current user/schema
+                            test_cursor.execute("SELECT USER FROM DUAL")
+                            current_user = test_cursor.fetchone()[0]
+                            test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
+                            current_schema = test_cursor.fetchone()[0]
+                            test_cursor.close()
+                            info(f"Using target connection (ID: {trgconid}) - Current user: {current_user}, Current schema: {current_schema}")
+                        except Exception as test_e:
+                            warning(f"Could not verify target connection schema: {test_e}")
+                            info(f"Using target connection (ID: {trgconid}) for job execution")
+                    else:
+                        warning(f"Target connection ID {trgconid} not found, using metadata connection")
+                except Exception as e:
+                    error(f"Failed to create target connection {trgconid}: {e}. Using metadata connection.")
+                    import traceback
+                    debug(f"Target connection creation traceback: {traceback.format_exc()}")
+            else:
+                debug("No TRGCONID specified in job flow, using metadata connection for target operations")
+
+            context = self._create_process_log(cursor, job_flow, params)
+            conn.commit()
+
+            # Prepare the code for execution
+            # The code might be Python (new) or PL/SQL (legacy)
+            code = job_flow["DWLOGIC"]
+            if not code or not code.strip():
+                raise RuntimeError(f"Empty or invalid DWLOGIC code for {mapref}")
+            
+            # Strip leading/trailing whitespace
+            code = code.strip()
+            
+            # Detect code type: PL/SQL vs Python
+            # Default to Python (new code generator creates Python)
+            # Only treat as PL/SQL if it's clearly PL/SQL and NOT Python
+            code_upper = code.upper()
+            
+            # Strong Python indicators (check first few lines and overall)
+            first_lines = "\n".join(code.split("\n")[:10]).upper()
+            is_python = any(
+                indicator in first_lines or indicator in code_upper
+                for indicator in [
+                    "DEF EXECUTE_JOB", 
+                    "DEF ", 
+                    "IMPORT ", 
+                    "FROM ", 
+                    "EXECUTE_JOB(",
+                    "HASHLIB",
+                    "ORACLEDB",
+                    "SESSION_PARAMS"
+                ]
+            )
+            
+            # Strong PL/SQL indicators - only if NOT Python
+            is_plsql = (
+                not is_python and  # Must not be Python
+                code_upper.strip().startswith(("DECLARE", "BEGIN")) and  # Must start with PL/SQL keywords
+                "DEF " not in code_upper  # Definitely not Python
+            )
+            
+            debug(f"Code type detection - Python: {is_python}, PL/SQL: {is_plsql}")
+            debug(f"First 500 chars of code: {code[:500]}")
+            
+            # Default to Python if unclear (new code is Python)
+            if is_plsql:
+                # Execute PL/SQL code using Oracle's execute immediate
+                debug(f"Detected PL/SQL code, executing via Oracle (first 500 chars): {code[:500]}")
+                debug(f"PL/SQL code length: {len(code)} characters")
+                
+                try:
+                    code_to_execute = code.strip()
+                    
+                    # Check if it's already a complete PL/SQL block (starts with DECLARE or BEGIN)
+                    code_upper_stripped = code_to_execute.upper().strip()
+                    is_complete_block = (
+                        code_upper_stripped.startswith("DECLARE") or
+                        code_upper_stripped.startswith("BEGIN") or
+                        code_upper_stripped.startswith("CREATE") or
+                        code_upper_stripped.startswith("INSERT") or
+                        code_upper_stripped.startswith("UPDATE") or
+                        code_upper_stripped.startswith("DELETE") or
+                        code_upper_stripped.startswith("MERGE")
+                    )
+                    
+                    if not is_complete_block:
+                        # Wrap in anonymous PL/SQL block
+                        code_to_execute = f"BEGIN\n{code_to_execute}\nEND;"
+                        debug("Wrapped PL/SQL code in anonymous block")
+                    else:
+                        # Ensure proper termination
+                        if not code_to_execute.rstrip().endswith((';', '/')):
+                            code_to_execute = code_to_execute.rstrip() + ';'
+                    
+                    # Execute PL/SQL using execute immediate within a wrapper block
+                    # This mimics the original PL/SQL: execute immediate w_flw_rec.dwlogic;
+                    plsql_wrapper = """
+                    BEGIN
+                        EXECUTE IMMEDIATE :code_block;
+                    EXCEPTION
+                        WHEN OTHERS THEN
+                            RAISE;
+                    END;
+                    """
+                    
+                    debug(f"Executing PL/SQL block (last 200 chars): ...{code_to_execute[-200:]}")
+                    cursor.execute(plsql_wrapper, {"code_block": code_to_execute})
+                    
+                    result = {}  # PL/SQL execution doesn't return Python dict
+                    self._finalize_success(cursor, job_flow, context, result)
+                    conn.commit()
+                    return {
+                        "status": "SUCCESS",
+                        "result": result,
+                        "prcid": context["PRCID"],
+                    }
+                except Exception as exc:
+                    conn.rollback()
+                    error_msg = str(exc)
+                    error(f"PL/SQL execution failed for {mapref} (prcid={context['PRCID']}): {error_msg}")
+                    error(f"PL/SQL code that failed (first 1000 chars): {code[:1000]}")
+                    error(f"PL/SQL code that failed (last 500 chars): ...{code[-500:]}")
+                    self._finalize_failure(cursor, context, error_msg)
+                    conn.commit()
+                    raise
+            else:
+                # Execute Python code
+                # Handle indentation: if the code appears to be indented (starts with space/tab),
+                # try to remove common leading whitespace
+                lines = code.split("\n")
+                if lines and lines[0].startswith((" ", "\t")):
+                    # Find minimum leading whitespace among non-empty lines
+                    non_empty_lines = [line for line in lines if line.strip()]
+                    if non_empty_lines:
+                        min_indent = min(len(line) - len(line.lstrip()) for line in non_empty_lines)
+                        if min_indent > 0:
+                            # Remove min_indent spaces from all lines (non-empty lines get dedented, empty lines stay empty)
+                            code = "\n".join(
+                                line[min_indent:] if line.strip() else line
+                                for line in lines
+                            )
+                
+                debug(f"Executing Python code (first 200 chars): {code[:200]}")
+                
+                namespace: Dict[str, Any] = {}
+                try:
+                    debug(f"Executing Python code (length: {len(code)} characters)")
+                    exec(code, namespace)
+                    debug(f"Python code executed successfully, checking for execute_job function...")
+                except SyntaxError as e:
+                    error(f"Syntax error in DWLOGIC for {mapref}: {e}")
+                    error(f"Code snippet (lines {e.lineno-5 if e.lineno > 5 else 1}-{e.lineno+5}):")
+                    code_lines = code.split("\n")
+                    start = max(0, e.lineno - 5)
+                    end = min(len(code_lines), e.lineno + 5)
+                    for i in range(start, end):
+                        marker = ">>> " if i == e.lineno - 1 else "    "
+                        error(f"{marker}{i+1}: {code_lines[i]}")
+                    raise RuntimeError(f"Syntax error in generated code for {mapref}: {e}") from e
+                except Exception as e:
+                    error(f"Error executing generated code for {mapref}: {type(e).__name__}: {e}")
+                    error(f"First 500 chars of code:\n{code[:500]}")
+                    import traceback
+                    error(f"Traceback:\n{traceback.format_exc()}")
+                    raise RuntimeError(f"Error executing generated code for {mapref}: {e}") from e
+                
+                execute_job = namespace.get("execute_job")
+                if not execute_job:
+                    error(f"execute_job not found in namespace. Available keys: {list(namespace.keys())}")
+                    raise RuntimeError(f"execute_job not defined in DWLOGIC for {mapref}")
+                
+                debug(f"execute_job function found: {type(execute_job)}")
+
+                # Build execution_args - the generated code expects param1, param2, etc. directly
+                execution_args = {
+                    "prcid": context["PRCID"],
+                    "sessionid": context["SESSIONID"],
+                    "mapref": mapref,
+                }
+                # Add param1-param10 directly to execution_args (as the generated code expects)
+                for i in range(1, 11):
+                    param_key = f"param{i}"
+                    if param_key in params:
+                        execution_args[param_key] = params[param_key]
+                # Also include request_params for backward compatibility
+                execution_args["request_params"] = params
+                
+                # Detect function signature to support both old and new code
+                import inspect
+                sig = inspect.signature(execute_job)
+                param_count = len(sig.parameters)
+                
+                info(f"Starting job execution for {mapref} (PRCID: {context['PRCID']})")
+                debug(f"execute_job signature: {param_count} parameters - {list(sig.parameters.keys())}")
+                
+                # Job execution timeout (default: 2 hours, configurable via environment variable)
+                job_timeout_seconds = int(os.getenv('JOB_EXECUTION_TIMEOUT_SECONDS', '7200'))  # 2 hours default
+                debug(f"Job execution timeout: {job_timeout_seconds} seconds")
+                
+                try:
+                    # Capture stdout from the generated code (it uses print() statements)
+                    import sys
+                    from io import StringIO
+                    import threading
+                    
+                    class StdoutCaptureLogger(StringIO):
+                        """Capture stdout while streaming lines to the logger in real time."""
+                        def __init__(self, map_reference: str):
+                            super().__init__()
+                            self._buffer = ""
+                            self._lock = threading.Lock()
+                            self._mapref = map_reference
+                        
+                        def write(self, text: str) -> int:
+                            if not isinstance(text, str):
+                                text = str(text)
+                            with self._lock:
+                                written = super().write(text)
+                                self._buffer += text
+                                
+                                while "\n" in self._buffer:
+                                    line, self._buffer = self._buffer.split("\n", 1)
+                                    line_to_log = line.strip()
+                                    if line_to_log:
+                                        info(f"Job {self._mapref} output: {line_to_log}")
+                            return len(text)
+                        
+                        def flush(self) -> None:
+                            with self._lock:
+                                pending = self._buffer.strip()
+                                if pending:
+                                    info(f"Job {self._mapref} output: {pending}")
+                                self._buffer = ""
+                            super().flush()
+                    
+                    # Create a string buffer to capture and stream print output
+                    stdout_capture = StdoutCaptureLogger(mapref)
+                    old_stdout = sys.stdout
+                    
+                    # Define execution function to run in thread with timeout
+                    def execute_with_capture():
+                        try:
+                            # Redirect stdout to capture print statements from generated code
+                            sys.stdout = stdout_capture
+                            
+                            # Log to captured output (will be visible in logs)
+                            print(f"[EXECUTION ENGINE] About to call execute_job for {mapref}")
+                            
+                            # Determine which connection(s) to use based on function signature
+                            if param_count == 2:
+                                # Old signature: execute_job(connection, session_params)
+                                # Use target connection if available, else metadata connection
+                                execution_conn = target_conn if target_conn else conn
+                                debug(f"Using old signature (2 params): execute_job(connection, session_params)")
+                                if target_conn:
+                                    debug(f"Using TARGET connection for old signature")
+                                    # Verify target connection schema access
+                                    try:
+                                        test_cursor = target_conn.cursor()
+                                        test_cursor.execute("SELECT USER FROM DUAL")
+                                        conn_user = test_cursor.fetchone()[0]
+                                        test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
+                                        conn_schema = test_cursor.fetchone()[0]
+                                        test_cursor.close()
+                                        debug(f"Target connection user: {conn_user}, schema: {conn_schema}")
+                                    except Exception as e:
+                                        debug(f"Could not verify target connection details: {e}")
+                                else:
+                                    debug(f"Using METADATA connection (no target connection available)")
+                                return execute_job(execution_conn, execution_args) or {}
+                            elif param_count == 3:
+                                # Old signature: execute_job(metadata_connection, target_connection, session_params)
+                                # Use source connection for source if available, else metadata
+                                metadata_exec_conn = conn  # Always use metadata connection for logging
+                                source_exec_conn = source_conn if source_conn else conn  # Use source if available, else metadata
+                                target_exec_conn = target_conn if target_conn else conn  # Use target if available, else metadata
+                                debug(f"Using signature (3 params): execute_job(metadata_connection, target_connection, session_params)")
+                                debug(f"Note: This is backward compatibility mode - source and target may be same connection")
+                                if target_conn:
+                                    debug(f"Using separate connections: metadata for logging, target for data")
+                                else:
+                                    debug(f"Using metadata connection for both (no target connection specified)")
+                                # For backward compatibility, pass metadata as source and target as target
+                                return execute_job(metadata_exec_conn, target_exec_conn, execution_args) or {}
+                            elif param_count == 4:
+                                # New signature: execute_job(metadata_connection, source_connection, target_connection, session_params)
+                                metadata_exec_conn = conn  # Always use metadata connection for logging
+                                source_exec_conn = source_conn if source_conn else conn  # Use source if available, else metadata
+                                target_exec_conn = target_conn if target_conn else conn  # Use target if available, else metadata
+                                debug(f"Using new signature (4 params): execute_job(metadata_connection, source_connection, target_connection, session_params)")
+                                if source_conn:
+                                    debug(f"Using SOURCE connection (ID: {sqlconid}) for SELECT queries")
+                                else:
+                                    debug(f"Using metadata connection for source queries (no SQLCONID specified)")
+                                if target_conn:
+                                    debug(f"Using TARGET connection (ID: {trgconid}) for INSERT/UPDATE operations")
+                                else:
+                                    debug(f"Using metadata connection for target operations (no TRGCONID specified)")
+                                return execute_job(metadata_exec_conn, source_exec_conn, target_exec_conn, execution_args) or {}
+                            else:
+                                raise RuntimeError(f"execute_job has unexpected signature: {param_count} parameters (expected 2, 3, or 4)")
+                        except Exception as exec_err:
+                            # Log the exception to captured output before restoring stdout
+                            print(f"ERROR in execute_job: {type(exec_err).__name__}: {str(exec_err)}")
+                            import traceback
+                            print(f"Traceback:\n{traceback.format_exc()}")
+                            raise
+                        finally:
+                            # Restore stdout
+                            sys.stdout = old_stdout
+                    
+                    # Execute with timeout using ThreadPoolExecutor
+                    result = None
+                    execution_exception = None
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(execute_with_capture)
+                        try:
+                            result = future.result(timeout=job_timeout_seconds)
+                            debug(f"Job execution completed within timeout")
+                        except FutureTimeoutError:
+                            error(f"Job {mapref} execution TIMED OUT after {job_timeout_seconds} seconds")
+                            # Get any captured output before timeout
+                            captured_output = stdout_capture.getvalue()
+                            if captured_output:
+                                error(f"Job {mapref} output before timeout:\n{captured_output}")
+                            
+                            # Mark the job as failed due to timeout
+                            with self._db_connection() as (timeout_conn, timeout_cursor):
+                                timeout_cursor.execute("""
+                                    UPDATE DWPRCLOG 
+                                    SET status = 'FAILED', 
+                                        endtime = SYSTIMESTAMP,
+                                        errmsg = :errmsg
+                                    WHERE mapref = :mapref AND prcid = :prcid
+                                """, {
+                                    'errmsg': f'Job execution timed out after {job_timeout_seconds} seconds',
+                                    'mapref': mapref,
+                                    'prcid': context['PRCID']
+                                })
+                                timeout_conn.commit()
+                            
+                            # Try to cancel the future (though it may not work if stuck in DB call)
+                            future.cancel()
+                            raise RuntimeError(f"Job execution timed out after {job_timeout_seconds} seconds")
+                        except Exception as exec_exc:
+                            # Capture exception for logging
+                            execution_exception = exec_exc
+                            # Get captured output even if exception occurred
+                            captured_output = stdout_capture.getvalue()
+                            if captured_output:
+                                error(f"Job {mapref} execution output before exception:\n{captured_output}")
+                            raise
+                    
+                    # Get captured output (only if no exception occurred above)
+                    if execution_exception is None:
+                        captured_output = stdout_capture.getvalue()
+                        
+                        # Log captured output from generated code
+                        if captured_output:
+                            info(f"Job {mapref} execution output:\n{captured_output}")
+                        else:
+                            warning(f"Job {mapref} completed but produced no output. This may indicate the job didn't execute properly.")
+                    
+                    debug(f"Job execution completed. Result: {result}")
+                    
+                    # Log the results for debugging
+                    if result:
+                        source_rows = result.get('source_rows', 0)
+                        target_rows = result.get('target_rows', 0)
+                        error_rows = result.get('error_rows', 0)
+                        status = result.get('status', 'UNKNOWN')
+                        
+                        info(
+                            f"Job {mapref} completed - "
+                            f"Status: {status}, "
+                            f"Source: {source_rows}, Target: {target_rows}, Errors: {error_rows}"
+                        )
+                        
+                        if target_rows == 0 and source_rows == 0:
+                            warning(
+                                f"Job {mapref} completed but processed 0 rows. "
+                                f"Check source query and data availability."
+                            )
+                        elif target_rows == 0 and source_rows > 0:
+                            warning(
+                                f"Job {mapref} processed {source_rows} source rows but inserted 0 target rows. "
+                                f"Check insert logic and target table constraints."
+                            )
+                    
+                    # Finalize success using metadata connection for logging
+                    with self._db_connection() as (log_conn, log_cursor):
+                        self._finalize_success(log_cursor, job_flow, context, result)
+                        log_conn.commit()
+                    
+                    # Commit source and target connections if used
+                    if source_conn and source_conn != conn:
+                        source_conn.commit()
+                    if target_conn and target_conn != conn:
+                        target_conn.commit()
+                    
+                    return {
+                        "status": "SUCCESS",
+                        "result": result,
+                        "prcid": context["PRCID"],
+                    }
+                except Exception as exc:
+                    # Get captured output even on exception
+                    try:
+                        captured_output = stdout_capture.getvalue()
+                        if captured_output:
+                            error(f"Job {mapref} execution output before failure:\n{captured_output}")
+                    except Exception:
+                        pass
+                    
+                    # Rollback all connections
+                    try:
+                        if source_conn and source_conn != conn:
+                            source_conn.rollback()
+                    except Exception:
+                        pass
+                    try:
+                        if target_conn and target_conn != conn:
+                            target_conn.rollback()
+                    except Exception:
+                        pass
+                    try:
+                        with self._db_connection() as (log_conn, log_cursor):
+                            log_conn.rollback()
+                    except Exception:
+                        pass
+                    
+                    error_msg = str(exc)
+                    import traceback
+                    error(
+                        f"Job execution failed for {mapref} (prcid={context['PRCID']}): {error_msg}\n"
+                        f"Parameters passed: {params}\n"
+                        f"Execution args: {execution_args}\n"
+                        f"Traceback: {traceback.format_exc()}"
+                    )
+                    
+                    # Finalize failure using metadata connection
+                    with self._db_connection() as (log_conn, log_cursor):
+                        self._finalize_failure(log_cursor, context, error_msg)
+                        log_conn.commit()
+                    raise
+                finally:
+                    # Close source connection if it was created
+                    if source_conn and source_conn != conn:
+                        try:
+                            source_conn.close()
+                        except Exception:
+                            pass
+                    
+                    # Close target connection if it was created
+                    if target_conn and target_conn != conn and target_conn != source_conn:
+                        try:
+                            target_conn.close()
+                        except Exception:
+                            pass
+
+    def _execute_history_job(self, request: QueueRequest) -> Dict[str, Any]:
+        start_date_str = request.payload.get("start_date")
+        end_date_str = request.payload.get("end_date")
+        truncate_flag = request.payload.get("truncate_flag", "N")
+        if not start_date_str or not end_date_str:
+            raise SchedulerRepositoryError("History job requires start_date and end_date")
+        start_date = datetime.fromisoformat(start_date_str).date()
+        end_date = datetime.fromisoformat(end_date_str).date()
+
+        current_date = start_date
+        runs = 0
+        while current_date <= end_date:
+            params = {
+                "param1": current_date.strftime("%d-%b-%Y"),
+                "truncate_flag": truncate_flag if runs == 0 else "N",
+            }
+            info(
+                f"Executing history slice {current_date} for {request.mapref} (truncate={params['truncate_flag']})"
+            )
+            self._execute_job_flow(request.mapref, {"params": params})
+            current_date += timedelta(days=1)
+            runs += 1
+        return {"status": "SUCCESS", "runs": runs}
+
+    def _execute_report_job(self, request: QueueRequest) -> Dict[str, Any]:
+        warning(f"Report job execution not implemented yet ({request.request_id})")
+        return {
+            "status": "NOT_IMPLEMENTED",
+            "message": "Report execution pending implementation",
+        }
+
+    def _handle_stop_request(self, request: QueueRequest) -> Dict[str, Any]:
+        """
+        Handle stop request for a running job.
+        The actual cancellation happens in the generated job code which checks for stop requests
+        during batch processing. This handler just acknowledges the request.
+        """
+        info(
+            f"Stop request received for {request.mapref} (request_id={request.request_id})"
+        )
+        
+        # The stop request stays in DWPRCREQ with status 'CLAIMED' until the running job
+        # acknowledges it and marks it as DONE. The generated job code polls for stop requests
+        # and performs the actual cancellation.
+        
+        return {
+            "status": "ACKNOWLEDGED",
+            "message": f"Stop request acknowledged for {request.mapref}. Job will stop at next batch boundary.",
+        }
+
+    # ------------------------------------------------------------------ #
+    # DB helpers
+    # ------------------------------------------------------------------ #
+    def _load_job_flow(self, cursor, mapref: str) -> Optional[Dict[str, Any]]:
+        # Get schema from environment (default to no schema prefix if not set)
+        schema = os.getenv("SCHEMA", "").strip()
+        schema_prefix = f"{schema}." if schema else ""
+        
+        # Query matches PL/SQL logic: curflg = 'Y' AND stflg = 'A'
+        # Also get TRGCONID from DWJOB and SQLCONID from DWMAPRSQL to determine connections
+        # Use LEFT JOINs to get job flow even if DWJOB/DWMAPRSQL don't match conditions
+        query = f"""
+            SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
+                   (SELECT s.sqlconid 
+                    FROM {schema_prefix}DWJOBDTL jd
+                    LEFT JOIN {schema_prefix}DWMAPRSQL s ON s.dwmaprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
+                    WHERE jd.mapref = f.mapref AND jd.curflg = 'Y'
+                    FETCH FIRST 1 ROW ONLY) as sqlconid
+            FROM {schema_prefix}DWJOBFLW f
+            LEFT JOIN {schema_prefix}DWJOB j ON j.mapref = f.mapref AND j.curflg = 'Y' AND j.stflg = 'A'
+            WHERE f.mapref = :mapref
+              AND f.curflg = 'Y'
+              AND f.stflg = 'A'
+        """
+        
+        debug(f"Loading job flow for mapref={mapref} with query: {query}")
+        debug(f"Using schema prefix: '{schema_prefix}'")
+        
+        cursor.execute(query, {"mapref": mapref})
+        row = cursor.fetchone()
+        
+        # Debug: Check if DWJOB record exists for this mapref
+        if row:
+            debug(f"Found job flow record. Checking DWJOB for TRGCONID...")
+            check_dwjob_query = f"""
+                SELECT jobid, mapref, trgconid, curflg, stflg
+                FROM {schema_prefix}DWJOB
+                WHERE mapref = :mapref
+            """
+            cursor.execute(check_dwjob_query, {"mapref": mapref})
+            dwjob_rows = cursor.fetchall()
+            if dwjob_rows:
+                debug(f"Found {len(dwjob_rows)} DWJOB record(s) for mapref={mapref}:")
+                for dwjob_row in dwjob_rows:
+                    debug(f"  JOBID={dwjob_row[0]}, MAPREF={dwjob_row[1]}, TRGCONID={dwjob_row[2]}, CURFLG={dwjob_row[3]}, STFLG={dwjob_row[4]}")
+            else:
+                debug(f"No DWJOB records found for mapref={mapref}")
+        
+        if not row:
+            # Check if there are any records for this mapref (for debugging)
+            check_query = f"""
+                SELECT jobflwid, jobid, mapref, curflg, stflg
+                FROM {schema_prefix}DWJOBFLW
+                WHERE mapref = :mapref
+            """
+            cursor.execute(check_query, {"mapref": mapref})
+            all_rows = cursor.fetchall()
+            
+            if all_rows:
+                debug(f"Found {len(all_rows)} record(s) for mapref={mapref}, but none match curflg='Y' AND stflg='A':")
+                for r in all_rows:
+                    debug(f"  JOBFLWID={r[0]}, JOBID={r[1]}, MAPREF={r[2]}, CURFLG={r[3]}, STFLG={r[4]}")
+                error(
+                    f"No active job flow found for {mapref}. "
+                    f"Found {len(all_rows)} record(s) but none with curflg='Y' AND stflg='A'. "
+                    f"Please ensure at least one record has curflg='Y' AND stflg='A'"
+                )
+            else:
+                error(f"No job flow records found at all for mapref={mapref}")
+            return None
+        
+        job_flow = {
+            "JOBFLWID": row[0],
+            "JOBID": row[1],
+            "MAPREF": row[2],
+            "DWLOGIC": _read_lob(row[3]),
+            "TRGCONID": row[4] if len(row) > 4 else None,  # Target connection ID
+            "SQLCONID": row[5] if len(row) > 5 else None,  # Source connection ID
+        }
+        
+        debug(f"Loaded job flow: JOBFLWID={job_flow['JOBFLWID']}, JOBID={job_flow['JOBID']}, MAPREF={job_flow['MAPREF']}, TRGCONID={job_flow['TRGCONID']}, SQLCONID={job_flow['SQLCONID']}")
+        logic_length = len(job_flow['DWLOGIC']) if job_flow['DWLOGIC'] else 0
+        debug(f"DWLOGIC length: {logic_length} characters")
+        
+        return job_flow
+
+    def _create_process_log(self, cursor, job_flow: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+        prcid = _generate_numeric_id(cursor, "DWPRCLOGSEQ")
+        # Ensure prcid is a valid integer
+        if not isinstance(prcid, int):
+            try:
+                prcid = int(prcid)
+            except (ValueError, TypeError) as e:
+                error(f"Invalid PRCID generated: {prcid} (type: {type(prcid).__name__})")
+                raise SchedulerRepositoryError(f"Failed to generate valid PRCID: {prcid}") from e
+        debug(f"Generated PRCID: {prcid} (type: {type(prcid).__name__})")
+        
+        # Ensure jobid and jobflwid are integers (Oracle expects NUMBER type)
+        # Oracle may return Decimal, int, float, or string - convert all to int
+        def _to_int(value):
+            """Convert various numeric types to int for Oracle NUMBER columns."""
+            if value is None:
+                return None
+            if isinstance(value, (int, float)):
+                return int(value)
+            if isinstance(value, str):
+                # Try to convert string to int
+                try:
+                    return int(float(value))  # Handle "123.0" -> 123
+                except ValueError:
+                    raise ValueError(f"Cannot convert '{value}' to integer")
+            # Handle Decimal and other numeric types
+            try:
+                return int(float(value))
+            except (ValueError, TypeError):
+                raise ValueError(f"Cannot convert {type(value).__name__} '{value}' to integer")
+        
+        # Get Oracle session ID (NUMBER type, not UUID string)
+        # DWPRCLOG.sessionid is NUMBER(30), matching PL/SQL: SYS_CONTEXT('USERENV','SESSIONID')
+        try:
+            cursor.execute("SELECT SYS_CONTEXT('USERENV','SESSIONID') FROM dual")
+            session_id_row = cursor.fetchone()
+            if session_id_row and session_id_row[0] is not None:
+                session_id = _to_int(session_id_row[0])
+            else:
+                # Fallback: use a numeric ID if Oracle session ID is not available
+                session_id = int(datetime.utcnow().timestamp() * 1000000) % (10**30)
+            debug(f"Session ID: {session_id} (type: {type(session_id).__name__})")
+        except Exception as e:
+            error(f"Failed to get Oracle session ID: {e}")
+            # Fallback: use a numeric ID
+            session_id = int(datetime.utcnow().timestamp() * 1000000) % (10**30)
+            debug(f"Using fallback session ID: {session_id}")
+        
+        param_values = [params.get(f"param{i}", None) for i in range(1, 11)]
+        param_log = " | ".join(
+            f"param{i}={value}" for i, value in enumerate(param_values, start=1) if value is not None
+        )
+        
+        try:
+            jobid_raw = job_flow.get("JOBID")
+            jobid = _to_int(jobid_raw)
+            debug(f"JOBID: raw={jobid_raw} (type={type(jobid_raw).__name__}), converted={jobid}")
+        except Exception as e:
+            error(f"Failed to convert JOBID: {job_flow.get('JOBID')} (type: {type(job_flow.get('JOBID')).__name__}): {e}")
+            raise SchedulerRepositoryError(f"Invalid JOBID value: {job_flow.get('JOBID')}") from e
+        
+        try:
+            jobflwid_raw = job_flow.get("JOBFLWID")
+            jobflwid = _to_int(jobflwid_raw)
+            debug(f"JOBFLWID: raw={jobflwid_raw} (type={type(jobflwid_raw).__name__}), converted={jobflwid}")
+        except Exception as e:
+            error(f"Failed to convert JOBFLWID: {job_flow.get('JOBFLWID')} (type: {type(job_flow.get('JOBFLWID')).__name__}): {e}")
+            raise SchedulerRepositoryError(f"Invalid JOBFLWID value: {job_flow.get('JOBFLWID')}") from e
+
+        # Prepare values with explicit type conversion
+        # Ensure all numeric values are int (not Decimal or float)
+        # String values can be passed as-is (they're already strings or None)
+        insert_values = {
+            "prcid": int(prcid) if prcid is not None else None,
+            "jobid": int(jobid) if jobid is not None else None,
+            "jobflwid": int(jobflwid) if jobflwid is not None else None,
+            "prclog": param_log[:4000] if param_log else None,
+            "mapref": job_flow.get("MAPREF"),
+            "sessionid": session_id,
+            "param1": param_values[0],
+            "param2": param_values[1],
+            "param3": param_values[2],
+            "param4": param_values[3],
+            "param5": param_values[4],
+            "param6": param_values[5],
+            "param7": param_values[6],
+            "param8": param_values[7],
+            "param9": param_values[8],
+            "param10": param_values[9],
+        }
+        debug(f"Inserting into DWPRCLOG with values: {[(k, v, type(v).__name__) for k, v in insert_values.items()]}")
+
+        cursor.execute(
+            """
+            INSERT INTO DWPRCLOG (
+                prcid, jobid, jobflwid,
+                strtdt, status, reccrdt, recupdt,
+                prclog, mapref, sessionid,
+                param1, param2, param3, param4, param5,
+                param6, param7, param8, param9, param10
+            ) VALUES (
+                :prcid, :jobid, :jobflwid,
+                SYSTIMESTAMP, 'IP', SYSTIMESTAMP, SYSTIMESTAMP,
+                :prclog, :mapref, :sessionid,
+                :param1, :param2, :param3, :param4, :param5,
+                :param6, :param7, :param8, :param9, :param10
+            )
+            """,
+            insert_values,
+        )
+        return {"PRCID": prcid, "SESSIONID": session_id}
+
+    def _finalize_success(self, cursor, job_flow, context, result):
+        cursor.execute(
+            """
+            UPDATE DWPRCLOG
+            SET enddt = SYSTIMESTAMP,
+                status = 'PC',
+                recupdt = SYSTIMESTAMP,
+                msg = NULL
+            WHERE prcid = :prcid
+            """,
+            {"prcid": context["PRCID"]},
+        )
+
+        cursor.execute(
+            "SELECT COUNT(1) FROM DWJOBLOG WHERE prcid = :prcid",
+            {"prcid": context["PRCID"]},
+        )
+        existing_logs = cursor.fetchone()[0]
+        if existing_logs:
+            return
+
+        joblogid = _generate_numeric_id(cursor, "DWJOBLOGSEQ")
+        cursor.execute(
+            """
+            INSERT INTO DWJOBLOG (
+                joblogid, prcdt, mapref, jobid,
+                srcrows, trgrows, errrows,
+                reccrdt, prcid, sessionid
+            ) VALUES (
+                :joblogid, SYSTIMESTAMP, :mapref, :jobid,
+                :srcrows, :trgrows, :errrows,
+                SYSTIMESTAMP, :prcid, :sessionid
+            )
+            """,
+            {
+                "joblogid": joblogid,
+                "mapref": job_flow.get("MAPREF"),
+                "jobid": job_flow["JOBID"],
+                "srcrows": result.get("source_rows"),
+                "trgrows": result.get("target_rows"),
+                "errrows": result.get("error_rows"),
+                "prcid": context["PRCID"],
+                "sessionid": context["SESSIONID"],
+            },
+        )
+
+    def _finalize_failure(self, cursor, context, message: str):
+        if not context:
+            return
+        cursor.execute(
+            """
+            UPDATE DWPRCLOG
+            SET enddt = SYSTIMESTAMP,
+                status = 'FL',
+                recupdt = SYSTIMESTAMP,
+                msg = :msg
+            WHERE prcid = :prcid
+            """,
+            {
+                "msg": message[:400] if message else None,
+                "prcid": context["PRCID"],
+            },
+        )
+
+    @contextmanager
+    def _db_connection(self):
+        connection = create_oracle_connection()
+        cursor = connection.cursor()
+        try:
+            yield connection, cursor
+        finally:
+            try:
+                cursor.close()
+            finally:
+                connection.close()
+

@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, send_file
 from database.dbconnect import create_oracle_connection
 import os
 from modules.logger import info, error
+from modules.mapper import pkgdwmapr_python as pkgdwmapr
 
 
 # Get Oracle schema from environment
@@ -74,16 +75,17 @@ def fetch_sql_logic():
         try:
             cursor = conn.cursor()
             
-            # Query to fetch SQL logic for specific code
-            query = "SELECT DWMAPRSQL FROM DWMAPRSQL WHERE DWMAPRSQLCD = :sql_code AND CURFLG = 'Y'"
+            # Query to fetch SQL logic and connection ID for specific code
+            query = "SELECT DWMAPRSQL, SQLCONID FROM DWMAPRSQL WHERE DWMAPRSQLCD = :sql_code AND CURFLG = 'Y'"
             cursor.execute(query, {'sql_code': sql_code})
             
             # Fetch the result
             result = cursor.fetchone()
             
             if result:
-                # Extract the SQL content (CLOB)
+                # Extract the SQL content (CLOB) and connection ID
                 sql_content = result[0].read() if hasattr(result[0], 'read') else str(result[0])
+                connection_id = str(result[1]) if result[1] is not None else None
                 
                 info(f"Fetched SQL logic for code: {sql_code}")
                 
@@ -92,7 +94,8 @@ def fetch_sql_logic():
                     'message': f'Successfully fetched SQL logic for code: {sql_code}',
                     'data': {
                         'sql_code': sql_code,
-                        'sql_content': sql_content
+                        'sql_content': sql_content,
+                        'connection_id': connection_id
                     }
                 })
             else:
@@ -207,6 +210,7 @@ def save_sql():
         # Validate required parameters
         sql_code = data.get('sql_code')
         sql_content = data.get('sql_content')
+        connection_id = data.get('connection_id')  # Optional - source database connection
         
         if not sql_code:
             return jsonify({
@@ -231,33 +235,13 @@ def save_sql():
         conn = create_oracle_connection()
         
         try:
-            cursor = conn.cursor()
-            
-            # Create a variable to capture the return value
-            sql_id = cursor.var(int)
-            
-            # Call the Oracle package function
-            sql = f"""
-            BEGIN
-                :sql_id := {ORACLE_SCHEMA}.PKGDWMAPR.CREATE_UPDATE_SQL(
-                    p_dwmaprsqlcd => :sql_code,
-                    p_dwmaprsql => :sql_content
-                );
-            END;
-            """
-            
-            # Execute the PL/SQL block
-            cursor.execute(sql, {
-                'sql_code': sql_code,
-                'sql_content': sql_content,
-                'sql_id': sql_id
-            })
-            
-            # Commit the transaction
-            conn.commit()
-            
-            # Get the returned SQL ID
-            returned_sql_id = sql_id.getvalue()
+            # Call Python function with connection ID
+            returned_sql_id = pkgdwmapr.create_update_sql(
+                conn, 
+                sql_code, 
+                sql_content,
+                connection_id  # Pass the source connection ID
+            )
                         
             return jsonify({
                 'success': True,
@@ -292,6 +276,7 @@ def validate_sql():
         
         # Validate required parameters
         sql_content = data.get('sql_content')
+        connection_id = data.get('connection_id')  # Optional connection ID
         
         if not sql_content:
             return jsonify({
@@ -299,54 +284,50 @@ def validate_sql():
                 'message': 'SQL content is required'
             }), 400
         
-        # Create Oracle connection
-        conn = create_oracle_connection()
+        # Create connection based on connection_id
+        # If connection_id is provided, use that connection for validation
+        # Otherwise, use metadata connection
+        if connection_id:
+            try:
+                from database.dbconnect import create_target_connection
+                conn = create_target_connection(connection_id)
+                connection_name = f"connection ID {connection_id}"
+            except Exception as e:
+                error(f"Error creating target connection: {str(e)}")
+                return jsonify({
+                    'success': False,
+                    'message': f'Failed to connect to selected database: {str(e)}',
+                    'is_valid': False
+                }), 500
+        else:
+            conn = create_oracle_connection()
+            connection_name = "metadata connection"
         
         try:
-            cursor = conn.cursor()
-            
-            # Create a variable to capture the return value
-            validation_result = cursor.var(str)
-            
-            # Call the Oracle package function
-            sql = f"""
-            BEGIN
-                :validation_result := {ORACLE_SCHEMA}.PKGDWMAPR.VALIDATE_SQL(
-                    p_logic => :sql_content
-                );
-            END;
-            """
-            
-            # Execute the PL/SQL block
-            cursor.execute(sql, {
-                'sql_content': sql_content,
-                'validation_result': validation_result
-            })
-            
-            # Get the validation result ('Y' for valid, 'N' for invalid)
-            result = validation_result.getvalue()
+            # Validate SQL by executing EXPLAIN PLAN or trying to parse it
+            result = pkgdwmapr.validate_sql(conn, sql_content)
             
             # Check if validation passed or failed
             if result == 'Y':
-                info("SQL validation passed successfully")
+                info(f"SQL validation passed successfully on {connection_name}")
                 return jsonify({
                     'success': True,
-                    'message': 'SQL validation passed successfully',
+                    'message': f'SQL validation passed successfully on {connection_name}',
                     'is_valid': True,
                     'validation_result': result
                 })
             else:
-                info("SQL validation failed")
+                info(f"SQL validation failed on {connection_name}")
                 return jsonify({
                     'success': False,
-                    'message': 'SQL validation failed',
+                    'message': f'SQL validation failed on {connection_name}: {result}',
                     'is_valid': False,
                     'validation_result': result
                 })
             
         except Exception as e:
             error_message = str(e)
-            error(f"Database error in validate_sql: {error_message}")
+            error(f"Database error in validate_sql on {connection_name}: {error_message}")
             return jsonify({
                 'success': False,
                 'message': f'Database error during validation: {error_message}',
@@ -363,4 +344,39 @@ def validate_sql():
             'message': f'An error occurred while validating SQL: {str(e)}',
             'is_valid': False
         }), 500
+
+
+@manage_sql_bp.route('/get-connections', methods=['GET'])
+def get_connections():
+    """
+    Get list of active database connections from DWDBCONDTLS
+    This allows manage_sql to query data from external/source databases
+    """
+    try:
+        conn = create_oracle_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT conid, connm, dbhost, dbsrvnm
+                FROM DWDBCONDTLS
+                WHERE curflg = 'Y'
+                ORDER BY connm
+            """)
+            
+            connections = []
+            for row in cursor.fetchall():
+                connections.append({
+                    'conid': str(row[0]),
+                    'connm': row[1],
+                    'dbhost': row[2],
+                    'dbsrvnm': row[3]
+                })
+            
+            cursor.close()
+            return jsonify(connections)
+        finally:
+            conn.close()
+    except Exception as e:
+        error(f"Error fetching connections: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 

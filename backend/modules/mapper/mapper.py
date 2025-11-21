@@ -461,10 +461,15 @@ def get_by_reference(reference):
                 'freqCode': main_result['FRQCD'] or '',
                 'sourceSystem': main_result['SRCSYSTM'] or '',
                 'bulkProcessRows': main_result['BLKPRCROWS'],
+                'targetConnectionId': str(main_result['TRGCONID']) if main_result.get('TRGCONID') else None,
                 'isReferenceDisabled': True,
                 'logic_verification_status': main_result['LGVRFYFLG'],
                 'activate_status' : main_result['STFLG'],
-                'job_creation_status': job_status
+                'job_creation_status': job_status,
+                # Checkpoint configuration (handle NULL values for older mappings)
+                'checkpointStrategy': main_result.get('CHKPNTSTRTGY') if main_result.get('CHKPNTSTRTGY') else 'AUTO',
+                'checkpointColumn': main_result.get('CHKPNTCLNM') if main_result.get('CHKPNTCLNM') else '',
+                'checkpointEnabled': main_result.get('CHKPNTENBLD') == 'Y' if main_result.get('CHKPNTENBLD') else True,
             }
            
             # Transform the details result into rows
@@ -539,6 +544,14 @@ def save_to_db():
             # Oracle connections auto-commit unless explicitly started a transaction
             # No need to explicitly begin a transaction
            
+            # Extract target connection ID (can be null/None for metadata connection)
+            target_connection_id = form_data.get('targetConnectionId')
+            
+            # Extract checkpoint configuration
+            checkpoint_strategy = form_data.get('checkpointStrategy', 'AUTO')
+            checkpoint_column = form_data.get('checkpointColumn', None)
+            checkpoint_enabled = 'Y' if form_data.get('checkpointEnabled', True) else 'N'
+            
             mapid = create_update_mapping(
                 conn,
                 form_data['reference'],
@@ -552,7 +565,11 @@ def save_to_db():
                 datetime.datetime.now(),
                 'N' , # Default to Active
                 form_data['bulkProcessRows'],
-                user_id  # Pass the user_id parameter
+                p_trgconid=target_connection_id,  # Target connection ID
+                p_user=user_id,  # Pass the user_id parameter
+                p_chkpntstrtgy=checkpoint_strategy,  # Checkpoint strategy
+                p_chkpntclnm=checkpoint_column,  # Checkpoint column name
+                p_chkpntenbld=checkpoint_enabled  # Checkpoint enabled flag
             )
            
             processed_rows = []
@@ -767,6 +784,39 @@ def parameter_scd_type():
         finally:
             conn.close()
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@mapper_bp.route('/get-connections', methods=['GET'])
+def get_connections():
+    """
+    Get list of active database connections from DWDBCONDTLS
+    """
+    try:
+        conn = create_oracle_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT conid, connm, dbhost, dbsrvnm
+                FROM DWDBCONDTLS
+                WHERE curflg = 'Y'
+                ORDER BY connm
+            """)
+            
+            connections = []
+            for row in cursor.fetchall():
+                connections.append({
+                    'conid': str(row[0]),
+                    'connm': row[1],
+                    'dbhost': row[2],
+                    'dbsrvnm': row[3]
+                })
+            
+            cursor.close()
+            return jsonify(connections)
+        finally:
+            conn.close()
+    except Exception as e:
+        error(f"Error fetching connections: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @mapper_bp.route('/activate-deactivate', methods=['POST'])

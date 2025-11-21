@@ -20,6 +20,7 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  FormControlLabel,
   ButtonGroup,
   Menu,
   ListItemIcon,
@@ -176,13 +177,25 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
 
   // Add state for data type options
   const [dataTypeOptions, setDataTypeOptions] = useState([])
+  
+  // Add state for database connections
+  const [connections, setConnections] = useState([])
 
   // Add useEffect to fetch data type options
   useEffect(() => {
     if (reference) {
-      fetchReferenceDetails(reference)
-    }else{
-        handleCreateNewReference()
+      // Wrap in try-catch to prevent crashes
+      try {
+        fetchReferenceDetails(reference).catch((error) => {
+          console.error('Error in fetchReferenceDetails:', error)
+          message.error('Failed to load mapping details. Please try again.')
+        })
+      } catch (error) {
+        console.error('Error calling fetchReferenceDetails:', error)
+        message.error('Failed to load mapping details. Please try again.')
+      }
+    } else {
+      handleCreateNewReference()
     }
 
     const fetchDataTypeOptions = async () => {
@@ -201,6 +214,25 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
     }
 
     fetchDataTypeOptions()
+    
+    // Fetch database connections
+    const fetchConnections = async () => {
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/mapper/get-connections`
+        )
+        if (!response.ok) {
+          throw new Error('Failed to fetch connections')
+        }
+        const data = await response.json()
+        setConnections(data)
+      } catch (error) {
+        console.error('Failed to load connections:', error)
+        message.error(getApiErrorMessage(error, 'Failed to load database connections'))
+      }
+    }
+    
+    fetchConnections()
   }, [])
 
   // REMOVED: const [isUpperSectionExpanded, setIsUpperSectionExpanded] = useState(false)
@@ -215,6 +247,11 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
     freqCode: '',
     sourceSystem: '',
     bulkProcessRows: '',
+    targetConnectionId: null,
+    // Checkpoint configuration fields
+    checkpointStrategy: 'AUTO',
+    checkpointColumn: '',
+    checkpointEnabled: true,
   })
 
   // Removed pagination state - using scrollbar instead
@@ -300,6 +337,13 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
     { value: 'MN', label: 'Monthly' },
     { value: 'HY', label: 'Half-Yearly' },
     { value: 'YR', label: 'Yearly' },
+  ]
+
+  const CHECKPOINT_STRATEGIES = [
+    { value: 'AUTO', label: 'AUTO - Auto-detect (Recommended)', description: 'System selects KEY if column specified, else PYTHON' },
+    { value: 'KEY', label: 'KEY - Use Source Column(s)', description: 'Fast, uses WHERE clause filtering. Supports composite keys (comma-separated)' },
+    { value: 'PYTHON', label: 'PYTHON - Skip Rows', description: 'Universal fallback, works with any source' },
+    { value: 'NONE', label: 'NONE - Disabled', description: 'Always full reload, no checkpoint' },
   ]
 
   // Add these state variables with the other states
@@ -910,6 +954,13 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
           .string()
           .min(1, 'Source System is required')
           .max(30, 'Source System cannot exceed 30 characters'),
+        targetConnectionId: z
+          .string()
+          .min(1, 'Target Connection is required. Please select a connection.')
+          .nullable()
+          .refine((val) => val !== null && val !== '', {
+            message: 'Target Connection is required. Please select a connection.',
+          }),
         // bulkProcessRows: z
         //   .string()
         //   .regex(/^\d*$/, 'Must be a number')
@@ -918,6 +969,12 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
 
       // Validate form data
       formSchema.parse(formData)
+      
+      // Additional check for target connection
+      if (!formData.targetConnectionId) {
+        message.error('Target Connection is required. Please select a connection.')
+        return
+      }
     } catch (error) {
       // Handle validation errors
       if (error instanceof z.ZodError) {
@@ -1240,38 +1297,80 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
       const response = await axios.get(
         `${process.env.NEXT_PUBLIC_API_URL}/mapper/get-by-reference/${reference}`
       )
-      const data = response.data
-
+      
+      // Safely extract data
+      const data = response?.data || {}
+      
+      // Safely extract formData with defaults
+      const formDataFromResponse = data.formData || {}
+      
+      // Log for debugging (remove in production)
+      console.log('Fetched reference data:', {
+        hasData: !!data,
+        hasFormData: !!data.formData,
+        formDataKeys: data.formData ? Object.keys(data.formData) : [],
+        reference: formDataFromResponse.reference
+      })
+      
       setFormData({
-        ...data.formData,
-        freqCode: data.formData.freqCode || '',
+        reference: formDataFromResponse.reference || '',
+        description: formDataFromResponse.description || '',
+        mapperId: formDataFromResponse.mapperId || '',
+        targetSchema: formDataFromResponse.targetSchema || '',
+        tableName: formDataFromResponse.tableName || '',
+        tableType: formDataFromResponse.tableType || '',
+        freqCode: formDataFromResponse.freqCode || '',
+        sourceSystem: formDataFromResponse.sourceSystem || '',
+        bulkProcessRows: formDataFromResponse.bulkProcessRows || '',
+        targetConnectionId: formDataFromResponse.targetConnectionId || null,
+        // Ensure checkpoint fields have defaults even if missing from backend
+        checkpointStrategy: formDataFromResponse.checkpointStrategy || 'AUTO',
+        checkpointColumn: formDataFromResponse.checkpointColumn || '',
+        checkpointEnabled: typeof formDataFromResponse.checkpointEnabled === 'boolean'
+          ? formDataFromResponse.checkpointEnabled
+          : (formDataFromResponse.checkpointEnabled === 'Y' || formDataFromResponse.checkpointEnabled === true || formDataFromResponse.checkpointEnabled === undefined || formDataFromResponse.checkpointEnabled === null)
+            ? true
+            : false,
       })
 
-      setRows(
-        data.rows.length > 0
-          ? data.rows
-          : [...Array(10)].map(() => ({
-              mapdtlid: '',
-              fieldName: '',
-              dataType: '',
-              primaryKey: false,
-              pkSeq: '',
-              nulls: false,
-              logic: '',
-              validator: 'N',
-              keyColumn: '',
-              valColumn: '',
-              execSequence: '',
-              mapCombineCode: '',
-              LogicVerFlag: '',
-              scdType: '1',
-              fieldDesc: '',
-            }))
-      )
+      // Sort rows by execution sequence (EXCSEQ) if available
+      let sortedRows = []
+      if (data.rows && data.rows.length > 0) {
+        sortedRows = [...data.rows].sort((a, b) => {
+          const seqA = parseInt(a.execSequence) || 0
+          const seqB = parseInt(b.execSequence) || 0
+          // First sort by execution sequence
+          if (seqA !== seqB) {
+            return seqA - seqB
+          }
+          // If execution sequence is same or missing, maintain original order
+          return 0
+        })
+      } else {
+        sortedRows = [...Array(10)].map(() => ({
+          mapdtlid: '',
+          fieldName: '',
+          dataType: '',
+          primaryKey: false,
+          pkSeq: '',
+          nulls: false,
+          logic: '',
+          validator: 'N',
+          keyColumn: '',
+          valColumn: '',
+          execSequence: '',
+          mapCombineCode: '',
+          LogicVerFlag: '',
+          scdType: '1',
+          fieldDesc: '',
+        }))
+      }
+      
+      setRows(sortedRows)
 
       // Store original data for change tracking
-      setOriginalFormData(data.formData)
-      setOriginalRows(data.rows)
+      setOriginalFormData(formDataFromResponse)
+      setOriginalRows(data.rows || [])
       setValidationStatus({})
       setLastSearchedRef(reference)
       setIsUpdateMode(true)
@@ -1283,10 +1382,10 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
       setPkSeqErrors({})
       setHasDuplicateKeys(false)
 
-      // Set state based on the new status fields from the backend
-      const logicVerificationStatus = data.formData.logic_verification_status === 'Y';
-      const activateStatus = data.formData.activate_status === 'A';
-      const jobCreationStatus = data.formData.job_creation_status === 'Y';
+      // Set state based on the new status fields from the backend (with safe access)
+      const logicVerificationStatus = formDataFromResponse.logic_verification_status === 'Y';
+      const activateStatus = formDataFromResponse.activate_status === 'A';
+      const jobCreationStatus = formDataFromResponse.job_creation_status === 'Y';
 
       // Update workflow states based on backend status
       setHasUnsavedChanges(false);
@@ -1301,6 +1400,15 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
       setShowReferenceTable(false)
       setShowMapperForm(true)
     } catch (error) {
+      // Log detailed error information for debugging
+      console.error('Error fetching reference details:', {
+        error,
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        reference
+      })
+      
       if (error.response && error.response.status === 404) {
         // Keep the reference but reset other fields
         setFormData((prev) => ({
@@ -1313,6 +1421,11 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
           freqCode: '',
           sourceSystem: '',
           bulkProcessRows: '',
+          targetConnectionId: null,
+          // Checkpoint configuration defaults
+          checkpointStrategy: 'AUTO',
+          checkpointColumn: '',
+          checkpointEnabled: true,
         }))
         setRows(
           [...Array(10)].map(() => ({
@@ -1865,6 +1978,11 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
       freqCode: '',
       sourceSystem: '',
       bulkProcessRows: '',
+      targetConnectionId: null,
+      // Checkpoint configuration defaults
+      checkpointStrategy: 'AUTO',
+      checkpointColumn: '',
+      checkpointEnabled: true,
     })
 
     // Reset all state variables
@@ -2617,52 +2735,52 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
                   style: { fontSize: '0.8rem' },
                 }}
               />
-              <TextField
-                label="Target Schema"
+              {/* Hidden field for Target Schema - value is maintained for backend compatibility */}
+              <input
+                type="hidden"
                 value={formData.targetSchema}
-                onChange={(e) =>
-                  handleFormChange('targetSchema', e.target.value)
-                }
+              />
+              <FormControl
                 size="small"
-                className="col-span-2"
                 variant="outlined"
-                error={!!schemaError}
-                helperText={
-                  schemaError
-                    ? 'Must start with a letter, only A-Z, 0-9, _'
-                    : ''
-                }
-                // Disable the field if this is an update of an existing mapper
-                disabled={isUpdateMode}
-                sx={{
-                  '& .MuiOutlinedInput-root': {
-                    height: '28px',
-                    borderRadius: '6px',
+                className="col-span-2"
+                required
+                sx={{ '& .MuiOutlinedInput-root': { height: '28px' } }}
+              >
+                <InputLabel
+                  id="target-connection-label"
+                  className={`${darkMode ? 'text-gray-400' : ''}`}
+                  sx={{ fontSize: '0.7rem' }}
+                  required
+                >
+                  Target Connection
+                </InputLabel>
+                <Select
+                  labelId="target-connection-label"
+                  value={formData.targetConnectionId || ''}
+                  onChange={(e) =>
+                    handleFormChange('targetConnectionId', e.target.value || null)
+                  }
+                  label="Target Connection"
+                  required
+                  className={`${darkMode ? 'text-gray-200' : ''}`}
+                  sx={{ 
+                    fontSize: '0.8rem',
                     backgroundColor: darkMode
                       ? 'rgba(31, 41, 55, 0.5)'
-                      : isUpdateMode
-                        ? 'rgba(229, 231, 235, 0.5)'
-                        : 'white',
-                  },
-                  '& .MuiInputLabel-root': {
-                    fontSize: '0.7rem',
-                    transform: 'translate(14px, 7px) scale(1)',
-                    '&.MuiInputLabel-shrink': {
-                      transform: 'translate(14px, -6px) scale(0.75)',
-                    },
-                  },
-                  '& .MuiFormHelperText-root': {
-                    position: 'absolute',
-                    bottom: '-16px',
-                    margin: 0,
-                    fontSize: '0.625rem',
-                    lineHeight: '1',
-                  },
-                }}
-                InputProps={{
-                  style: { fontSize: '0.8rem' },
-                }}
-              />
+                      : 'white',
+                  }}
+                >
+                  <MenuItem value="">
+                    <em>Select a connection...</em>
+                  </MenuItem>
+                  {connections.map((conn) => (
+                    <MenuItem key={conn.conid} value={conn.conid}>
+                      {conn.connm} ({conn.dbhost}/{conn.dbsrvnm})
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
               <TextField
                 label="Target Table"
                 value={formData.tableName}
@@ -2848,6 +2966,185 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
                 InputProps={{
                   style: { fontSize: '0.8rem' },
                 }}
+              />
+            </div>
+
+            {/* Second Row: Checkpoint Configuration */}
+            <div
+              className="grid grid-cols-8 gap-3"
+              style={{
+                marginTop: '12px',
+                padding: '12px',
+                borderRadius: '8px',
+                backgroundColor: darkMode
+                  ? 'rgba(59, 130, 246, 0.05)'
+                  : 'rgba(59, 130, 246, 0.03)',
+                border: `1px solid ${darkMode ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.15)'}`,
+              }}
+            >
+              {/* Checkpoint Strategy Dropdown */}
+              <FormControl
+                size="small"
+                variant="outlined"
+                className="col-span-3"
+                sx={{ 
+                  '& .MuiOutlinedInput-root': { 
+                    height: '40px',
+                    paddingTop: '0px',
+                    paddingBottom: '0px',
+                  },
+                  '& .MuiInputLabel-root': {
+                    fontSize: '0.7rem',
+                    '&.MuiInputLabel-shrink': {
+                      transform: 'translate(14px, -9px) scale(0.75)',
+                    },
+                  },
+                }}
+              >
+                <InputLabel
+                  id="checkpoint-strategy-label"
+                  className={`${darkMode ? 'text-gray-400' : ''}`}
+                  sx={{ fontSize: '0.7rem' }}
+                >
+                  Checkpoint Strategy
+                </InputLabel>
+                <Select
+                  labelId="checkpoint-strategy-label"
+                  value={formData?.checkpointStrategy || 'AUTO'}
+                  onChange={(e) =>
+                    handleFormChange('checkpointStrategy', e.target.value)
+                  }
+                  label="Checkpoint Strategy"
+                  className={`${darkMode ? 'text-gray-200' : ''}`}
+                  renderValue={(selected) => {
+                    const strategy = CHECKPOINT_STRATEGIES.find(s => s.value === selected)
+                    return strategy ? strategy.label : selected
+                  }}
+                  sx={{ 
+                    fontSize: '0.8rem',
+                    backgroundColor: darkMode
+                      ? 'rgba(31, 41, 55, 0.5)'
+                      : 'white',
+                    '& .MuiSelect-select': {
+                      paddingTop: '10px',
+                      paddingBottom: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      whiteSpace: 'normal',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      lineHeight: '1.2',
+                    },
+                  }}
+                  MenuProps={{
+                    PaperProps: {
+                      sx: {
+                        maxHeight: '300px',
+                        '& .MuiMenuItem-root': {
+                          whiteSpace: 'normal',
+                          paddingTop: '8px',
+                          paddingBottom: '8px',
+                        },
+                      },
+                    },
+                  }}
+                >
+                  {CHECKPOINT_STRATEGIES.map((strategy) => (
+                    <MenuItem key={strategy.value} value={strategy.value}>
+                      <div style={{ width: '100%' }}>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 500, marginBottom: '2px' }}>
+                          {strategy.label}
+                        </div>
+                        <div style={{ fontSize: '0.65rem', color: darkMode ? '#9CA3AF' : '#6B7280', lineHeight: '1.2' }}>
+                          {strategy.description}
+                        </div>
+                      </div>
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              {/* Checkpoint Column Name */}
+              <TextField
+                label="Checkpoint Column(s) (for KEY strategy)"
+                value={formData?.checkpointColumn || ''}
+                onChange={(e) =>
+                  handleFormChange('checkpointColumn', e.target.value.toUpperCase())
+                }
+                size="small"
+                className="col-span-3"
+                variant="outlined"
+                placeholder="e.g., TRANSACTION_ID or ORDER_ID,LINE_ITEM_ID"
+                disabled={(formData?.checkpointStrategy || 'AUTO') === 'NONE'}
+                helperText={
+                  (formData?.checkpointStrategy || 'AUTO') === 'KEY' && !formData?.checkpointColumn
+                    ? 'Required for KEY strategy. Use comma-separated values for composite keys (e.g., ORDER_ID,LINE_ITEM_ID)'
+                    : (formData?.checkpointStrategy || 'AUTO') === 'AUTO' && formData?.checkpointColumn
+                    ? formData.checkpointColumn.includes(',')
+                      ? 'Will use KEY strategy with composite key'
+                      : 'Will use KEY strategy'
+                    : formData?.checkpointColumn && formData.checkpointColumn.includes(',')
+                    ? 'Composite key: Use comma to separate columns (e.g., ORDER_ID,LINE_ITEM_ID)'
+                    : ''
+                }
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    height: '28px',
+                    borderRadius: '6px',
+                    backgroundColor: darkMode
+                      ? 'rgba(31, 41, 55, 0.5)'
+                      : (formData?.checkpointStrategy || 'AUTO') === 'NONE'
+                        ? 'rgba(229, 231, 235, 0.5)'
+                        : 'white',
+                  },
+                  '& .MuiInputLabel-root': {
+                    fontSize: '0.7rem',
+                    transform: 'translate(14px, 7px) scale(1)',
+                    '&.MuiInputLabel-shrink': {
+                      transform: 'translate(14px, -6px) scale(0.75)',
+                    },
+                  },
+                  '& .MuiFormHelperText-root': {
+                    position: 'absolute',
+                    bottom: '-16px',
+                    margin: 0,
+                    fontSize: '0.625rem',
+                    lineHeight: '1',
+                  },
+                }}
+                InputProps={{
+                  style: { fontSize: '0.8rem' },
+                }}
+              />
+
+              {/* Checkpoint Enabled Checkbox */}
+              <FormControlLabel
+                className="col-span-2"
+                control={
+                  <Checkbox
+                    checked={formData?.checkpointEnabled !== undefined ? formData.checkpointEnabled : true}
+                    onChange={(e) =>
+                      handleFormChange('checkpointEnabled', e.target.checked)
+                    }
+                    sx={{
+                      padding: '4px',
+                      '& .MuiSvgIcon-root': { fontSize: '1.2rem' },
+                      color: darkMode ? '#9CA3AF' : '#6B7280',
+                      '&.Mui-checked': {
+                        color: darkMode ? '#3B82F6' : '#2563EB',
+                      },
+                    }}
+                  />
+                }
+                label={
+                  <span style={{ 
+                    fontSize: '0.75rem',
+                    color: darkMode ? '#E5E7EB' : '#374151',
+                  }}>
+                    Enable Checkpoint/Restart
+                  </span>
+                }
+                sx={{ marginLeft: '4px' }}
               />
             </div>
           </div>
