@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from database.dbconnect  import create_oracle_connection
+from database.dbconnect  import create_metadata_connection
 
 from modules.helper_functions import get_parameter_mapping, add_parameter_mapping 
 
@@ -9,7 +9,7 @@ parameter_mapping_bp = Blueprint('parameter_mapping', __name__)
 @parameter_mapping_bp.route("/parameter_mapping", methods=["GET"])
 def parameter_display():
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             parameter_data = get_parameter_mapping(conn)
             return jsonify(parameter_data)
@@ -30,7 +30,7 @@ def add_parameter():
         if not all([prtyp, prcd, prdesc, prval]):
             return jsonify({"error": "All fields are required"}), 400
 
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             add_parameter_mapping(conn, prtyp, prcd, prdesc, prval)
             return jsonify({"message": "Parameter mapping added successfully"}), 200

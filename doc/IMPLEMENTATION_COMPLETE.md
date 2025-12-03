@@ -14,10 +14,10 @@ I've successfully added connection string support to the `manage_sql` module, fo
 
 ### 1. ✅ Backend Code Changes (COMPLETE)
 
-#### File: `backend/modules/mapper/pkgdwmapr_python.py`
+#### File: `backend/modules/mapper/pkgdms_mapr_python.py`
 - Updated `create_update_sql()` function
 - Added `p_sqlconid` parameter (optional, defaults to None)
-- Added connection validation against `DWDBCONDTLS`
+- Added connection validation against `DMS_DBCONDTLS`
 - Added connection ID to INSERT/UPDATE operations
 
 #### File: `backend/modules/manage_sql/manage_sql.py`
@@ -28,8 +28,8 @@ I've successfully added connection string support to the `manage_sql` module, fo
 ### 2. ✅ Database Migration Script (READY)
 
 #### File: `database_migration_manage_sql_connection.sql`
-- Adds `SQLCONID` column to `DWMAPRSQL` table
-- Creates foreign key constraint to `DWDBCONDTLS`
+- Adds `SQLCONID` column to `DMS_MAPRSQL` table
+- Creates foreign key constraint to `DMS_DBCONDTLS`
 - Includes verification queries
 - Includes rollback instructions
 
@@ -77,18 +77,18 @@ Or copy/paste these SQL commands:
 
 ```sql
 -- Add SQLCONID column
-ALTER TABLE DWMAPRSQL ADD (SQLCONID NUMBER);
+ALTER TABLE DMS_MAPRSQL ADD (SQLCONID NUMBER);
 
 -- Add foreign key constraint
-ALTER TABLE DWMAPRSQL ADD CONSTRAINT FK_DWMAPRSQL_SQLCONID 
-    FOREIGN KEY (SQLCONID) REFERENCES DWDBCONDTLS(CONID);
+ALTER TABLE DMS_MAPRSQL ADD CONSTRAINT FK_DMS_MAPRSQL_SQLCONID 
+    FOREIGN KEY (SQLCONID) REFERENCES DMS_DBCONDTLS(CONID);
 
 -- Add comment
-COMMENT ON COLUMN DWMAPRSQL.SQLCONID IS 'Source database connection ID from DWDBCONDTLS. NULL means use metadata connection.';
+COMMENT ON COLUMN DMS_MAPRSQL.SQLCONID IS 'Source database connection ID from DMS_DBCONDTLS. NULL means use metadata connection.';
 
 -- Verify (should return 1 row)
 SELECT column_name FROM user_tab_columns 
-WHERE table_name = 'DWMAPRSQL' AND column_name = 'SQLCONID';
+WHERE table_name = 'DMS_MAPRSQL' AND column_name = 'SQLCONID';
 ```
 
 ### Step 2: Verify Backend is Running ✅
@@ -153,13 +153,13 @@ await fetch('/manage-sql/save-sql', {
 
 ## 📊 Database Changes Summary
 
-### DWMAPRSQL Table (Updated)
+### DMS_MAPRSQL Table (Updated)
 
 **Before:**
 ```
-DWMAPRSQLID   NUMBER
-DWMAPRSQLCD   VARCHAR2(100)
-DWMAPRSQL     CLOB
+DMS_MAPRSQLID   NUMBER
+DMS_MAPRSQLCD   VARCHAR2(100)
+DMS_MAPRSQL     CLOB
 RECCRDT       DATE
 RECUPDT       DATE
 CURFLG        CHAR(1)
@@ -167,9 +167,9 @@ CURFLG        CHAR(1)
 
 **After:**
 ```
-DWMAPRSQLID   NUMBER
-DWMAPRSQLCD   VARCHAR2(100)
-DWMAPRSQL     CLOB
+DMS_MAPRSQLID   NUMBER
+DMS_MAPRSQLCD   VARCHAR2(100)
+DMS_MAPRSQL     CLOB
 SQLCONID      NUMBER       ⭐ NEW!
 RECCRDT       DATE
 RECUPDT       DATE
@@ -179,7 +179,7 @@ CURFLG        CHAR(1)
 ### Constraints Added
 
 ```
-FK_DWMAPRSQL_SQLCONID: DWMAPRSQL.SQLCONID → DWDBCONDTLS.CONID
+FK_DMS_MAPRSQL_SQLCONID: DMS_MAPRSQL.SQLCONID → DMS_DBCONDTLS.CONID
 ```
 
 ---
@@ -190,7 +190,7 @@ FK_DWMAPRSQL_SQLCONID: DWMAPRSQL.SQLCONID → DWDBCONDTLS.CONID
 ```sql
 SELECT column_name, data_type, nullable 
 FROM user_tab_columns 
-WHERE table_name = 'DWMAPRSQL' 
+WHERE table_name = 'DMS_MAPRSQL' 
 AND column_name = 'SQLCONID';
 
 -- Should return:
@@ -200,20 +200,20 @@ AND column_name = 'SQLCONID';
 ### Check SQL records with connections:
 ```sql
 SELECT 
-    s.DWMAPRSQLCD as SQL_CODE,
+    s.DMS_MAPRSQLCD as SQL_CODE,
     s.SQLCONID as CONNECTION_ID,
     c.CONNM as CONNECTION_NAME,
     s.CURFLG
-FROM DWMAPRSQL s
-LEFT JOIN DWDBCONDTLS c ON s.SQLCONID = c.CONID
+FROM DMS_MAPRSQL s
+LEFT JOIN DMS_DBCONDTLS c ON s.SQLCONID = c.CONID
 WHERE s.CURFLG = 'Y'
-ORDER BY s.DWMAPRSQLCD;
+ORDER BY s.DMS_MAPRSQLCD;
 ```
 
 ### Check available connections:
 ```sql
 SELECT CONID, CONNM, DBHOST, DBSRVNM, CURFLG
-FROM DWDBCONDTLS
+FROM DMS_DBCONDTLS
 WHERE CURFLG = 'Y'
 ORDER BY CONNM;
 ```
@@ -226,7 +226,7 @@ ORDER BY CONNM;
 |----------------------|--------------------|--------------------|
 | **Column Name**      | `TRGCONID`         | `SQLCONID`         |
 | **Purpose**          | Target (write to)  | Source (read from) |
-| **Table**            | `DWMAPR`           | `DWMAPRSQL`        |
+| **Table**            | `DMS_MAPR`           | `DMS_MAPRSQL`        |
 | **Implementation**   | ✅ Complete        | ✅ Complete        |
 | **Pattern Used**     | Same design pattern in both modules     |
 
@@ -246,7 +246,7 @@ ORDER BY CONNM;
 
 ### 3. Consistency
 - Same pattern as mapper module
-- Shared `DWDBCONDTLS` table
+- Shared `DMS_DBCONDTLS` table
 - Consistent API design
 
 ### 4. Maintainability
@@ -259,7 +259,7 @@ ORDER BY CONNM;
 ## 📁 Files Modified/Created
 
 ### Modified Files:
-1. ✅ `backend/modules/mapper/pkgdwmapr_python.py`
+1. ✅ `backend/modules/mapper/pkgdms_mapr_python.py`
 2. ✅ `backend/modules/manage_sql/manage_sql.py`
 
 ### Created Files:
@@ -281,7 +281,7 @@ ORDER BY CONNM;
 ### If connections dropdown is empty:
 ```sql
 -- Check if connections exist
-SELECT COUNT(*) FROM DWDBCONDTLS WHERE CURFLG = 'Y';
+SELECT COUNT(*) FROM DMS_DBCONDTLS WHERE CURFLG = 'Y';
 
 -- If 0, register connections in DB Connections module
 ```
@@ -289,10 +289,10 @@ SELECT COUNT(*) FROM DWDBCONDTLS WHERE CURFLG = 'Y';
 ### If getting foreign key error:
 ```sql
 -- Check if connection exists
-SELECT CONID, CONNM, CURFLG FROM DWDBCONDTLS WHERE CONID = <your_id>;
+SELECT CONID, CONNM, CURFLG FROM DMS_DBCONDTLS WHERE CONID = <your_id>;
 
 -- Activate if needed
-UPDATE DWDBCONDTLS SET CURFLG = 'Y' WHERE CONID = <your_id>;
+UPDATE DMS_DBCONDTLS SET CURFLG = 'Y' WHERE CONID = <your_id>;
 COMMIT;
 ```
 
@@ -311,7 +311,7 @@ COMMIT;
 
 **Code Files:**
 - `backend/modules/manage_sql/manage_sql.py` - API endpoints
-- `backend/modules/mapper/pkgdwmapr_python.py` - Core function
+- `backend/modules/mapper/pkgdms_mapr_python.py` - Core function
 - `database/dbconnect.py` - Connection creation
 
 ---
@@ -350,8 +350,8 @@ COMMIT;
 
 **What works now:**
 - Backend accepts `connection_id` parameter
-- Backend validates connection against `DWDBCONDTLS`
-- Backend saves connection ID to `DWMAPRSQL.SQLCONID`
+- Backend validates connection against `DMS_DBCONDTLS`
+- Backend saves connection ID to `DMS_MAPRSQL.SQLCONID`
 - Backend returns connection ID when fetching SQL
 - API endpoint to get available connections
 - Same pattern as mapper module

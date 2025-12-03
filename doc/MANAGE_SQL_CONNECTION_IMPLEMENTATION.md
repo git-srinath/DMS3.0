@@ -14,7 +14,7 @@ The `manage_sql` module now supports specifying a **source database connection**
 
 ### Key Features:
 1. ✅ Optional connection ID field in SQL management
-2. ✅ Connection validation against `DWDBCONDTLS` table
+2. ✅ Connection validation against `DMS_DBCONDTLS` table
 3. ✅ Backward compatible (NULL connection = use metadata connection)
 4. ✅ Connection dropdown API endpoint
 5. ✅ Complete historization support
@@ -25,36 +25,36 @@ The `manage_sql` module now supports specifying a **source database connection**
 
 ### 1. New Column: `SQLCONID`
 
-Added to the `DWMAPRSQL` table to store the source connection ID.
+Added to the `DMS_MAPRSQL` table to store the source connection ID.
 
 ```sql
-ALTER TABLE DWMAPRSQL ADD (SQLCONID NUMBER);
+ALTER TABLE DMS_MAPRSQL ADD (SQLCONID NUMBER);
 ```
 
 **Properties:**
 - **Type:** NUMBER
 - **Nullable:** YES
 - **Default:** NULL (uses metadata connection)
-- **Purpose:** References `DWDBCONDTLS.CONID` for source database connection
+- **Purpose:** References `DMS_DBCONDTLS.CONID` for source database connection
 
 ### 2. Foreign Key Constraint
 
 ```sql
-ALTER TABLE DWMAPRSQL ADD CONSTRAINT FK_DWMAPRSQL_SQLCONID 
-    FOREIGN KEY (SQLCONID) REFERENCES DWDBCONDTLS(CONID);
+ALTER TABLE DMS_MAPRSQL ADD CONSTRAINT FK_DMS_MAPRSQL_SQLCONID 
+    FOREIGN KEY (SQLCONID) REFERENCES DMS_DBCONDTLS(CONID);
 ```
 
-**Purpose:** Ensures connection ID references a valid connection in `DWDBCONDTLS`
+**Purpose:** Ensures connection ID references a valid connection in `DMS_DBCONDTLS`
 
 ---
 
 ## Backend Changes
 
-### 1. Updated `pkgdwmapr_python.py`
+### 1. Updated `pkgdms_mapr_python.py`
 
 #### Function: `create_update_sql()`
 
-**File:** `backend/modules/mapper/pkgdwmapr_python.py`
+**File:** `backend/modules/mapper/pkgdms_mapr_python.py`
 
 **Changes:**
 - Added `p_sqlconid` parameter (optional, defaults to `None`)
@@ -65,19 +65,19 @@ ALTER TABLE DWMAPRSQL ADD CONSTRAINT FK_DWMAPRSQL_SQLCONID
 
 **Signature:**
 ```python
-def create_update_sql(connection, p_dwmaprsqlcd, p_dwmaprsql, p_sqlconid=None):
+def create_update_sql(connection, p_dms_maprsqlcd, p_dms_maprsql, p_sqlconid=None):
     """
     Function to record SQL query
     
     Args:
         connection: Database connection
-        p_dwmaprsqlcd: SQL code identifier
-        p_dwmaprsql: SQL query content
-        p_sqlconid: Source database connection ID (from DWDBCONDTLS). 
+        p_dms_maprsqlcd: SQL code identifier
+        p_dms_maprsql: SQL query content
+        p_sqlconid: Source database connection ID (from DMS_DBCONDTLS). 
                     If None, uses metadata connection.
     
     Returns:
-        dwmaprsqlid
+        dms_maprsqlid
     """
 ```
 
@@ -90,7 +90,7 @@ if p_sqlconid is not None and str(p_sqlconid).strip() != '':
         sqlconid_val = int(p_sqlconid)
         # Validate connection exists and is active
         cursor.execute("""
-            SELECT conid FROM DWDBCONDTLS 
+            SELECT conid FROM DMS_DBCONDTLS 
             WHERE conid = :1 AND curflg = 'Y'
         """, [sqlconid_val])
         if not cursor.fetchone():
@@ -132,7 +132,7 @@ def save_sql():
     connection_id = data.get('connection_id')  # Optional
     
     # Call function with connection ID
-    returned_sql_id = pkgdwmapr.create_update_sql(
+    returned_sql_id = pkgdms_mapr.create_update_sql(
         conn, 
         sql_code, 
         sql_content,
@@ -162,7 +162,7 @@ def save_sql():
 **Code:**
 ```python
 # Query to fetch SQL logic and connection ID
-query = "SELECT DWMAPRSQL, SQLCONID FROM DWMAPRSQL WHERE DWMAPRSQLCD = :sql_code AND CURFLG = 'Y'"
+query = "SELECT DMS_MAPRSQL, SQLCONID FROM DMS_MAPRSQL WHERE DMS_MAPRSQLCD = :sql_code AND CURFLG = 'Y'"
 cursor.execute(query, {'sql_code': sql_code})
 
 result = cursor.fetchone()
@@ -200,12 +200,12 @@ if result:
 @manage_sql_bp.route('/get-connections', methods=['GET'])
 def get_connections():
     """
-    Get list of active database connections from DWDBCONDTLS
+    Get list of active database connections from DMS_DBCONDTLS
     This allows manage_sql to query data from external/source databases
     """
     cursor.execute("""
         SELECT conid, connm, dbhost, dbsrvnm
-        FROM DWDBCONDTLS
+        FROM DMS_DBCONDTLS
         WHERE curflg = 'Y'
         ORDER BY connm
     """)
@@ -218,7 +218,7 @@ def get_connections():
 ### Workflow:
 
 1. **User Opens Manage SQL Module**
-   - Connection dropdown loads active connections from `DWDBCONDTLS`
+   - Connection dropdown loads active connections from `DMS_DBCONDTLS`
    - Default option: "Use Metadata Connection" (NULL value)
 
 2. **User Creates/Edits SQL Query**
@@ -227,8 +227,8 @@ def get_connections():
    - If not selected, `connection_id` is NULL (uses metadata connection)
 
 3. **Backend Saves SQL Query**
-   - Validates connection ID exists in `DWDBCONDTLS` and is active (`CURFLG='Y'`)
-   - Saves SQL query with connection ID in `DWMAPRSQL.SQLCONID`
+   - Validates connection ID exists in `DMS_DBCONDTLS` and is active (`CURFLG='Y'`)
+   - Saves SQL query with connection ID in `DMS_MAPRSQL.SQLCONID`
    - Historization: Old version set to `CURFLG='N'`, new version inserted with `CURFLG='Y'`
 
 4. **User Loads Existing SQL Query**
@@ -244,19 +244,19 @@ def get_connections():
 
 ## Database Schema
 
-### DWMAPRSQL Table (Updated)
+### DMS_MAPRSQL Table (Updated)
 
 | Column         | Type          | Nullable | Description                                    |
 |----------------|---------------|----------|------------------------------------------------|
-| DWMAPRSQLID    | NUMBER        | NO       | Primary key (auto-generated)                   |
-| DWMAPRSQLCD    | VARCHAR2(100) | NO       | SQL code identifier (unique per active record) |
-| DWMAPRSQL      | CLOB          | NO       | SQL query content                              |
+| DMS_MAPRSQLID    | NUMBER        | NO       | Primary key (auto-generated)                   |
+| DMS_MAPRSQLCD    | VARCHAR2(100) | NO       | SQL code identifier (unique per active record) |
+| DMS_MAPRSQL      | CLOB          | NO       | SQL query content                              |
 | **SQLCONID**   | **NUMBER**    | **YES**  | **Source connection ID (NEW)**                 |
 | RECCRDT        | DATE          | NO       | Record creation date                           |
 | RECUPDT        | DATE          | NO       | Record update date                             |
 | CURFLG         | CHAR(1)       | NO       | Current flag ('Y' or 'N')                      |
 
-### DWDBCONDTLS Table (Existing)
+### DMS_DBCONDTLS Table (Existing)
 
 | Column    | Type          | Description                  |
 |-----------|---------------|------------------------------|
@@ -284,8 +284,8 @@ SQL> @database_migration_manage_sql_connection.sql
 ```
 
 **Script performs:**
-1. Adds `SQLCONID` column to `DWMAPRSQL`
-2. Creates foreign key constraint to `DWDBCONDTLS`
+1. Adds `SQLCONID` column to `DMS_MAPRSQL`
+2. Creates foreign key constraint to `DMS_DBCONDTLS`
 3. Adds column comment
 4. Runs verification queries
 
@@ -295,25 +295,25 @@ SQL> @database_migration_manage_sql_connection.sql
 -- Check column was added
 SELECT column_name, data_type, nullable 
 FROM user_tab_columns 
-WHERE table_name = 'DWMAPRSQL' 
+WHERE table_name = 'DMS_MAPRSQL' 
 AND column_name = 'SQLCONID';
 
 -- Check foreign key constraint
 SELECT constraint_name, constraint_type 
 FROM user_constraints
-WHERE table_name = 'DWMAPRSQL'
-AND constraint_name = 'FK_DWMAPRSQL_SQLCONID';
+WHERE table_name = 'DMS_MAPRSQL'
+AND constraint_name = 'FK_DMS_MAPRSQL_SQLCONID';
 
 -- Verify existing records (should have NULL SQLCONID)
-SELECT DWMAPRSQLCD, SQLCONID, CURFLG
-FROM DWMAPRSQL
+SELECT DMS_MAPRSQLCD, SQLCONID, CURFLG
+FROM DMS_MAPRSQL
 WHERE CURFLG = 'Y';
 ```
 
 ### Step 3: Backend Code Already Updated
 
 ✅ All backend code changes are already implemented in:
-- `backend/modules/mapper/pkgdwmapr_python.py`
+- `backend/modules/mapper/pkgdms_mapr_python.py`
 - `backend/modules/manage_sql/manage_sql.py`
 
 ### Step 4: Frontend Integration (To Be Done)
@@ -411,15 +411,15 @@ curl http://localhost:5000/manage-sql/fetch-sql-logic?sql_code=TEST_SQL_002
 ### Check SQL Records with Connections
 ```sql
 SELECT 
-    s.DWMAPRSQLCD as SQL_CODE,
+    s.DMS_MAPRSQLCD as SQL_CODE,
     s.SQLCONID as CONNECTION_ID,
     c.CONNM as CONNECTION_NAME,
     c.DBHOST as HOST,
     s.CURFLG as CURRENT_FLAG
-FROM DWMAPRSQL s
-LEFT JOIN DWDBCONDTLS c ON s.SQLCONID = c.CONID AND c.CURFLG = 'Y'
+FROM DMS_MAPRSQL s
+LEFT JOIN DMS_DBCONDTLS c ON s.SQLCONID = c.CONID AND c.CURFLG = 'Y'
 WHERE s.CURFLG = 'Y'
-ORDER BY s.DWMAPRSQLCD;
+ORDER BY s.DMS_MAPRSQLCD;
 ```
 
 ### Check Connection Usage
@@ -428,9 +428,9 @@ ORDER BY s.DWMAPRSQLCD;
 SELECT 
     c.CONID,
     c.CONNM,
-    COUNT(s.DWMAPRSQLID) as SQL_COUNT
-FROM DWDBCONDTLS c
-LEFT JOIN DWMAPRSQL s ON c.CONID = s.SQLCONID AND s.CURFLG = 'Y'
+    COUNT(s.DMS_MAPRSQLID) as SQL_COUNT
+FROM DMS_DBCONDTLS c
+LEFT JOIN DMS_MAPRSQL s ON c.CONID = s.SQLCONID AND s.CURFLG = 'Y'
 WHERE c.CURFLG = 'Y'
 GROUP BY c.CONID, c.CONNM
 ORDER BY c.CONNM;
@@ -455,12 +455,12 @@ ORDER BY c.CONNM;
 |----------------------------|---------------------|----------------------|
 | **Column Name**            | `TRGCONID`          | `SQLCONID`           |
 | **Purpose**                | Target connection   | Source connection    |
-| **Table**                  | `DWMAPR`            | `DWMAPRSQL`          |
+| **Table**                  | `DMS_MAPR`            | `DMS_MAPRSQL`          |
 | **Connection Type**        | Where data goes     | Where data comes from|
 | **API Endpoint**           | `/mapper/get-connections` | `/manage-sql/get-connections` |
 | **Default**                | NULL (metadata)     | NULL (metadata)      |
 | **Validation**             | ✅ Active connection check | ✅ Active connection check |
-| **Foreign Key**            | ✅ FK to DWDBCONDTLS | ✅ FK to DWDBCONDTLS |
+| **Foreign Key**            | ✅ FK to DMS_DBCONDTLS | ✅ FK to DMS_DBCONDTLS |
 
 ---
 
@@ -479,9 +479,9 @@ def execute_sql_query(sql_code):
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT dwmaprsql, sqlconid 
-        FROM dwmaprsql 
-        WHERE dwmaprsqlcd = :1 AND curflg = 'Y'
+        SELECT DMS_MAPRSQL, sqlconid 
+        FROM DMS_MAPRSQL 
+        WHERE dms_maprsqlcd = :1 AND curflg = 'Y'
     """, [sql_code])
     
     result = cursor.fetchone()
@@ -527,10 +527,10 @@ def test_connection(connection_id):
 **Solution:**
 ```sql
 -- Check connection status
-SELECT CONID, CONNM, CURFLG FROM DWDBCONDTLS WHERE CONID = <id>;
+SELECT CONID, CONNM, CURFLG FROM DMS_DBCONDTLS WHERE CONID = <id>;
 
 -- Activate connection if needed
-UPDATE DWDBCONDTLS SET CURFLG = 'Y' WHERE CONID = <id>;
+UPDATE DMS_DBCONDTLS SET CURFLG = 'Y' WHERE CONID = <id>;
 COMMIT;
 ```
 
@@ -538,16 +538,16 @@ COMMIT;
 **Cause:** Trying to use non-existent connection ID
 
 **Solution:**
-- Use valid connection ID from `DWDBCONDTLS`
+- Use valid connection ID from `DMS_DBCONDTLS`
 - Or use NULL for metadata connection
 
 ### Connection Dropdown Empty
-**Cause:** No active connections in `DWDBCONDTLS`
+**Cause:** No active connections in `DMS_DBCONDTLS`
 
 **Solution:**
 ```sql
 -- Check for active connections
-SELECT COUNT(*) FROM DWDBCONDTLS WHERE CURFLG = 'Y';
+SELECT COUNT(*) FROM DMS_DBCONDTLS WHERE CURFLG = 'Y';
 
 -- If 0, register connections using DB Connections module
 ```
@@ -556,7 +556,7 @@ SELECT COUNT(*) FROM DWDBCONDTLS WHERE CURFLG = 'Y';
 
 ## Files Modified
 
-1. ✅ `backend/modules/mapper/pkgdwmapr_python.py` - Updated `create_update_sql()`
+1. ✅ `backend/modules/mapper/pkgdms_mapr_python.py` - Updated `create_update_sql()`
 2. ✅ `backend/modules/manage_sql/manage_sql.py` - Updated endpoints
 3. ✅ `database_migration_manage_sql_connection.sql` - Database migration script
 4. ✅ `MANAGE_SQL_CONNECTION_IMPLEMENTATION.md` - This documentation

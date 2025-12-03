@@ -3,7 +3,7 @@
 ## Issue Summary
 You're experiencing:
 1. **ORA-00942** error persisting even after schema prefix fix
-2. **Unexpected INSERT** - Application trying to insert into DWMAPR even though you only updated column description
+2. **Unexpected INSERT** - Application trying to insert into DMS_MAPR even though you only updated column description
 
 ## Why Is INSERT Happening?
 
@@ -40,7 +40,7 @@ This will check:
 I've added debug logging to help identify the issue. Look for these messages in your logs:
 
 ```
-PKGDWMAPR: Using schema prefix 'SCHEMANAME.'
+PKGDMS_MAPR: Using schema prefix 'SCHEMANAME.'
 CREATE_UPDATE_MAPPING: Mapping 'TEST_DIM' exists
 CREATE_UPDATE_MAPPING: No changes detected for 'TEST_DIM', returning existing mapid=42
 ```
@@ -48,10 +48,10 @@ CREATE_UPDATE_MAPPING: No changes detected for 'TEST_DIM', returning existing ma
 OR
 
 ```
-PKGDWMAPR: Using schema prefix 'SCHEMANAME.'
+PKGDMS_MAPR: Using schema prefix 'SCHEMANAME.'
 CREATE_UPDATE_MAPPING: Mapping 'TEST_DIM' exists
 CREATE_UPDATE_MAPPING: Changes detected for 'TEST_DIM', will create new version
-CREATE_UPDATE_MAPPING: Inserting into dwmapr using sequence 'SCHEMANAME.DWMAPRSEQ'
+CREATE_UPDATE_MAPPING: Inserting into DMS_MAPR using sequence 'SCHEMANAME.DMS_MAPRSEQ'
 ```
 
 ### Step 3: Verify SCHEMA Environment Variable
@@ -82,7 +82,7 @@ FROM all_sequences
 WHERE sequence_name LIKE 'DW%SEQ';
 
 -- Test accessing the sequence (use the actual owner from above)
-SELECT SCHEMANAME.DWMAPRSEQ.nextval FROM dual;
+SELECT SCHEMANAME.DMS_MAPRSEQ.nextval FROM dual;
 ```
 
 ## Common Problems and Solutions
@@ -90,7 +90,7 @@ SELECT SCHEMANAME.DWMAPRSEQ.nextval FROM dual;
 ### Problem 1: SCHEMA Environment Variable Not Set
 
 **Symptoms:**
-- Log shows: `PKGDWMAPR: No SCHEMA environment variable set`
+- Log shows: `PKGDMS_MAPR: No SCHEMA environment variable set`
 - ORA-00942 error
 
 **Solution:**
@@ -116,19 +116,19 @@ $env:SCHEMA="DWT"  # Windows PowerShell
 **Solution Option A - Grant Permissions:**
 ```sql
 -- Run as DBA or schema owner
-GRANT SELECT ON DWT.DWMAPRSQLSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPRSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPRDTLSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPERRSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRSQLSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRDTLSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPERRSEQ TO your_username;
 ```
 
 **Solution Option B - Create Synonyms:**
 ```sql
 -- Run as your user
-CREATE SYNONYM DWMAPRSQLSEQ FOR DWT.DWMAPRSQLSEQ;
-CREATE SYNONYM DWMAPRSEQ FOR DWT.DWMAPRSEQ;
-CREATE SYNONYM DWMAPRDTLSEQ FOR DWT.DWMAPRDTLSEQ;
-CREATE SYNONYM DWMAPERRSEQ FOR DWT.DWMAPERRSEQ;
+CREATE SYNONYM DMS_MAPRSQLSEQ FOR DWT.DMS_MAPRSQLSEQ;
+CREATE SYNONYM DMS_MAPRSEQ FOR DWT.DMS_MAPRSEQ;
+CREATE SYNONYM DMS_MAPRDTLSEQ FOR DWT.DMS_MAPRDTLSEQ;
+CREATE SYNONYM DMS_MAPERRSEQ FOR DWT.DMS_MAPERRSEQ;
 ```
 
 If using synonyms, **clear the SCHEMA environment variable:**
@@ -147,10 +147,10 @@ If using synonyms, **clear the SCHEMA environment variable:**
 Run the sequence creation script:
 ```sql
 -- See CREATE_SEQUENCES.sql
-CREATE SEQUENCE DWMAPRSQLSEQ START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE DWMAPRSEQ START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE DWMAPRDTLSEQ START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE DWMAPERRSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPRSQLSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPRSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPRDTLSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPERRSEQ START WITH 1 INCREMENT BY 1;
 ```
 
 ### Problem 4: Unexpected Changes Detected
@@ -168,7 +168,7 @@ CREATE SEQUENCE DWMAPERRSEQ START WITH 1 INCREMENT BY 1;
 
 **Debug:** Add this to see what's different:
 ```python
-# In pkgdwmapr.py, around line 297-312, add:
+# In pkgdms_mapr.py, around line 297-312, add:
 if w_chg == 'Y':
     # Log what changed
     if w_mapr_dict['MAPDESC'] != p_mapdesc:
@@ -204,7 +204,7 @@ For sequences, Oracle can throw ORA-00942 (not just ORA-02289), which is confusi
 2. **Check your logs** with the new debug messages
 3. **Share the output** of:
    - Diagnostic script results
-   - Log messages from pkgdwmapr
+   - Log messages from pkgdms_mapr
    - SQL query results from `all_sequences`
 
 This will help pinpoint whether it's:
@@ -224,7 +224,7 @@ This will help pinpoint whether it's:
 
 If the issue persists after following these steps, please provide:
 1. Output from diagnostic script
-2. Relevant log entries (especially lines with "PKGDWMAPR:" or "CREATE_UPDATE_MAPPING:")
+2. Relevant log entries (especially lines with "PKGDMS_MAPR:" or "CREATE_UPDATE_MAPPING:")
 3. Results from the SQL queries above
 4. Your environment setup (single-schema or multi-schema)
 

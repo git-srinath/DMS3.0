@@ -16,7 +16,7 @@ Connection string support for the `manage_sql` module - allows SQL queries to pu
 
 ### 1. Database Migration
 - **`database_migration_manage_sql_connection.sql`**
-  - SQL script to add `SQLCONID` column to `DWMAPRSQL` table
+  - SQL script to add `SQLCONID` column to `DMS_MAPRSQL` table
   - **ACTION REQUIRED:** Run this script in your database
 
 ### 2. Documentation (Read These)
@@ -69,8 +69,8 @@ curl -X POST http://localhost:5000/manage-sql/save-sql \
 ## 📊 What Changed
 
 ### Database
-- Added `SQLCONID` column to `DWMAPRSQL` table
-- Added foreign key to `DWDBCONDTLS` table
+- Added `SQLCONID` column to `DMS_MAPRSQL` table
+- Added foreign key to `DMS_DBCONDTLS` table
 
 ### Backend
 - Updated `create_update_sql()` function
@@ -94,7 +94,7 @@ SQL Query ─→ Always uses metadata connection
 
 ### After:
 ```
-SQL Query ─→ Can use any registered connection from DWDBCONDTLS
+SQL Query ─→ Can use any registered connection from DMS_DBCONDTLS
               (or NULL for metadata connection)
 ```
 
@@ -137,10 +137,10 @@ SQL Query ─→ Can use any registered connection from DWDBCONDTLS
 → Run the database migration script
 
 **"Connections dropdown is empty"**
-→ Check `SELECT * FROM DWDBCONDTLS WHERE CURFLG='Y'`
+→ Check `SELECT * FROM DMS_DBCONDTLS WHERE CURFLG='Y'`
 
 **"Invalid connection ID error"**
-→ Connection must exist in DWDBCONDTLS and have CURFLG='Y'
+→ Connection must exist in DMS_DBCONDTLS and have CURFLG='Y'
 
 ### More Help:
 - Check `IMPLEMENTATION_COMPLETE.md` → Troubleshooting section

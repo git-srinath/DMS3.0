@@ -1,8 +1,8 @@
 -- ------------------------------------------------------------------
--- DWPRCREQ queue table for Python scheduler service
+-- DMS_PRCREQ queue table for Python scheduler service
 -- ------------------------------------------------------------------
 
-CREATE TABLE DWPRCREQ (
+CREATE TABLE DMS_PRCREQ (
     request_id      VARCHAR2(64)    NOT NULL,
     mapref          VARCHAR2(100)   NOT NULL,
     request_type    VARCHAR2(30)    NOT NULL,
@@ -13,16 +13,16 @@ CREATE TABLE DWPRCREQ (
     claimed_by      VARCHAR2(64),
     completed_at    TIMESTAMP,
     result_payload  CLOB,
-    CONSTRAINT pk_dwprcreq PRIMARY KEY (request_id)
+    CONSTRAINT pk_dms_prcreq PRIMARY KEY (request_id)
 );
 
-CREATE INDEX dwprcreq_status_idx
-    ON DWPRCREQ (status, requested_at);
+CREATE INDEX dms_prcreq_status_idx
+    ON DMS_PRCREQ (status, requested_at);
 
-CREATE INDEX dwprcreq_mapref_idx
-    ON DWPRCREQ (mapref);
+CREATE INDEX dms_prcreq_mapref_idx
+    ON DMS_PRCREQ (mapref);
 
-COMMENT ON TABLE DWPRCREQ IS 'Queue table for scheduler job requests (immediate, history, report, stop).';
-COMMENT ON COLUMN DWPRCREQ.request_type IS 'IMMEDIATE, HISTORY, REPORT, STOP, REFRESH_SCHEDULE';
-COMMENT ON COLUMN DWPRCREQ.status IS 'NEW, CLAIMED, DONE, FAILED';
+COMMENT ON TABLE DMS_PRCREQ IS 'Queue table for scheduler job requests (immediate, history, report, stop).';
+COMMENT ON COLUMN DMS_PRCREQ.request_type IS 'IMMEDIATE, HISTORY, REPORT, STOP, REFRESH_SCHEDULE';
+COMMENT ON COLUMN DMS_PRCREQ.status IS 'NEW, CLAIMED, DONE, FAILED';
 

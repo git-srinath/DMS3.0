@@ -1,5 +1,5 @@
 """
-Python equivalent of PKGDWJOB PL/SQL package.
+Python equivalent of PKGDMS_JOB PL/SQL package.
 Handles job creation, target table creation, and dynamic code generation with hash-based change detection.
 
 Author: AI Assistant
@@ -12,15 +12,22 @@ Change History:
 
 import os
 import hashlib
-import oracledb
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 import traceback
 from modules.logger import info, error
 from modules.common.id_provider import next_id as get_next_id
 
+# Optional Oracle driver: allow scheduler to run even if oracledb is not installed.
+# Oracle-specific features will check for this at runtime.
+try:
+    import oracledb  # type: ignore
+except ModuleNotFoundError:
+    oracledb = None  # type: ignore
+    error("Oracle client 'oracledb' is not installed. Oracle-based jobs will not run.")
+
 # Package metadata
-G_NAME = 'PKGDWJOB_PYTHON'
+G_NAME = 'PKGDMS_JOB_PYTHON'
 G_VER = 'V001'
 
 # Hash configuration
@@ -38,6 +45,24 @@ HASH_EXCLUDE_COLUMNS = {
 def version() -> str:
     """Returns package version."""
     return f"{G_NAME}:{G_VER}"
+
+
+def _detect_db_type(connection):
+    """Detect database type from connection"""
+    import builtins
+    module_name = builtins.type(connection).__module__
+    connection_type = builtins.type(connection).__name__
+    info(f"Detecting DB type - module: {module_name}, type: {connection_type}")
+    
+    if "psycopg" in module_name or "pg8000" in module_name:
+        detected = "POSTGRESQL"
+    elif "oracledb" in module_name or "cx_Oracle" in module_name:
+        detected = "ORACLE"
+    else:
+        detected = "ORACLE"  # Default fallback
+    
+    info(f"Detected database type: {detected}")
+    return detected
 
 
 def _raise_error(proc_name: str, error_code: str, param: str, exception: Exception = None):
@@ -148,7 +173,7 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
     Args:
         connection: Oracle database connection (metadata connection)
         p_mapref: Mapping reference
-        p_trgconid: Target database connection ID (from DWDBCONDTLS)
+        p_trgconid: Target database connection ID (from DMS_DBCONDTLS)
                    If None, uses metadata connection
         
     Returns:
@@ -165,24 +190,40 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
     try:
         cursor = connection.cursor()
         
-        # Get metadata schema name from environment (for DWJOB, DWJOBDTL, DWPARAMS)
+        # Detect metadata database type
+        metadata_db_type = _detect_db_type(connection)
+        
+        # Get metadata schema name from environment (for DMS_JOB, DMS_JOBDTL, DMS_PARAMS)
         # The target schema will come from job configuration (trgschm)
-        metadata_schema = os.getenv('SCHEMA', 'TRG')
+        metadata_schema = os.getenv('DMS_SCHEMA', 'TRG')
         
         # Query to get job details with column information
-        query = f"""
-            SELECT jd.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
-                   jd.trgclnm, jd.trgcldtyp, jd.trgkeyflg, jd.trgkeyseq,
-                   p.prval
-            FROM {metadata_schema}.dwjob j
-            JOIN {metadata_schema}.dwjobdtl jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
-            JOIN {metadata_schema}.dwparams p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
-            WHERE j.mapref = :mapref
-              AND j.curflg = 'Y'
-            ORDER BY jd.excseq
-        """
-        
-        cursor.execute(query, {'mapref': p_mapref})
+        if metadata_db_type == "POSTGRESQL":
+            query = f"""
+                SELECT jd.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
+                       jd.trgclnm, jd.trgcldtyp, jd.trgkeyflg, jd.trgkeyseq,
+                       p.prval
+                FROM {metadata_schema}.DMS_JOB j
+                JOIN {metadata_schema}.DMS_JOBDTL jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
+                JOIN {metadata_schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                WHERE j.mapref = %s
+                  AND j.curflg = 'Y'
+                ORDER BY jd.excseq
+            """
+            cursor.execute(query, (p_mapref,))
+        else:  # Oracle
+            query = f"""
+                SELECT jd.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
+                       jd.trgclnm, jd.trgcldtyp, jd.trgkeyflg, jd.trgkeyseq,
+                       p.prval
+                FROM {metadata_schema}.DMS_JOB j
+                JOIN {metadata_schema}.DMS_JOBDTL jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
+                JOIN {metadata_schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                WHERE j.mapref = :mapref
+                  AND j.curflg = 'Y'
+                ORDER BY jd.excseq
+            """
+            cursor.execute(query, {'mapref': p_mapref})
         rows = cursor.fetchall()
         
         if not rows:
@@ -206,10 +247,16 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                 if target_connection is None:
                     raise Exception(f"Failed to create target connection for CONID {p_trgconid}")
                 
+                # Detect target database type
+                target_db_type = _detect_db_type(target_connection)
+                
                 # Validate connection is active by pinging the database
                 try:
                     test_cursor = target_connection.cursor()
-                    test_cursor.execute("SELECT 1 FROM DUAL")
+                    if target_db_type == "POSTGRESQL":
+                        test_cursor.execute("SELECT 1")
+                    else:  # Oracle
+                        test_cursor.execute("SELECT 1 FROM DUAL")
                     test_cursor.fetchone()
                     test_cursor.close()
                     print(f"Target connection {p_trgconid} validated successfully")
@@ -227,28 +274,37 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
             # Use metadata connection if no target connection specified
             target_connection = connection
             target_cursor = cursor
+            target_db_type = metadata_db_type  # Same as metadata when using metadata connection
             print(f"Using metadata connection for table operations (no target connection specified)")
         
         # Ensure target_cursor is set before use
         if target_cursor is None:
             raise Exception("Target cursor not initialized")
         
-        # Check if table exists in target schema using all_tables (not user_tables)
-        # This works across different schemas and users
-        if p_trgconid:
-            # When using target connection, check using all_tables filtered by owner
+        # Check if table exists in target schema
+        if target_db_type == "POSTGRESQL":
+            # PostgreSQL: Use information_schema
             target_cursor.execute("""
                 SELECT table_name 
-                FROM all_tables 
-                WHERE owner = :owner AND table_name = :tbnm
-            """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper()})
-        else:
-            # When using metadata connection, check user_tables
-            target_cursor.execute("""
-                SELECT table_name 
-                FROM user_tables 
-                WHERE table_name = :tbnm
-            """, {'tbnm': w_trgtbnm.upper()})
+                FROM information_schema.tables 
+                WHERE table_schema = %s AND table_name = %s
+            """, (w_trgschm.lower(), w_trgtbnm.lower()))
+        else:  # Oracle
+            # Oracle: Use all_tables or user_tables
+            if p_trgconid:
+                # When using target connection, check using all_tables filtered by owner
+                target_cursor.execute("""
+                    SELECT table_name 
+                    FROM all_tables 
+                    WHERE owner = :owner AND table_name = :tbnm
+                """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper()})
+            else:
+                # When using metadata connection, check user_tables
+                target_cursor.execute("""
+                    SELECT table_name 
+                    FROM user_tables 
+                    WHERE table_name = :tbnm
+                """, {'tbnm': w_trgtbnm.upper()})
         
         table_exists = target_cursor.fetchone()
         w_flg = 'Y' if table_exists else 'N'
@@ -267,20 +323,28 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
             
             # Check if column exists in target table
             if w_flg == 'Y':  # Only check if table exists
-                if p_trgconid:
-                    # Check using all_tab_columns filtered by owner
+                if target_db_type == "POSTGRESQL":
+                    # PostgreSQL: Use information_schema
                     target_cursor.execute("""
                         SELECT column_name 
-                        FROM all_tab_columns 
-                        WHERE owner = :owner AND table_name = :tbnm AND column_name = :colnm
-                    """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper(), 'colnm': trgclnm.upper()})
-                else:
-                    # Check using user_tab_columns
-                    target_cursor.execute("""
-                        SELECT column_name 
-                        FROM user_tab_columns 
-                        WHERE table_name = :tbnm AND column_name = :colnm
-                    """, {'tbnm': w_trgtbnm.upper(), 'colnm': trgclnm.upper()})
+                        FROM information_schema.columns 
+                        WHERE table_schema = %s AND table_name = %s AND column_name = %s
+                    """, (w_trgschm.lower(), w_trgtbnm.lower(), trgclnm.lower()))
+                else:  # Oracle
+                    if p_trgconid:
+                        # Check using all_tab_columns filtered by owner
+                        target_cursor.execute("""
+                            SELECT column_name 
+                            FROM all_tab_columns 
+                            WHERE owner = :owner AND table_name = :tbnm AND column_name = :colnm
+                        """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper(), 'colnm': trgclnm.upper()})
+                    else:
+                        # Check using user_tab_columns
+                        target_cursor.execute("""
+                            SELECT column_name 
+                            FROM user_tab_columns 
+                            WHERE table_name = :tbnm AND column_name = :colnm
+                        """, {'tbnm': w_trgtbnm.upper(), 'colnm': trgclnm.upper()})
                 
                 column_exists = target_cursor.fetchone()
                 
@@ -318,21 +382,34 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                 
                 # Add SKEY and RWHKEY for DIM, FCT, MRT tables
                 if w_tbtyp in ('DIM', 'FCT', 'MRT'):
-                    create_ddl += "  SKEY NUMBER(20) PRIMARY KEY,\n"
-                    create_ddl += "  RWHKEY VARCHAR2(32),\n"
+                    if target_db_type == "POSTGRESQL":
+                        create_ddl += "  SKEY BIGINT PRIMARY KEY,\n"
+                        create_ddl += "  RWHKEY VARCHAR(32),\n"
+                    else:  # Oracle
+                        create_ddl += "  SKEY NUMBER(20) PRIMARY KEY,\n"
+                        create_ddl += "  RWHKEY VARCHAR2(32),\n"
                 
                 # Add business columns (already collected in w_ddl from the loop above)
                 create_ddl += w_ddl
                 
                 # Add dimension-specific columns (SCD Type 2)
                 if w_tbtyp == 'DIM':
-                    create_ddl += "  CURFLG VARCHAR2(1),\n"
-                    create_ddl += "  FROMDT DATE,\n"
-                    create_ddl += "  TODT DATE,\n"
+                    if target_db_type == "POSTGRESQL":
+                        create_ddl += "  CURFLG VARCHAR(1),\n"
+                        create_ddl += "  FROMDT TIMESTAMP,\n"
+                        create_ddl += "  TODT TIMESTAMP,\n"
+                    else:  # Oracle
+                        create_ddl += "  CURFLG VARCHAR2(1),\n"
+                        create_ddl += "  FROMDT DATE,\n"
+                        create_ddl += "  TODT DATE,\n"
                 
                 # Add audit columns
-                create_ddl += "  RECCRDT DATE,\n"
-                create_ddl += "  RECUPDT DATE\n"
+                if target_db_type == "POSTGRESQL":
+                    create_ddl += "  RECCRDT TIMESTAMP,\n"
+                    create_ddl += "  RECUPDT TIMESTAMP\n"
+                else:  # Oracle
+                    create_ddl += "  RECCRDT DATE,\n"
+                    create_ddl += "  RECUPDT DATE\n"
                 create_ddl += ")"
                 
                 # Replace w_ddl with complete CREATE statement
@@ -341,20 +418,27 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
             # Existing table - add missing columns
             if w_ddl:
                 # Check if RWHKEY exists in target table
-                if p_trgconid:
-                    # Check using all_tab_columns filtered by owner
+                if target_db_type == "POSTGRESQL":
                     target_cursor.execute("""
                         SELECT column_name 
-                        FROM all_tab_columns 
-                        WHERE owner = :owner AND table_name = :tbnm AND column_name = 'RWHKEY'
-                    """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper()})
-                else:
-                    # Check using user_tab_columns
-                    target_cursor.execute("""
-                        SELECT column_name 
-                        FROM user_tab_columns 
-                        WHERE table_name = :tbnm AND column_name = 'RWHKEY'
-                    """, {'tbnm': w_trgtbnm.upper()})
+                        FROM information_schema.columns 
+                        WHERE table_schema = %s AND table_name = %s AND column_name = 'rwhkey'
+                    """, (w_trgschm.lower(), w_trgtbnm.lower()))
+                else:  # Oracle
+                    if p_trgconid:
+                        # Check using all_tab_columns filtered by owner
+                        target_cursor.execute("""
+                            SELECT column_name 
+                            FROM all_tab_columns 
+                            WHERE owner = :owner AND table_name = :tbnm AND column_name = 'RWHKEY'
+                        """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper()})
+                    else:
+                        # Check using user_tab_columns
+                        target_cursor.execute("""
+                            SELECT column_name 
+                            FROM user_tab_columns 
+                            WHERE table_name = :tbnm AND column_name = 'RWHKEY'
+                        """, {'tbnm': w_trgtbnm.upper()})
                 
                 rwhkey_exists = target_cursor.fetchone()
                 
@@ -364,10 +448,17 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                 if not rwhkey_exists and w_tbtyp in ('DIM', 'FCT', 'MRT'):
                     if alter_cols:
                         alter_cols += ",\n"
-                    alter_cols += "  RWHKEY VARCHAR2(32)"
+                    if target_db_type == "POSTGRESQL":
+                        alter_cols += "  RWHKEY VARCHAR(32)"
+                    else:  # Oracle
+                        alter_cols += "  RWHKEY VARCHAR2(32)"
                 
                 if alter_cols:
-                    w_ddl = f"ALTER TABLE {w_tbnm} ADD (\n{alter_cols}\n)"
+                    if target_db_type == "POSTGRESQL":
+                        # PostgreSQL: Use ADD COLUMN syntax (no parentheses)
+                        w_ddl = f"ALTER TABLE {w_tbnm} ADD COLUMN " + alter_cols.replace(',\n', ',\nADD COLUMN ').replace('\n', ' ')
+                    else:  # Oracle
+                        w_ddl = f"ALTER TABLE {w_tbnm} ADD (\n{alter_cols}\n)"
                 else:
                     w_ddl = None
         
@@ -380,38 +471,58 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                 w_return = 'N'
                 _raise_error(w_procnm, '103', f"{w_parm}::DDL={w_ddl[:200]}", e)
         
-        # Create sequence for SKEY if needed
+        # Create sequence for SKEY if needed (PostgreSQL uses SERIAL/BIGSERIAL, Oracle uses sequences)
         if w_tbtyp in ('DIM', 'FCT', 'MRT'):
-            w_seq_name = f"{w_trgtbnm}_SEQ"  # Sequence name only (for checking)
-            w_seq_full = f"{w_trgschm}.{w_seq_name}"  # Fully qualified name (for creation)
-            try:
-                # Check if sequence exists
-                if p_trgconid:
-                    # Check using all_sequences filtered by owner
+            if target_db_type == "POSTGRESQL":
+                # PostgreSQL: Check if sequence exists
+                w_seq_name = f"{w_trgtbnm}_skey_seq"  # PostgreSQL auto-generated sequence name
+                try:
                     target_cursor.execute("""
                         SELECT sequence_name 
-                        FROM all_sequences 
-                        WHERE sequence_owner = :owner AND sequence_name = :seq
-                    """, {'owner': w_trgschm.upper(), 'seq': w_seq_name.upper()})
-                else:
-                    # Check using user_sequences
-                    target_cursor.execute("""
-                        SELECT sequence_name 
-                        FROM user_sequences 
-                        WHERE sequence_name = :seq
-                    """, {'seq': w_seq_name.upper()})
-                
-                seq_exists = target_cursor.fetchone()
-                
-                if not seq_exists:
-                    seq_ddl = f"CREATE SEQUENCE {w_seq_full} START WITH 1 INCREMENT BY 1"
-                    target_cursor.execute(seq_ddl)
-                    print(f"Sequence {w_seq_full} created successfully")
-            except Exception as e:
-                _raise_error(w_procnm, '104', f"{w_parm}::SEQ={w_seq_full}", e)
+                        FROM information_schema.sequences 
+                        WHERE sequence_schema = %s AND sequence_name = %s
+                    """, (w_trgschm.lower(), w_seq_name.lower()))
+                    seq_exists = target_cursor.fetchone()
+                    # Note: In PostgreSQL, sequences are auto-created with SERIAL/BIGSERIAL
+                    # So we don't need to create them manually
+                    if seq_exists:
+                        print(f"Sequence {w_trgschm}.{w_seq_name} already exists")
+                except Exception as e:
+                    info(f"Could not check for sequence {w_seq_name}: {str(e)}")
+            else:  # Oracle
+                w_seq_name = f"{w_trgtbnm}_SEQ"  # Sequence name only (for checking)
+                w_seq_full = f"{w_trgschm}.{w_seq_name}"  # Fully qualified name (for creation)
+                try:
+                    # Check if sequence exists
+                    if p_trgconid:
+                        # Check using all_sequences filtered by owner
+                        target_cursor.execute("""
+                            SELECT sequence_name 
+                            FROM all_sequences 
+                            WHERE sequence_owner = :owner AND sequence_name = :seq
+                        """, {'owner': w_trgschm.upper(), 'seq': w_seq_name.upper()})
+                    else:
+                        # Check using user_sequences
+                        target_cursor.execute("""
+                            SELECT sequence_name 
+                            FROM user_sequences 
+                            WHERE sequence_name = :seq
+                        """, {'seq': w_seq_name.upper()})
+                    
+                    seq_exists = target_cursor.fetchone()
+                    
+                    if not seq_exists:
+                        seq_ddl = f"CREATE SEQUENCE {w_seq_full} START WITH 1 INCREMENT BY 1"
+                        target_cursor.execute(seq_ddl)
+                        print(f"Sequence {w_seq_full} created successfully")
+                except Exception as e:
+                    _raise_error(w_procnm, '104', f"{w_parm}::SEQ={w_seq_full}", e)
         
         # Commit on target connection
-        target_connection.commit()
+        if target_db_type == "POSTGRESQL" and not getattr(target_connection, 'autocommit', False):
+            target_connection.commit()
+        elif target_db_type == "ORACLE":
+            target_connection.commit()
         return w_return
         
     except Exception as e:
@@ -464,29 +575,44 @@ def create_update_job(connection, p_mapref: str) -> Optional[int]:
         if connection is None:
             raise Exception("Connection parameter is None")
         
+        # Detect database type
+        db_type = _detect_db_type(connection)
+        
         # Test connection by creating a cursor
         try:
             test_cursor = connection.cursor()
-            test_cursor.execute("SELECT 1 FROM DUAL")
+            if db_type == "POSTGRESQL":
+                test_cursor.execute("SELECT 1")
+            else:  # Oracle
+                test_cursor.execute("SELECT 1 FROM DUAL")
             test_cursor.fetchone()
             test_cursor.close()
         except Exception as conn_test_err:
             raise Exception(f"Connection is not valid or not connected to database: {str(conn_test_err)}")
         
         cursor = connection.cursor()
-        schema = os.getenv('SCHEMA', 'TRG')
+        schema = os.getenv('DMS_SCHEMA', 'TRG')
         
         # Get mapping details
-        query = f"""
-            SELECT * FROM {schema}.dwmapr
-            WHERE mapref = :mapref
-              AND curflg = 'Y'
-              AND lgvrfyflg = 'Y'
-              AND stflg = 'A'
-        """
-        
-        cursor.execute(query, {'mapref': p_mapref})
-        columns = [col[0] for col in cursor.description]
+        if db_type == "POSTGRESQL":
+            query = f"""
+                SELECT * FROM {schema}.DMS_MAPR
+                WHERE mapref = %s
+                  AND curflg = 'Y'
+                  AND lgvrfyflg = 'Y'
+                  AND stflg = 'A'
+            """
+            cursor.execute(query, (p_mapref,))
+        else:  # Oracle
+            query = f"""
+                SELECT * FROM {schema}.DMS_MAPR
+                WHERE mapref = :mapref
+                  AND curflg = 'Y'
+                  AND lgvrfyflg = 'Y'
+                  AND stflg = 'A'
+            """
+            cursor.execute(query, {'mapref': p_mapref})
+        columns = [col[0].upper() for col in cursor.description]  # Normalize to uppercase
         map_row = cursor.fetchone()
         
         if not map_row:
@@ -496,15 +622,23 @@ def create_update_job(connection, p_mapref: str) -> Optional[int]:
         map_rec = dict(zip(columns, map_row))
         
         # Check if job already exists
-        job_query = f"""
-            SELECT * FROM {schema}.dwjob
-            WHERE mapref = :mapref
-              AND curflg = 'Y'
-              AND stflg = 'A'
-        """
-        
-        cursor.execute(job_query, {'mapref': p_mapref})
-        job_columns = [col[0] for col in cursor.description]
+        if db_type == "POSTGRESQL":
+            job_query = f"""
+                SELECT * FROM {schema}.DMS_JOB
+                WHERE mapref = %s
+                  AND curflg = 'Y'
+                  AND stflg = 'A'
+            """
+            cursor.execute(job_query, (p_mapref,))
+        else:  # Oracle
+            job_query = f"""
+                SELECT * FROM {schema}.DMS_JOB
+                WHERE mapref = :mapref
+                  AND curflg = 'Y'
+                  AND stflg = 'A'
+            """
+            cursor.execute(job_query, {'mapref': p_mapref})
+        job_columns = [col[0].upper() for col in cursor.description]  # Normalize to uppercase
         job_row = cursor.fetchone()
         
         w_chg = 'Y'
@@ -541,72 +675,125 @@ def create_update_job(connection, p_mapref: str) -> Optional[int]:
                 w_jobid = job_rec['JOBID']
             else:
                 # Mark existing job as inactive
-                cursor.execute(f"""
-                    UPDATE {schema}.dwjob
-                    SET curflg = 'N', recupdt = SYSDATE
-                    WHERE jobid = :jobid AND curflg = 'Y'
-                """, {'jobid': job_rec['JOBID']})
+                if db_type == "POSTGRESQL":
+                    cursor.execute(f"""
+                        UPDATE {schema}.DMS_JOB
+                        SET curflg = 'N', recupdt = CURRENT_TIMESTAMP
+                        WHERE jobid = %s AND curflg = 'Y'
+                    """, (job_rec['JOBID'],))
+                else:  # Oracle
+                    cursor.execute(f"""
+                        UPDATE {schema}.DMS_JOB
+                        SET curflg = 'N', recupdt = SYSDATE
+                        WHERE jobid = :jobid AND curflg = 'Y'
+                    """, {'jobid': job_rec['JOBID']})
         
         # Create new job if needed
         if w_chg == 'Y':
             # Generate job ID using ID provider (supports Oracle/PostgreSQL)
-            job_id = get_next_id(cursor, f"{schema}.DWJOBSEQ")
-            cursor.execute(f"""
-                INSERT INTO {schema}.dwjob (
-                    jobid, mapid, mapref, frqcd, trgschm, trgtbtyp,
-                    trgtbnm, srcsystm, stflg, reccrdt, recupdt, curflg, blkprcrows,
-                    chkpntstrtgy, chkpntclnm, chkpntenbld, trgconid
-                )
-                VALUES (
-                    :jobid, :mapid, :mapref, :frqcd, :trgschm, :trgtbtyp,
-                    :trgtbnm, :srcsystm, :stflg, SYSDATE, SYSDATE, 'Y', :blkprcrows,
-                    :chkpntstrtgy, :chkpntclnm, :chkpntenbld, :trgconid
-                )
-            """, {
-                'jobid': job_id,
-                'mapid': map_rec['MAPID'],
-                'mapref': map_rec['MAPREF'],
-                'frqcd': map_rec['FRQCD'],
-                'trgschm': map_rec['TRGSCHM'],
-                'trgtbtyp': map_rec['TRGTBTYP'],
-                'trgtbnm': map_rec['TRGTBNM'],
-                'srcsystm': map_rec['SRCSYSTM'],
-                'stflg': map_rec['STFLG'],
-                'blkprcrows': map_rec.get('BLKPRCROWS'),
-                'chkpntstrtgy': map_rec.get('CHKPNTSTRTGY', 'AUTO'),
-                'chkpntclnm': map_rec.get('CHKPNTCLNM'),
-                'chkpntenbld': map_rec.get('CHKPNTENBLD', 'Y'),
-                'trgconid': trgconid
-            })
+            job_id = get_next_id(cursor, f"{schema}.DMS_JOBSEQ")
+            if db_type == "POSTGRESQL":
+                cursor.execute(f"""
+                    INSERT INTO {schema}.DMS_JOB (
+                        jobid, mapid, mapref, frqcd, trgschm, trgtbtyp,
+                        trgtbnm, srcsystm, stflg, reccrdt, recupdt, curflg, blkprcrows,
+                        chkpntstrtgy, chkpntclnm, chkpntenbld, trgconid
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'Y', %s,
+                        %s, %s, %s, %s
+                    )
+                """, (
+                    job_id,
+                    map_rec['MAPID'],
+                    map_rec['MAPREF'],
+                    map_rec['FRQCD'],
+                    map_rec['TRGSCHM'],
+                    map_rec['TRGTBTYP'],
+                    map_rec['TRGTBNM'],
+                    map_rec['SRCSYSTM'],
+                    map_rec['STFLG'],
+                    map_rec.get('BLKPRCROWS'),
+                    map_rec.get('CHKPNTSTRTGY', 'AUTO'),
+                    map_rec.get('CHKPNTCLNM'),
+                    map_rec.get('CHKPNTENBLD', 'Y'),
+                    trgconid
+                ))
+            else:  # Oracle
+                cursor.execute(f"""
+                    INSERT INTO {schema}.DMS_JOB (
+                        jobid, mapid, mapref, frqcd, trgschm, trgtbtyp,
+                        trgtbnm, srcsystm, stflg, reccrdt, recupdt, curflg, blkprcrows,
+                        CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD, trgconid
+                    )
+                    VALUES (
+                        :jobid, :mapid, :mapref, :frqcd, :trgschm, :trgtbtyp,
+                        :trgtbnm, :srcsystm, :stflg, SYSDATE, SYSDATE, 'Y', :blkprcrows,
+                        :chkpntstrtgy, :chkpntclnm, :chkpntenbld, :trgconid
+                    )
+                """, {
+                    'jobid': job_id,
+                    'mapid': map_rec['MAPID'],
+                    'mapref': map_rec['MAPREF'],
+                    'frqcd': map_rec['FRQCD'],
+                    'trgschm': map_rec['TRGSCHM'],
+                    'trgtbtyp': map_rec['TRGTBTYP'],
+                    'trgtbnm': map_rec['TRGTBNM'],
+                    'srcsystm': map_rec['SRCSYSTM'],
+                    'stflg': map_rec['STFLG'],
+                    'blkprcrows': map_rec.get('BLKPRCROWS'),
+                    'chkpntstrtgy': map_rec.get('CHKPNTSTRTGY', 'AUTO'),
+                    'chkpntclnm': map_rec.get('CHKPNTCLNM'),
+                    'chkpntenbld': map_rec.get('CHKPNTENBLD', 'Y'),
+                    'trgconid': trgconid
+                })
             w_jobid = job_id
         
         # Process job details
         if w_jobid:
-            mapdtl_query = f"""
-                SELECT * FROM {schema}.dwmaprdtl
-                WHERE mapref = :mapref AND curflg = 'Y'
-            """
-            
-            cursor.execute(mapdtl_query, {'mapref': p_mapref})
-            mapdtl_columns = [col[0] for col in cursor.description]
+            if db_type == "POSTGRESQL":
+                mapdtl_query = f"""
+                    SELECT * FROM {schema}.DMS_MAPRDTL
+                    WHERE mapref = %s AND curflg = 'Y'
+                """
+                cursor.execute(mapdtl_query, (p_mapref,))
+            else:  # Oracle
+                mapdtl_query = f"""
+                    SELECT * FROM {schema}.DMS_MAPRDTL
+                    WHERE mapref = :mapref AND curflg = 'Y'
+                """
+                cursor.execute(mapdtl_query, {'mapref': p_mapref})
+            mapdtl_columns = [col[0].upper() for col in cursor.description]  # Normalize to uppercase
             mapdtl_rows = cursor.fetchall()
             
             for mapdtl_row in mapdtl_rows:
                 mapdtl_rec = dict(zip(mapdtl_columns, mapdtl_row))
                 
                 # Check if job detail exists
-                jobdtl_query = f"""
-                    SELECT * FROM {schema}.dwjobdtl
-                    WHERE mapref = :mapref
-                      AND trgclnm = :trgclnm
-                      AND curflg = 'Y'
-                """
-                
-                cursor.execute(jobdtl_query, {
-                    'mapref': mapdtl_rec['MAPREF'],
-                    'trgclnm': mapdtl_rec['TRGCLNM']
-                })
-                jobdtl_columns = [col[0] for col in cursor.description]
+                if db_type == "POSTGRESQL":
+                    jobdtl_query = f"""
+                        SELECT * FROM {schema}.DMS_JOBDTL
+                        WHERE mapref = %s
+                          AND trgclnm = %s
+                          AND curflg = 'Y'
+                    """
+                    cursor.execute(jobdtl_query, (
+                        mapdtl_rec['MAPREF'],
+                        mapdtl_rec['TRGCLNM']
+                    ))
+                else:  # Oracle
+                    jobdtl_query = f"""
+                        SELECT * FROM {schema}.DMS_JOBDTL
+                        WHERE mapref = :mapref
+                          AND trgclnm = :trgclnm
+                          AND curflg = 'Y'
+                    """
+                    cursor.execute(jobdtl_query, {
+                        'mapref': mapdtl_rec['MAPREF'],
+                        'trgclnm': mapdtl_rec['TRGCLNM']
+                    })
+                jobdtl_columns = [col[0].upper() for col in cursor.description]  # Normalize to uppercase
                 jobdtl_row = cursor.fetchone()
                 
                 w_dtl_chg = 'Y'
@@ -627,53 +814,102 @@ def create_update_job(connection, p_mapref: str) -> Optional[int]:
                         w_dtl_chg = 'N'
                     else:
                         # Mark existing detail as inactive
-                        cursor.execute(f"""
-                            UPDATE {schema}.dwjobdtl
-                            SET curflg = 'N', recupdt = SYSDATE
-                            WHERE mapref = :mapref
-                              AND jobdtlid = :jobdtlid
-                              AND curflg = 'Y'
-                        """, {
-                            'mapref': jobdtl_rec['MAPREF'],
-                            'jobdtlid': jobdtl_rec['JOBDTLID']
-                        })
+                        if db_type == "POSTGRESQL":
+                            cursor.execute(f"""
+                                UPDATE {schema}.DMS_JOBDTL
+                                SET curflg = 'N', recupdt = CURRENT_TIMESTAMP
+                                WHERE mapref = %s
+                                  AND jobdtlid = %s
+                                  AND curflg = 'Y'
+                            """, (
+                                jobdtl_rec['MAPREF'],
+                                jobdtl_rec['JOBDTLID']
+                            ))
+                        else:  # Oracle
+                            cursor.execute(f"""
+                                UPDATE {schema}.DMS_JOBDTL
+                                SET curflg = 'N', recupdt = SYSDATE
+                                WHERE mapref = :mapref
+                                  AND jobdtlid = :jobdtlid
+                                  AND curflg = 'Y'
+                            """, {
+                                'mapref': jobdtl_rec['MAPREF'],
+                                'jobdtlid': jobdtl_rec['JOBDTLID']
+                            })
                 
                 # Insert new job detail if changed
                 if w_dtl_chg == 'Y':
                     # Generate job detail ID using ID provider (supports Oracle/PostgreSQL)
-                    jobdtlid = get_next_id(cursor, f"{schema}.DWJOBDTLSEQ")
-                    cursor.execute(f"""
-                        INSERT INTO {schema}.dwjobdtl (
-                            jobdtlid, mapref, mapdtlid, trgclnm, trgcldtyp,
-                            trgkeyflg, trgkeyseq, trgcldesc, maplogic, maprsqlcd,
-                            keyclnm, valclnm, mapcmbcd, excseq, scdtyp,
-                            reccrdt, recupdt, curflg
-                        )
-                        VALUES (
-                            :jobdtlid, :mapref, :mapdtlid, :trgclnm, :trgcldtyp,
-                            :trgkeyflg, :trgkeyseq, :trgcldesc, :maplogic, :maprsqlcd,
-                            :keyclnm, :valclnm, :mapcmbcd, :excseq, :scdtyp,
-                            SYSDATE, SYSDATE, 'Y'
-                        )
-                    """, {
-                        'jobdtlid': jobdtlid,
-                        'mapref': mapdtl_rec['MAPREF'],
-                        'mapdtlid': mapdtl_rec['MAPDTLID'],
-                        'trgclnm': mapdtl_rec['TRGCLNM'],
-                        'trgcldtyp': mapdtl_rec['TRGCLDTYP'],
-                        'trgkeyflg': mapdtl_rec['TRGKEYFLG'],
-                        'trgkeyseq': mapdtl_rec.get('TRGKEYSEQ'),
-                        'trgcldesc': mapdtl_rec['TRGCLDESC'],
-                        'maplogic': mapdtl_rec['MAPLOGIC'],
-                        'maprsqlcd': mapdtl_rec.get('MAPRSQLCD'),
-                        'keyclnm': mapdtl_rec['KEYCLNM'],
-                        'valclnm': mapdtl_rec['VALCLNM'],
-                        'mapcmbcd': mapdtl_rec['MAPCMBCD'],
-                        'excseq': mapdtl_rec['EXCSEQ'],
-                        'scdtyp': mapdtl_rec.get('SCDTYP')
-                    })
+                    jobdtlid = get_next_id(cursor, f"{schema}.DMS_JOBDTLSEQ")
+                    if db_type == "POSTGRESQL":
+                        cursor.execute(f"""
+                            INSERT INTO {schema}.DMS_JOBDTL (
+                                jobdtlid, mapref, mapdtlid, trgclnm, trgcldtyp,
+                                trgkeyflg, trgkeyseq, trgcldesc, maplogic, maprsqlcd,
+                                keyclnm, valclnm, mapcmbcd, excseq, scdtyp,
+                                reccrdt, recupdt, curflg
+                            )
+                            VALUES (
+                                %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s,
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'Y'
+                            )
+                        """, (
+                            jobdtlid,
+                            mapdtl_rec['MAPREF'],
+                            mapdtl_rec['MAPDTLID'],
+                            mapdtl_rec['TRGCLNM'],
+                            mapdtl_rec['TRGCLDTYP'],
+                            mapdtl_rec['TRGKEYFLG'],
+                            mapdtl_rec.get('TRGKEYSEQ'),
+                            mapdtl_rec['TRGCLDESC'],
+                            mapdtl_rec['MAPLOGIC'],
+                            mapdtl_rec.get('MAPRSQLCD'),
+                            mapdtl_rec['KEYCLNM'],
+                            mapdtl_rec['VALCLNM'],
+                            mapdtl_rec['MAPCMBCD'],
+                            mapdtl_rec['EXCSEQ'],
+                            mapdtl_rec.get('SCDTYP')
+                        ))
+                    else:  # Oracle
+                        cursor.execute(f"""
+                            INSERT INTO {schema}.DMS_JOBDTL (
+                                jobdtlid, mapref, mapdtlid, trgclnm, trgcldtyp,
+                                trgkeyflg, trgkeyseq, trgcldesc, maplogic, maprsqlcd,
+                                keyclnm, valclnm, mapcmbcd, excseq, scdtyp,
+                                reccrdt, recupdt, curflg
+                            )
+                            VALUES (
+                                :jobdtlid, :mapref, :mapdtlid, :trgclnm, :trgcldtyp,
+                                :trgkeyflg, :trgkeyseq, :trgcldesc, :maplogic, :maprsqlcd,
+                                :keyclnm, :valclnm, :mapcmbcd, :excseq, :scdtyp,
+                                SYSDATE, SYSDATE, 'Y'
+                            )
+                        """, {
+                            'jobdtlid': jobdtlid,
+                            'mapref': mapdtl_rec['MAPREF'],
+                            'mapdtlid': mapdtl_rec['MAPDTLID'],
+                            'trgclnm': mapdtl_rec['TRGCLNM'],
+                            'trgcldtyp': mapdtl_rec['TRGCLDTYP'],
+                            'trgkeyflg': mapdtl_rec['TRGKEYFLG'],
+                            'trgkeyseq': mapdtl_rec.get('TRGKEYSEQ'),
+                            'trgcldesc': mapdtl_rec['TRGCLDESC'],
+                            'maplogic': mapdtl_rec['MAPLOGIC'],
+                            'maprsqlcd': mapdtl_rec.get('MAPRSQLCD'),
+                            'keyclnm': mapdtl_rec['KEYCLNM'],
+                            'valclnm': mapdtl_rec['VALCLNM'],
+                            'mapcmbcd': mapdtl_rec['MAPCMBCD'],
+                            'excseq': mapdtl_rec['EXCSEQ'],
+                            'scdtyp': mapdtl_rec.get('SCDTYP')
+                        })
         
-        connection.commit()
+        # Commit only if autocommit is disabled (PostgreSQL with autocommit=False)
+        if db_type == "POSTGRESQL" and not getattr(connection, 'autocommit', False):
+            connection.commit()
+        elif db_type == "ORACLE":
+            connection.commit()
+        
         info(f"Before create target table for mapref: {p_mapref}")
         # Create target table using target connection
         # (trgconid was already retrieved above before INSERT)
@@ -710,7 +946,7 @@ def create_job_flow(connection, p_mapref: str):
     Create dynamic Python code for job execution with hash-based change detection.
     Python equivalent of CREATE_JOB_FLOW procedure.
     
-    This function generates Python code (not PL/SQL) and stores it in DWJOBFLW.DWLOGIC.
+    This function generates Python code (not PL/SQL) and stores it in DMS_JOBFLW.DWLOGIC.
     The generated code uses MD5 hash for efficient change detection instead of
     column-by-column comparison.
     
@@ -729,29 +965,49 @@ def create_job_flow(connection, p_mapref: str):
     
     try:
         cursor = connection.cursor()
-        schema = os.getenv('SCHEMA', 'TRG')
+        schema = os.getenv('DMS_SCHEMA', 'TRG')
+        
+        # Detect database type
+        db_type = _detect_db_type(connection)
         
         # Get bulk processing limit
         try:
-            cursor.execute("""
-                SELECT prval FROM dwparams
-                WHERE prtyp = 'BULKPRC' AND prcd = 'NOOFROWS'
-            """)
+            if db_type == "POSTGRESQL":
+                cursor.execute("""
+                    SELECT prval FROM DMS_PARAMS
+                    WHERE prtyp = 'BULKPRC' AND prcd = 'NOOFROWS'
+                """)
+            else:  # Oracle
+                cursor.execute("""
+                    SELECT prval FROM DMS_PARAMS
+                    WHERE prtyp = 'BULKPRC' AND prcd = 'NOOFROWS'
+                """)
             w_limit_row = cursor.fetchone()
             w_limit = int(w_limit_row[0]) if w_limit_row else 1000
         except:
             w_limit = 1000
         
         # Get job information including checkpoint configuration
-        cursor.execute(f"""
-            SELECT jobid, mapref, trgschm, trgtbnm, trgtbtyp, 
-                   trgschm||'.'||trgtbnm as tbnam, blkprcrows,
-                   chkpntstrtgy, chkpntclnm, chkpntenbld
-            FROM {schema}.dwjob
-            WHERE mapref = :mapref
-              AND stflg = 'A'
-              AND curflg = 'Y'
-        """, {'mapref': p_mapref})
+        if db_type == "POSTGRESQL":
+            cursor.execute(f"""
+                SELECT jobid, mapref, trgschm, trgtbnm, trgtbtyp, 
+                       trgschm||'.'||trgtbnm as tbnam, blkprcrows,
+                       chkpntstrtgy, chkpntclnm, chkpntenbld
+                FROM {schema}.DMS_JOB
+                WHERE mapref = %s
+                  AND stflg = 'A'
+                  AND curflg = 'Y'
+            """, (p_mapref,))
+        else:  # Oracle
+            cursor.execute(f"""
+                SELECT jobid, mapref, trgschm, trgtbnm, trgtbtyp, 
+                       trgschm||'.'||trgtbnm as tbnam, blkprcrows,
+                       CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD
+                FROM {schema}.DMS_JOB
+                WHERE mapref = :mapref
+                  AND stflg = 'A'
+                  AND curflg = 'Y'
+            """, {'mapref': p_mapref})
         
         job_row = cursor.fetchone()
         if not job_row:
@@ -793,13 +1049,21 @@ def create_job_flow(connection, p_mapref: str):
             error(traceback.format_exc())
             raise  # Re-raise to be caught by outer exception handler
         
-        # Store the generated Python code in DWJOBFLW
-        cursor.execute(f"""
-            SELECT jobflwid, dwlogic
-            FROM {schema}.dwjobflw
-            WHERE mapref = :mapref
-              AND curflg = 'Y'
-        """, {'mapref': p_mapref})
+        # Store the generated Python code in DMS_JOBFLW
+        if db_type == "POSTGRESQL":
+            cursor.execute(f"""
+                SELECT jobflwid, dwlogic
+                FROM {schema}.DMS_JOBFLW
+                WHERE mapref = %s
+                  AND curflg = 'Y'
+            """, (p_mapref,))
+        else:  # Oracle
+            cursor.execute(f"""
+                SELECT jobflwid, dwlogic
+                FROM {schema}.DMS_JOBFLW
+                WHERE mapref = :mapref
+                  AND curflg = 'Y'
+            """, {'mapref': p_mapref})
         
         flw_row = cursor.fetchone()
         
@@ -816,54 +1080,88 @@ def create_job_flow(connection, p_mapref: str):
         if w_res != 0:
             # Mark existing flow as inactive
             if flw_row:
-                cursor.execute(f"""
-                    UPDATE {schema}.dwjobflw
-                    SET curflg = 'N'
-                    WHERE curflg = 'Y'
-                      AND jobflwid = :jobflwid
-                """, {'jobflwid': flw_row[0]})
-            
-            # Insert new job flow with CLOB handling
-            # Create a CLOB variable for the Python code
-            clob_var = cursor.var(oracledb.DB_TYPE_CLOB)
+                if db_type == "POSTGRESQL":
+                    cursor.execute(f"""
+                        UPDATE {schema}.DMS_JOBFLW
+                        SET curflg = 'N'
+                        WHERE curflg = 'Y'
+                          AND jobflwid = %s
+                    """, (flw_row[0],))
+                else:  # Oracle
+                    cursor.execute(f"""
+                        UPDATE {schema}.DMS_JOBFLW
+                        SET curflg = 'N'
+                        WHERE curflg = 'Y'
+                          AND jobflwid = :jobflwid
+                    """, {'jobflwid': flw_row[0]})
             
             # Generate job flow ID using ID provider (supports Oracle/PostgreSQL)
-            jobflwid = get_next_id(cursor, f"{schema}.DWJOBFLWSEQ")
+            jobflwid = get_next_id(cursor, f"{schema}.DMS_JOBFLWSEQ")
             
-            # Insert the record first without the CLOB
-            cursor.execute(f"""
-                INSERT INTO {schema}.dwjobflw (
-                    jobflwid, jobid, mapref, trgschm, trgtbtyp, trgtbnm,
-                    dwlogic, stflg, recrdt, recupdt, curflg
-                )
-                VALUES (
-                    :jobflwid, :jobid, :mapref, :trgschm, :trgtbtyp, :trgtbnm,
-                    EMPTY_CLOB(), 'A', SYSDATE, SYSDATE, 'Y'
-                )
-                RETURNING dwlogic INTO :clob_var
-            """, {
-                'jobflwid': jobflwid,
-                'jobid': jobid,
-                'mapref': mapref,
-                'trgschm': trgschm,
-                'trgtbtyp': trgtbtyp,
-                'trgtbnm': trgtbnm,
-                'clob_var': clob_var
-            })
-            
-            # Now write the Python code to the CLOB
-            if python_code:
-                clob_obj = clob_var.getvalue()[0]
-                if clob_obj:
-                    # Write the Python code to CLOB
-                    clob_obj.write(python_code)
-                    print(f"Python code ({len(python_code)} chars) written to CLOB for jobflwid={jobflwid}")
+            # Insert new job flow - handle PostgreSQL TEXT vs Oracle CLOB differently
+            if db_type == "POSTGRESQL":
+                # PostgreSQL: Use TEXT type directly
+                cursor.execute(f"""
+                    INSERT INTO {schema}.DMS_JOBFLW (
+                        jobflwid, jobid, mapref, trgschm, trgtbtyp, trgtbnm,
+                        dwlogic, stflg, recrdt, recupdt, curflg
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        %s, 'A', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'Y'
+                    )
+                """, (
+                    jobflwid,
+                    jobid,
+                    mapref,
+                    trgschm,
+                    trgtbtyp,
+                    trgtbnm,
+                    python_code if python_code else ''
+                ))
+                print(f"Python code ({len(python_code) if python_code else 0} chars) written to TEXT field for jobflwid={jobflwid}")
+            else:  # Oracle
+                # Oracle: Use CLOB with RETURNING clause
+                clob_var = cursor.var(oracledb.DB_TYPE_CLOB)
+                
+                # Insert the record first without the CLOB
+                cursor.execute(f"""
+                    INSERT INTO {schema}.DMS_JOBFLW (
+                        jobflwid, jobid, mapref, trgschm, trgtbtyp, trgtbnm,
+                        dwlogic, stflg, recrdt, recupdt, curflg
+                    )
+                    VALUES (
+                        :jobflwid, :jobid, :mapref, :trgschm, :trgtbtyp, :trgtbnm,
+                        EMPTY_CLOB(), 'A', SYSDATE, SYSDATE, 'Y'
+                    )
+                    RETURNING dwlogic INTO :clob_var
+                """, {
+                    'jobflwid': jobflwid,
+                    'jobid': jobid,
+                    'mapref': mapref,
+                    'trgschm': trgschm,
+                    'trgtbtyp': trgtbtyp,
+                    'trgtbnm': trgtbnm,
+                    'clob_var': clob_var
+                })
+                
+                # Now write the Python code to the CLOB
+                if python_code:
+                    clob_obj = clob_var.getvalue()[0]
+                    if clob_obj:
+                        # Write the Python code to CLOB
+                        clob_obj.write(python_code)
+                        print(f"Python code ({len(python_code)} chars) written to CLOB for jobflwid={jobflwid}")
             
             print(f"Job flow created successfully for {p_mapref}")
         else:
             print(f"Job flow unchanged for {p_mapref}")
         
-        connection.commit()
+        # Commit only if autocommit is disabled (PostgreSQL with autocommit=False)
+        if db_type == "POSTGRESQL" and not getattr(connection, 'autocommit', False):
+            connection.commit()
+        elif db_type == "ORACLE":
+            connection.commit()
         
     except Exception as e:
         if connection:
@@ -888,11 +1186,11 @@ def create_all_jobs(connection):
     
     try:
         cursor = connection.cursor()
-        schema = os.getenv('SCHEMA', 'TRG')
+        schema = os.getenv('DMS_SCHEMA', 'TRG')
         
         # Get all active mappings
         query = f"""
-            SELECT mapref FROM {schema}.dwmapr
+            SELECT mapref FROM {schema}.DMS_MAPR
             WHERE curflg = 'Y'
               AND lgvrfyflg = 'Y'
               AND stflg = 'A'

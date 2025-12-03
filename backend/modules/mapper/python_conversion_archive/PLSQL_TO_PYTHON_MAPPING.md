@@ -2,7 +2,7 @@
 
 ## Quick Reference Guide
 
-This document provides a side-by-side comparison of PL/SQL functions in `PKGDWMAPR_bdy.sql` and their Python equivalents in `pkgdwmapr.py`.
+This document provides a side-by-side comparison of PL/SQL functions in `PKGDMS_MAPR_bdy.sql` and their Python equivalents in `pkgdms_mapr.py`.
 
 ---
 
@@ -20,14 +20,14 @@ end;
 ```python
 @staticmethod
 def version() -> str:
-    return f"{PKGDWMAPR.G_NAME}:{PKGDWMAPR.G_VER}"
+    return f"{PKGDMS_MAPR.G_NAME}:{PKGDMS_MAPR.G_VER}"
 ```
 
 **Usage:**
 ```python
-# PL/SQL: SELECT PKGDWMAPR.VERSION() FROM DUAL;
+# PL/SQL: SELECT PKGDMS_MAPR.VERSION() FROM DUAL;
 # Python:
-version = PKGDWMAPR.version()
+version = PKGDMS_MAPR.version()
 ```
 
 ---
@@ -37,27 +37,27 @@ version = PKGDWMAPR.version()
 ### PL/SQL
 ```sql
 function CREATE_UPDATE_SQL(
-    p_dwmaprsqlcd in dwmaprsql.dwmaprsqlcd%type,
-    p_dwmaprsql   in dwmaprsql.dwmaprsql%type
-) return dwmaprsql.dwmaprsqlid%type;
+    p_dms_maprsqlcd in DMS_MAPRSQL.dms_maprsqlcd%type,
+    p_dms_maprsql   in DMS_MAPRSQL.DMS_MAPRSQL%type
+) return DMS_MAPRSQL.dms_maprsqlid%type;
 ```
 
 ### Python
 ```python
 def create_update_sql(
     self,
-    p_dwmaprsqlcd: str,
-    p_dwmaprsql: str
+    p_dms_maprsqlcd: str,
+    p_dms_maprsql: str
 ) -> int:
 ```
 
 **Usage:**
 ```python
 # PL/SQL:
-# v_sql_id := PKGDWMAPR.CREATE_UPDATE_SQL('MY_SQL_CODE', 'SELECT * FROM ...');
+# v_sql_id := PKGDMS_MAPR.CREATE_UPDATE_SQL('MY_SQL_CODE', 'SELECT * FROM ...');
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 sql_id = pkg.create_update_sql('MY_SQL_CODE', 'SELECT * FROM ...')
 ```
 
@@ -68,18 +68,18 @@ sql_id = pkg.create_update_sql('MY_SQL_CODE', 'SELECT * FROM ...')
 ### PL/SQL
 ```sql
 function CREATE_UPDATE_MAPPING(
-   p_mapref     in dwmapr.mapref%type,
-   p_mapdesc    in dwmapr.mapdesc%type,
-   p_trgschm    in dwmapr.trgschm%type,
-   p_trgtbtyp   in dwmapr.trgtbtyp%type,
-   p_trgtbnm    in dwmapr.trgtbnm%type,
-   p_frqcd      in dwmapr.frqcd%type,
-   p_srcsystm   in dwmapr.srcsystm%type,
-   p_lgvrfyflg  in dwmapr.lgvrfyflg%type,
-   p_lgvrfydt   in dwmapr.lgvrfydt%type,
-   p_stflg      in dwmapr.stflg%type,
-   p_blkprcrows in dwmapr.blkprcrows%type
-) return dwmapr.mapid%type;
+   p_mapref     in DMS_MAPR.mapref%type,
+   p_mapdesc    in DMS_MAPR.mapdesc%type,
+   p_trgschm    in DMS_MAPR.trgschm%type,
+   p_trgtbtyp   in DMS_MAPR.trgtbtyp%type,
+   p_trgtbnm    in DMS_MAPR.trgtbnm%type,
+   p_frqcd      in DMS_MAPR.frqcd%type,
+   p_srcsystm   in DMS_MAPR.srcsystm%type,
+   p_lgvrfyflg  in DMS_MAPR.lgvrfyflg%type,
+   p_lgvrfydt   in DMS_MAPR.lgvrfydt%type,
+   p_stflg      in DMS_MAPR.stflg%type,
+   p_blkprcrows in DMS_MAPR.blkprcrows%type
+) return DMS_MAPR.mapid%type;
 ```
 
 ### Python
@@ -103,14 +103,14 @@ def create_update_mapping(
 **Usage:**
 ```python
 # PL/SQL:
-# v_mapid := PKGDWMAPR.CREATE_UPDATE_MAPPING(
+# v_mapid := PKGDMS_MAPR.CREATE_UPDATE_MAPPING(
 #     p_mapref => 'MAP001',
 #     p_mapdesc => 'Description',
 #     ...
 # );
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 mapid = pkg.create_update_mapping(
     p_mapref='MAP001',
     p_mapdesc='Description',
@@ -125,21 +125,21 @@ mapid = pkg.create_update_mapping(
 ### PL/SQL
 ```sql
 function CREATE_UPDATE_MAPPING(
-   p_mapref     in dwmapr.mapref%type,
-   p_mapdesc    in dwmapr.mapdesc%type,
+   p_mapref     in DMS_MAPR.mapref%type,
+   p_mapdesc    in DMS_MAPR.mapdesc%type,
    ...
-   p_user       in dwmapr.crtdby%type
-) return dwmapr.mapid%type;
+   p_user       in DMS_MAPR.crtdby%type
+) return DMS_MAPR.mapid%type;
 ```
 
 ### Python
 ```python
 # Method 1: Set user in constructor
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 mapid = pkg.create_update_mapping(...)
 
 # Method 2: Use convenience function
-from modules.mapper.pkgdwmapr import create_update_mapping_with_user
+from modules.mapper.pkgdms_mapr import create_update_mapping_with_user
 
 mapid = create_update_mapping_with_user(
     connection=connection,
@@ -152,14 +152,14 @@ mapid = create_update_mapping_with_user(
 **Usage:**
 ```python
 # PL/SQL:
-# v_mapid := PKGDWMAPR.CREATE_UPDATE_MAPPING(
+# v_mapid := PKGDMS_MAPR.CREATE_UPDATE_MAPPING(
 #     p_mapref => 'MAP001',
 #     ...
 #     p_user => 'ADMIN'
 # );
 
 # Python - Option 1:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 mapid = pkg.create_update_mapping(p_mapref='MAP001', ...)
 
 # Python - Option 2:
@@ -178,21 +178,21 @@ mapid = create_update_mapping_with_user(
 ### PL/SQL
 ```sql
 function CREATE_UPDATE_MAPPING_DETAIL(
-   p_mapref     in dwmaprdtl.mapref%type,
-   p_trgclnm    in dwmaprdtl.trgclnm%type,
-   p_trgcldtyp  in dwmaprdtl.trgcldtyp%type,
-   p_trgkeyflg  in dwmaprdtl.trgkeyflg%type,
-   p_trgkeyseq  in dwmaprdtl.trgkeyseq%type,
-   p_trgcldesc  in dwmaprdtl.trgcldesc%type,
-   p_maplogic   in dwmaprdtl.maplogic%type,
-   p_keyclnm    in dwmaprdtl.keyclnm%type,
-   p_valclnm    in dwmaprdtl.valclnm%type,
-   p_mapcmbcd   in dwmaprdtl.mapcmbcd%type,
-   p_excseq     in dwmaprdtl.excseq%type,
-   p_scdtyp     in dwmaprdtl.scdtyp%type,
-   p_lgvrfyflg  in dwmaprdtl.lgvrfyflg%type,
-   p_lgvrfydt   in dwmaprdtl.lgvrfydt%type
-) return dwmaprdtl.mapdtlid%type;
+   p_mapref     in DMS_MAPRDTL.mapref%type,
+   p_trgclnm    in DMS_MAPRDTL.trgclnm%type,
+   p_trgcldtyp  in DMS_MAPRDTL.trgcldtyp%type,
+   p_trgkeyflg  in DMS_MAPRDTL.trgkeyflg%type,
+   p_trgkeyseq  in DMS_MAPRDTL.trgkeyseq%type,
+   p_trgcldesc  in DMS_MAPRDTL.trgcldesc%type,
+   p_maplogic   in DMS_MAPRDTL.maplogic%type,
+   p_keyclnm    in DMS_MAPRDTL.keyclnm%type,
+   p_valclnm    in DMS_MAPRDTL.valclnm%type,
+   p_mapcmbcd   in DMS_MAPRDTL.mapcmbcd%type,
+   p_excseq     in DMS_MAPRDTL.excseq%type,
+   p_scdtyp     in DMS_MAPRDTL.scdtyp%type,
+   p_lgvrfyflg  in DMS_MAPRDTL.lgvrfyflg%type,
+   p_lgvrfydt   in DMS_MAPRDTL.lgvrfydt%type
+) return DMS_MAPRDTL.mapdtlid%type;
 ```
 
 ### Python
@@ -222,7 +222,7 @@ def create_update_mapping_detail(
 
 ### PL/SQL
 ```sql
-function VALIDATE_SQL(p_logic in dwmaprsql.dwmaprsql%type)
+function VALIDATE_SQL(p_logic in DMS_MAPRSQL.DMS_MAPRSQL%type)
 return varchar2;
 ```
 
@@ -234,11 +234,11 @@ def validate_sql(self, p_logic: str) -> str:
 **Usage:**
 ```python
 # PL/SQL:
-# v_result := PKGDWMAPR.VALIDATE_SQL('SELECT * FROM ...');
+# v_result := PKGDMS_MAPR.VALIDATE_SQL('SELECT * FROM ...');
 # IF v_result = 'Y' THEN ...
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 result = pkg.validate_sql('SELECT * FROM ...')
 if result == 'Y':
     print("Valid")
@@ -251,10 +251,10 @@ if result == 'Y':
 ### PL/SQL
 ```sql
 Function VALIDATE_LOGIC(
-    p_logic   in dwmaprdtl.maplogic%type,
-    p_keyclnm in dwmaprdtl.keyclnm%type,
-    p_valclnm in dwmaprdtl.valclnm%type
-) return dwmaprdtl.lgvrfyflg%type;
+    p_logic   in DMS_MAPRDTL.maplogic%type,
+    p_keyclnm in DMS_MAPRDTL.keyclnm%type,
+    p_valclnm in DMS_MAPRDTL.valclnm%type
+) return DMS_MAPRDTL.lgvrfyflg%type;
 ```
 
 ### Python
@@ -274,11 +274,11 @@ def validate_logic(
 ### PL/SQL
 ```sql
 Function VALIDATE_LOGIC2(
-    p_logic   in  dwmaprdtl.maplogic%type,
-    p_keyclnm in  dwmaprdtl.keyclnm%type,
-    p_valclnm in  dwmaprdtl.valclnm%type,
+    p_logic   in  DMS_MAPRDTL.maplogic%type,
+    p_keyclnm in  DMS_MAPRDTL.keyclnm%type,
+    p_valclnm in  DMS_MAPRDTL.valclnm%type,
     p_err     out varchar2
-) return dwmaprdtl.lgvrfyflg%type;
+) return DMS_MAPRDTL.lgvrfyflg%type;
 ```
 
 ### Python
@@ -294,7 +294,7 @@ def validate_logic2(
 **Usage:**
 ```python
 # PL/SQL:
-# v_result := PKGDWMAPR.VALIDATE_LOGIC2(
+# v_result := PKGDMS_MAPR.VALIDATE_LOGIC2(
 #     p_logic => 'SELECT ...',
 #     p_keyclnm => 'id',
 #     p_valclnm => 'name',
@@ -302,7 +302,7 @@ def validate_logic2(
 # );
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 result, error = pkg.validate_logic2(
     p_logic='SELECT ...',
     p_keyclnm='id',
@@ -316,8 +316,8 @@ result, error = pkg.validate_logic2(
 
 ### PL/SQL
 ```sql
-Function VALIDATE_LOGIC(p_mapref in dwmapr.mapref%type)
-return dwmaprdtl.lgvrfyflg%type;
+Function VALIDATE_LOGIC(p_mapref in DMS_MAPR.mapref%type)
+return DMS_MAPRDTL.lgvrfyflg%type;
 ```
 
 ### Python
@@ -328,10 +328,10 @@ def validate_all_logic(self, p_mapref: str) -> str:
 **Usage:**
 ```python
 # PL/SQL:
-# v_result := PKGDWMAPR.VALIDATE_LOGIC('MAP001');
+# v_result := PKGDMS_MAPR.VALIDATE_LOGIC('MAP001');
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 result = pkg.validate_all_logic('MAP001')
 ```
 
@@ -342,7 +342,7 @@ result = pkg.validate_all_logic('MAP001')
 ### PL/SQL
 ```sql
 function VALIDATE_MAPPING_DETAILS(
-    p_mapref in  dwmapr.mapref%type,
+    p_mapref in  DMS_MAPR.mapref%type,
     p_err    out varchar2
 ) return varchar2;
 ```
@@ -358,13 +358,13 @@ def validate_mapping_details(
 **Usage:**
 ```python
 # PL/SQL:
-# v_result := PKGDWMAPR.VALIDATE_MAPPING_DETAILS(
+# v_result := PKGDMS_MAPR.VALIDATE_MAPPING_DETAILS(
 #     p_mapref => 'MAP001',
 #     p_err => v_error
 # );
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 result, error = pkg.validate_mapping_details('MAP001')
 ```
 
@@ -375,8 +375,8 @@ result, error = pkg.validate_mapping_details('MAP001')
 ### PL/SQL
 ```sql
 Procedure ACTIVATE_DEACTIVATE_MAPPING(
-    p_mapref in  dwmapr.mapref%type,
-    p_stflg  in  dwmapr.stflg%type,
+    p_mapref in  DMS_MAPR.mapref%type,
+    p_stflg  in  DMS_MAPR.stflg%type,
     p_err    out varchar2
 );
 ```
@@ -393,14 +393,14 @@ def activate_deactivate_mapping(
 **Usage:**
 ```python
 # PL/SQL:
-# PKGDWMAPR.ACTIVATE_DEACTIVATE_MAPPING(
+# PKGDMS_MAPR.ACTIVATE_DEACTIVATE_MAPPING(
 #     p_mapref => 'MAP001',
 #     p_stflg => 'A',
 #     p_err => v_error
 # );
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 success, message = pkg.activate_deactivate_mapping('MAP001', 'A')
 if success:
     print(message)
@@ -415,7 +415,7 @@ else:
 ### PL/SQL
 ```sql
 procedure DELETE_MAPPING(
-    p_mapref in  dwmapr.mapref%type,
+    p_mapref in  DMS_MAPR.mapref%type,
     p_err    out varchar2
 );
 ```
@@ -431,13 +431,13 @@ def delete_mapping(
 **Usage:**
 ```python
 # PL/SQL:
-# PKGDWMAPR.DELETE_MAPPING(
+# PKGDMS_MAPR.DELETE_MAPPING(
 #     p_mapref => 'MAP001',
 #     p_err => v_error
 # );
 
 # Python:
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 success, message = pkg.delete_mapping('MAP001')
 ```
 
@@ -448,8 +448,8 @@ success, message = pkg.delete_mapping('MAP001')
 ### PL/SQL
 ```sql
 procedure DELETE_MAPPING_DETAILS(
-    p_mapref  in  dwmaprdtl.mapref%type,
-    p_trgclnm in  dwmaprdtl.trgclnm%type,
+    p_mapref  in  DMS_MAPRDTL.mapref%type,
+    p_trgclnm in  DMS_MAPRDTL.trgclnm%type,
     p_err     out varchar2
 );
 ```
@@ -499,7 +499,7 @@ END;
 try:
     # code
 except Exception as e:
-    raise PKGDWMAPRError(...)
+    raise PKGDMS_MAPRError(...)
 ```
 
 ### 3. NULL Handling
@@ -570,7 +570,7 @@ DECLARE
   v_error VARCHAR2(400);
 BEGIN
   -- Create mapping
-  v_mapid := PKGDWMAPR.CREATE_UPDATE_MAPPING(
+  v_mapid := PKGDMS_MAPR.CREATE_UPDATE_MAPPING(
     p_mapref => 'MAP001',
     p_mapdesc => 'Test Mapping',
     p_trgschm => 'DW',
@@ -586,12 +586,12 @@ BEGIN
   );
   
   -- Validate
-  IF PKGDWMAPR.VALIDATE_MAPPING_DETAILS(
+  IF PKGDMS_MAPR.VALIDATE_MAPPING_DETAILS(
     p_mapref => 'MAP001',
     p_err => v_error
   ) = 'Y' THEN
     -- Activate
-    PKGDWMAPR.ACTIVATE_DEACTIVATE_MAPPING(
+    PKGDMS_MAPR.ACTIVATE_DEACTIVATE_MAPPING(
       p_mapref => 'MAP001',
       p_stflg => 'A',
       p_err => v_error
@@ -608,16 +608,16 @@ END;
 
 ### Python
 ```python
-from modules.mapper.pkgdwmapr import (
-    PKGDWMAPR,
-    PKGDWMAPRError
+from modules.mapper.pkgdms_mapr import (
+    PKGDMS_MAPR,
+    PKGDMS_MAPRError
 )
 import oracledb
 
 connection = oracledb.connect(...)
 
 try:
-    pkg = PKGDWMAPR(connection, user='ADMIN')
+    pkg = PKGDMS_MAPR(connection, user='ADMIN')
     
     # Create mapping
     mapid = pkg.create_update_mapping(
@@ -646,7 +646,7 @@ try:
     
     connection.commit()
     
-except PKGDWMAPRError as e:
+except PKGDMS_MAPRError as e:
     connection.rollback()
     print(f"Error: {e.message}")
 except Exception as e:
@@ -671,14 +671,14 @@ When migrating from PL/SQL to Python:
 - [ ] Replace `COMMIT` with `connection.commit()`
 - [ ] Replace `ROLLBACK` with `connection.rollback()`
 - [ ] Replace PL/SQL exception blocks with Python try-except
-- [ ] Use `PKGDWMAPRError` for custom errors
+- [ ] Use `PKGDMS_MAPRError` for custom errors
 - [ ] Test all validations and edge cases
 
 ---
 
 ## Additional Resources
 
-- See `PKGDWMAPR_README.md` for detailed Python documentation
-- See `pkgdwmapr_example.py` for working code examples
-- See `pkgdwmapr.py` for complete implementation
+- See `PKGDMS_MAPR_README.md` for detailed Python documentation
+- See `pkgdms_mapr_example.py` for working code examples
+- See `pkgdms_mapr.py` for complete implementation
 

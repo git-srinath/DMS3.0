@@ -15,7 +15,10 @@ import {
   HomeOutlined,
   SettingsOutlined,
   FullscreenOutlined,
-  FullscreenExitOutlined
+  FullscreenExitOutlined,
+  DescriptionOutlined,
+  EventNoteOutlined,
+  HistoryOutlined
 } from '@mui/icons-material';
 
 const getPageTitle = (pathname) => {
@@ -25,11 +28,11 @@ const getPageTitle = (pathname) => {
     case '/home':
       return 'Data Management Solution';
     case '/jobs':
-      return 'Jobs Management';
+      return 'Jobs';
     case '/type_mapper':
-      return 'Type Mapper';
+      return 'Parameters';
     case '/admin':
-      return 'Admin Dashboard';
+      return 'Admin';
     case '/profile':
       return 'User Profile';
     case '/settings':
@@ -37,9 +40,19 @@ const getPageTitle = (pathname) => {
     case '/dashboard':
       return 'Dashboard';
     case '/job_status_and_logs':
-        return 'Job Status & Logs';
+        return 'Logs & Status';
     case '/manage_sql':
         return 'Manage SQL';
+    case '/security':
+        return 'Security';
+    case '/register_db_connections':
+        return 'DB Connections';
+    case '/reports':
+        return 'Reports';
+    case '/report_scheduler':
+        return 'Report Scheduler';
+    case '/report_runs':
+        return 'Report Runs';
     default:
       return 'Menu';
   }
@@ -61,6 +74,12 @@ const getIcon = (pathname) => {
       return <HomeOutlined className="w-4 h-4" />;
     case '/settings':
       return <SettingsOutlined className="w-4 h-4" />;
+    case '/reports':
+      return <DescriptionOutlined className="w-4 h-4" />;
+    case '/report_scheduler':
+      return <EventNoteOutlined className="w-4 h-4" />;
+    case '/report_runs':
+      return <HistoryOutlined className="w-4 h-4" />;
     default:
       return null;
   }

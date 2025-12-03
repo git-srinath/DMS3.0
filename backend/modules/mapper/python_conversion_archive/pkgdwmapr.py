@@ -1,11 +1,11 @@
 """
-Python equivalent of PKGDWMAPR PL/SQL Package Body
+Python equivalent of PKGDMS_MAPR PL/SQL Package Body
 Package for validating and processing mappings provided.
 
 Change history:
 date        who              Remarks
 ----------- ---------------- ----------------------------------------------------------------------------------------
-12-Nov-2025 Python Port      Python conversion of PKGDWMAPR PL/SQL package
+12-Nov-2025 Python Port      Python conversion of PKGDMS_MAPR PL/SQL package
 """
 
 import os
@@ -29,22 +29,22 @@ CDR_SCHEMA_PREFIX = f"{CDR_SCHEMA}." if CDR_SCHEMA else ""
 if not DWT_SCHEMA and os.getenv("SCHEMA"):
     DWT_SCHEMA = os.getenv("SCHEMA")
     DWT_SCHEMA_PREFIX = f"{DWT_SCHEMA}." if DWT_SCHEMA else ""
-    info("PKGDWMAPR: Using legacy SCHEMA variable as DWT_SCHEMA for backward compatibility")
+    info("PKGDMS_MAPR: Using legacy SCHEMA variable as DWT_SCHEMA for backward compatibility")
 
 # Log schema configuration for debugging
 if DWT_SCHEMA:
-    info(f"PKGDWMAPR: DWT metadata schema prefix: '{DWT_SCHEMA_PREFIX}'")
+    info(f"PKGDMS_MAPR: DWT metadata schema prefix: '{DWT_SCHEMA_PREFIX}'")
 else:
-    info("PKGDWMAPR: No DWT_SCHEMA set, using no prefix for metadata tables")
+    info("PKGDMS_MAPR: No DWT_SCHEMA set, using no prefix for metadata tables")
 
 if CDR_SCHEMA:
-    info(f"PKGDWMAPR: CDR data schema prefix: '{CDR_SCHEMA_PREFIX}' (for future data operations)")
+    info(f"PKGDMS_MAPR: CDR data schema prefix: '{CDR_SCHEMA_PREFIX}' (for future data operations)")
 else:
-    info("PKGDWMAPR: No CDR_SCHEMA set (will be needed for data loading operations)")
+    info("PKGDMS_MAPR: No CDR_SCHEMA set (will be needed for data loading operations)")
 
 
-class PKGDWMAPRError(Exception):
-    """Custom exception for PKGDWMAPR errors"""
+class PKGDMS_MAPRError(Exception):
+    """Custom exception for PKGDMS_MAPR errors"""
     def __init__(self, package_name: str, proc_name: str, error_code: str, params: str, message: str = None):
         self.package_name = package_name
         self.proc_name = proc_name
@@ -52,22 +52,22 @@ class PKGDWMAPRError(Exception):
         self.params = params
         self.message = message or f"Error in {package_name}.{proc_name} [{error_code}]: {params}"
         super().__init__(self.message)
-        error(f"PKGDWMAPR Error: {self.message}")
+        error(f"PKGDMS_MAPR Error: {self.message}")
 
 
-class PKGDWMAPR:
+class PKGDMS_MAPR:
     """
-    Python implementation of PKGDWMAPR PL/SQL package
+    Python implementation of PKGDMS_MAPR PL/SQL package
     Handles mapping creation, validation, and management
     """
     
     # Package constants
-    G_NAME = 'PKGDWMAPR'
+    G_NAME = 'PKGDMS_MAPR'
     G_VER = 'V001'
     
     def __init__(self, connection: oracledb.Connection, user: str = None):
         """
-        Initialize the PKGDWMAPR class
+        Initialize the PKGDMS_MAPR class
         
         Args:
             connection: Oracle database connection
@@ -79,7 +79,7 @@ class PKGDWMAPR:
     @staticmethod
     def version() -> str:
         """Return package version"""
-        return f"{PKGDWMAPR.G_NAME}:{PKGDWMAPR.G_VER}"
+        return f"{PKGDMS_MAPR.G_NAME}:{PKGDMS_MAPR.G_VER}"
     
     def set_user(self, user: str):
         """Set the current user"""
@@ -98,10 +98,10 @@ class PKGDWMAPR:
             p_dwmaprsql: SQL query text (CLOB)
             
         Returns:
-            dwmaprsqlid: SQL mapping ID
+            maprsqlid: SQL mapping ID
             
         Raises:
-            PKGDWMAPRError: If validation or database operation fails
+            PKGDMS_MAPRError: If validation or database operation fails
         """
         w_procnm = 'CREATE_UPDATE_SQL'
         w_parm = f'SqlCode={p_dwmaprsqlcd}'[:100]
@@ -118,15 +118,15 @@ class PKGDWMAPR:
             
             if w_msg:
                 w_parm = f"{w_parm}::{w_msg}"
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '134', w_parm)
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '134', w_parm)
             
             cursor = self.connection.cursor()
             
             # Check if SQL code already exists
             cursor.execute(f"""
-                SELECT dwmaprsqlid, dwmaprsqlcd, dwmaprsql
-                FROM {DWT_SCHEMA_PREFIX}DWMAPRsql 
-                WHERE dwmaprsqlcd = :sqlcd
+                SELECT maprsqlid, maprsqlcd, MAPRSQL
+                FROM {DWT_SCHEMA_PREFIX}DMS_MAPRsql 
+                WHERE maprsqlcd = :sqlcd
                 AND curflg = 'Y'
             """, {'sqlcd': p_dwmaprsqlcd})
             
@@ -157,7 +157,7 @@ class PKGDWMAPR:
                         w_res = 1  # Different
                         info(f"SQL code '{p_dwmaprsqlcd}' has changes - will create new version")
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '131', f"{w_parm} - {str(e)}")
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '131', f"{w_parm} - {str(e)}")
                 
                 w_return = w_rec[0]
             else:
@@ -170,14 +170,14 @@ class PKGDWMAPR:
                     # Update existing record to set curflg = 'N'
                     try:
                         cursor.execute(f"""
-                            UPDATE {DWT_SCHEMA_PREFIX}DWMAPRsql
+                            UPDATE {DWT_SCHEMA_PREFIX}DMS_MAPRsql
                             SET curflg = 'N',
                                 recupdt = SYSDATE
-                            WHERE dwmaprsqlcd = :sqlcd
+                            WHERE maprsqlcd = :sqlcd
                             AND curflg = 'Y'
                         """, {'sqlcd': p_dwmaprsqlcd})
                     except Exception as e:
-                        raise PKGDWMAPRError(self.G_NAME, w_procnm, '132', f"{w_parm} - {str(e)}")
+                        raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '132', f"{w_parm} - {str(e)}")
                 
                 # Insert new record
                 try:
@@ -188,10 +188,10 @@ class PKGDWMAPR:
                     ret_id_var = cursor.var(oracledb.NUMBER)
                     
                     cursor.execute(f"""
-                        INSERT INTO {DWT_SCHEMA_PREFIX}DWMAPRsql
-                        (dwmaprsqlid, dwmaprsqlcd, dwmaprsql, reccrdt, recupdt, curflg)
-                        VALUES ({DWT_SCHEMA_PREFIX}DWMAPRSQLSEQ.nextval, :sqlcd, :sql, SYSDATE, SYSDATE, 'Y')
-                        RETURNING dwmaprsqlid INTO :ret_id
+                        INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPRsql
+                        (maprsqlid, maprsqlcd, MAPRSQL, reccrdt, recupdt, curflg)
+                        VALUES ({DWT_SCHEMA_PREFIX}DMS_MAPRSQLSEQ.nextval, :sqlcd, :sql, SYSDATE, SYSDATE, 'Y')
+                        RETURNING maprsqlid INTO :ret_id
                     """, {
                         'sqlcd': p_dwmaprsqlcd,
                         'sql': clean_sql,
@@ -201,17 +201,17 @@ class PKGDWMAPR:
                     # Get the returned value
                     w_return = ret_id_var.getvalue()
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '133', f"{w_parm} - {str(e)}")
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '133', f"{w_parm} - {str(e)}")
             
             self.connection.commit()
             cursor.close()
             
             return w_return
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '134', f"{w_parm} - {str(e)}")
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '134', f"{w_parm} - {str(e)}")
     
     # -------------------------------------------------------------------------
     # CREATE_UPDATE_MAPPING - Function to create or update mappings
@@ -251,7 +251,7 @@ class PKGDWMAPR:
             mapid: Mapping ID
             
         Raises:
-            PKGDWMAPRError: If validation or database operation fails
+            PKGDMS_MAPRError: If validation or database operation fails
         """
         w_procnm = 'CREATE_UPDATE_MAPPING'
         w_parm = f'Mapref={p_mapref}-{p_mapdesc}'[:200]
@@ -300,14 +300,14 @@ class PKGDWMAPR:
             
             if w_msg:
                 w_parm = f"{w_parm}::{w_msg}"
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '103', w_parm)
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '103', w_parm)
             
             cursor = self.connection.cursor()
             
             # Check if mapping reference already exists
             cursor.execute(f"""
                 SELECT * 
-                FROM {DWT_SCHEMA_PREFIX}DWMAPR 
+                FROM {DWT_SCHEMA_PREFIX}DMS_MAPR 
                 WHERE mapref = :mapref
                 AND curflg = 'Y'
             """, {'mapref': p_mapref})
@@ -362,7 +362,7 @@ class PKGDWMAPR:
                     # Update existing record to set curflg = 'N'
                     try:
                         cursor.execute(f"""
-                            UPDATE {DWT_SCHEMA_PREFIX}DWMAPR
+                            UPDATE {DWT_SCHEMA_PREFIX}DMS_MAPR
                             SET curflg = 'N',
                                 recupdt = SYSDATE,
                                 uptdby = :p_user
@@ -372,24 +372,24 @@ class PKGDWMAPR:
                             'mapid': w_mapr_dict['MAPID']
                         })
                     except Exception as e:
-                        raise PKGDWMAPRError(self.G_NAME, w_procnm, '101', 
+                        raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '101', 
                                            f"{w_parm} mapid={w_mapr_dict['MAPID']} - {str(e)}")
             
             # Insert new record
             try:
                 # Create a variable to capture the returned ID
                 ret_id_var = cursor.var(oracledb.NUMBER)
-                info(f"Full table name: {DWT_SCHEMA_PREFIX}DWMAPR")
+                info(f"Full table name: {DWT_SCHEMA_PREFIX}DMS_MAPR")
                 # Debug: Log the sequence and table reference being used
-                info(f"CREATE_UPDATE_MAPPING: Inserting into table '{DWT_SCHEMA_PREFIX}DWMAPR'")
-                info(f"CREATE_UPDATE_MAPPING: Using sequence '{DWT_SCHEMA_PREFIX}DWMAPRSEQ.nextval'")
+                info(f"CREATE_UPDATE_MAPPING: Inserting into table '{DWT_SCHEMA_PREFIX}DMS_MAPR'")
+                info(f"CREATE_UPDATE_MAPPING: Using sequence '{DWT_SCHEMA_PREFIX}DMS_MAPRSEQ.nextval'")
                 info(f"CREATE_UPDATE_MAPPING: DWT_SCHEMA='{DWT_SCHEMA}', DWT_SCHEMA_PREFIX='{DWT_SCHEMA_PREFIX}'")
                 
                 cursor.execute(f"""
-                    INSERT INTO {DWT_SCHEMA_PREFIX}DWMAPR 
+                    INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPR 
                     (mapid, mapref, mapdesc, trgschm, trgtbtyp, trgtbnm, frqcd, srcsystm,
                      lgvrfyflg, lgvrfydt, stflg, reccrdt, recupdt, curflg, blkprcrows, crtdby, uptdby)
-                    VALUES ({DWT_SCHEMA_PREFIX}DWMAPRSEQ.nextval, :mapref, :mapdesc, :trgschm, :trgtbtyp, :trgtbnm, 
+                    VALUES ({DWT_SCHEMA_PREFIX}DMS_MAPRSEQ.nextval, :mapref, :mapdesc, :trgschm, :trgtbtyp, :trgtbnm, 
                            :frqcd, :srcsystm, :lgvrfyflg, :lgvrfydt, :stflg, SYSDATE, SYSDATE, 'Y', 
                            :blkprcrows, :p_user, :p_user)
                     RETURNING mapid INTO :ret_id
@@ -412,17 +412,17 @@ class PKGDWMAPR:
                 # Get the returned value
                 w_mapid = ret_id_var.getvalue()
             except Exception as e:
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '102', f"{w_parm} - {str(e)}")
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '102', f"{w_parm} - {str(e)}")
             
             self.connection.commit()
             cursor.close()
             
             return w_mapid
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '103', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '103', w_parm)
     
     # -------------------------------------------------------------------------
     # CREATE_UPDATE_MAPPING_DETAIL - Function to create or update mapping details
@@ -468,7 +468,7 @@ class PKGDWMAPR:
             mapdtlid: Mapping detail ID
             
         Raises:
-            PKGDWMAPRError: If validation or database operation fails
+            PKGDMS_MAPRError: If validation or database operation fails
         """
         w_procnm = 'CREATE_UPDATE_MAPPING_DETAIL'
         w_parm = f'Mapref={p_mapref} Trgcol={p_trgclnm}'[:400]
@@ -532,7 +532,7 @@ class PKGDWMAPR:
             # Validate data type
             cursor.execute(f"""
                 SELECT prval
-                FROM {DWT_SCHEMA_PREFIX}DWPARAMS
+                FROM {DWT_SCHEMA_PREFIX}DMS_PARAMS
                 WHERE prtyp = 'Datatype'
                 AND prcd = :dtyp
             """, {'dtyp': p_trgcldtyp})
@@ -545,15 +545,15 @@ class PKGDWMAPR:
             
             if w_msg:
                 w_parm = f"{w_parm}::{w_msg}"
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '107', w_parm)
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '107', w_parm)
             
             # Check if mapping logic is an SQL code reference
             w_msql_rec = None
             if p_maplogic and len(p_maplogic) <= 100:
                 cursor.execute(f"""
-                    SELECT dwmaprsqlid, dwmaprsqlcd
-                    FROM {DWT_SCHEMA_PREFIX}DWMAPRsql
-                    WHERE dwmaprsqlcd = :sqlcd
+                    SELECT maprsqlid, maprsqlcd
+                    FROM {DWT_SCHEMA_PREFIX}DMS_MAPRsql
+                    WHERE maprsqlcd = :sqlcd
                     AND curflg = 'Y'
                 """, {'sqlcd': p_maplogic})
                 
@@ -562,7 +562,7 @@ class PKGDWMAPR:
             # Verify mapping reference exists
             cursor.execute(f"""
                 SELECT * 
-                FROM {DWT_SCHEMA_PREFIX}DWMAPR 
+                FROM {DWT_SCHEMA_PREFIX}DMS_MAPR 
                 WHERE mapref = :mapref
                 AND curflg = 'Y'
             """, {'mapref': p_mapref})
@@ -572,12 +572,12 @@ class PKGDWMAPR:
             if not w_mapr_rec:
                 w_msg = 'Invalid mapping reference.'
                 w_parm = f"{w_parm}::{w_msg}"
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '107', w_parm)
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '107', w_parm)
             
             # Check if mapping detail already exists
             cursor.execute(f"""
                 SELECT * 
-                FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl 
+                FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl 
                 WHERE mapref = :mapref
                 AND trgclnm = :trgclnm
                 AND curflg = 'Y'
@@ -628,7 +628,7 @@ class PKGDWMAPR:
                     # Update existing record to set curflg = 'N'
                     try:
                         cursor.execute(f"""
-                            UPDATE {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                            UPDATE {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                             SET curflg = 'N',
                                 recupdt = SYSDATE,
                                 uptdby = :p_user
@@ -641,7 +641,7 @@ class PKGDWMAPR:
                             'mapdtlid': w_maprdtl_dict['MAPDTLID']
                         })
                     except Exception as e:
-                        raise PKGDWMAPRError(self.G_NAME, w_procnm, '105',
+                        raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '105',
                                            f"{w_parm} Mapref={w_maprdtl_dict['MAPREF']} "
                                            f"Trgclnm={w_maprdtl_dict['TRGCLNM']} - {str(e)}")
             
@@ -651,13 +651,13 @@ class PKGDWMAPR:
                 
                 # Create a variable to capture the returned ID
                 ret_id_var = cursor.var(oracledb.NUMBER)
-                info(f"Full table name: {DWT_SCHEMA_PREFIX}DWMAPRdtl")
+                info(f"Full table name: {DWT_SCHEMA_PREFIX}DMS_MAPRdtl")
                 cursor.execute(f"""
-                    INSERT INTO {DWT_SCHEMA_PREFIX}DWMAPRDTL 
+                    INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPRDTL 
                     (mapdtlid, mapref, trgclnm, trgcldtyp, trgkeyflg, trgkeyseq, trgcldesc,
                      maplogic, maprsqlcd, keyclnm, valclnm, mapcmbcd, excseq, scdtyp, lgvrfyflg,
                      lgvrfydt, reccrdt, recupdt, curflg, crtdby, uptdby)
-                    VALUES ({DWT_SCHEMA_PREFIX}DWMAPRDTLSEQ.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg, 
+                    VALUES ({DWT_SCHEMA_PREFIX}DMS_MAPRDTLSEQ.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg, 
                            :trgkeyseq, :trgcldesc, :maplogic, :maprsqlcd, :keyclnm, :valclnm, 
                            :mapcmbcd, :excseq, :scdtyp, :lgvrfyflg, :lgvrfydt, SYSDATE, SYSDATE, 
                            'Y', :p_user, :p_user)
@@ -685,17 +685,17 @@ class PKGDWMAPR:
                 # Get the returned value
                 w_mapdtlid = ret_id_var.getvalue()
             except Exception as e:
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '106', f"{w_parm} - {str(e)}")
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '106', f"{w_parm} - {str(e)}")
             
             self.connection.commit()
             cursor.close()
             
             return w_mapdtlid
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '107', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '107', w_parm)
     
     # -------------------------------------------------------------------------
     # VALIDATE_SQL - Private method to validate SQL
@@ -761,7 +761,7 @@ class PKGDWMAPR:
             return True, None
             
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '138', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '138', w_parm)
     
     def validate_sql(self, p_logic: str) -> str:
         """
@@ -780,7 +780,7 @@ class PKGDWMAPR:
             success, error_msg = self._validate_sql(p_logic, None, None, 'N')
             return 'Y' if success else 'N'
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '139', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '139', w_parm)
     
     # -------------------------------------------------------------------------
     # VALIDATE_LOGIC - Function to validate mapping logic
@@ -812,9 +812,9 @@ class PKGDWMAPR:
             
             # Check if logic is an SQL code reference
             cursor.execute(f"""
-                SELECT dwmaprsqlcd, dwmaprsql
-                FROM {DWT_SCHEMA_PREFIX}DWMAPRsql
-                WHERE dwmaprsqlcd = :sqlcd
+                SELECT maprsqlcd, MAPRSQL
+                FROM {DWT_SCHEMA_PREFIX}DMS_MAPRsql
+                WHERE maprsqlcd = :sqlcd
                 AND curflg = 'Y'
             """, {'sqlcd': p_logic[:100]})
             
@@ -841,7 +841,7 @@ class PKGDWMAPR:
             return w_return, error_msg
             
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '110', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '110', w_parm)
     
     def validate_logic(self, p_logic: str, p_keyclnm: str, p_valclnm: str) -> str:
         """
@@ -862,7 +862,7 @@ class PKGDWMAPR:
             w_return, _ = self.validate_logic2(p_logic, p_keyclnm, p_valclnm)
             return w_return
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '109', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '109', w_parm)
     
     # -------------------------------------------------------------------------
     # VALIDATE_LOGIC (for mapping reference) - Validate all mappings
@@ -889,7 +889,7 @@ class PKGDWMAPR:
             cursor.execute(f"""
                 SELECT m.mapref, md.mapdtlid, m.trgtbnm, md.trgclnm,
                        md.keyclnm, md.valclnm, md.maplogic
-                FROM {DWT_SCHEMA_PREFIX}DWMAPR m, {DWT_SCHEMA_PREFIX}DWMAPRdtl md
+                FROM {DWT_SCHEMA_PREFIX}DMS_MAPR m, {DWT_SCHEMA_PREFIX}DMS_MAPRdtl md
                 WHERE m.mapref = :mapref
                 AND m.curflg = 'Y'
                 AND md.mapref = m.mapref
@@ -919,9 +919,9 @@ class PKGDWMAPR:
                     if w_res == 'N' and w_err:
                         try:
                             cursor.execute(f"""
-                                INSERT INTO {DWT_SCHEMA_PREFIX}DWMAPERR
+                                INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPERR
                                 (maperrid, mapdtlid, mapref, maplogic, errtyp, errmsg, reccrdt)
-                                VALUES ({DWT_SCHEMA_PREFIX}DWMAPERRSEQ.nextval, :mapdtlid, :mapref, :maplogic, 
+                                VALUES ({DWT_SCHEMA_PREFIX}DMS_MAPERRSEQ.nextval, :mapdtlid, :mapref, :maplogic, 
                                        'ERR', :errmsg, SYSDATE)
                             """, {
                                 'mapdtlid': mapdtlid,
@@ -930,14 +930,14 @@ class PKGDWMAPR:
                                 'errmsg': w_err
                             })
                         except Exception as e:
-                            raise PKGDWMAPRError(self.G_NAME, w_procnm, '111', w_pm)
+                            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '111', w_pm)
                     
                     if w_return == 'Y':
                         w_return = w_res
                     
                     # Update mapping detail with validation result
                     cursor.execute(f"""
-                        UPDATE {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                        UPDATE {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                         SET lgvrfydt = SYSDATE,
                             lgvrfyflg = :lgvrfyflg
                         WHERE mapref = :mapref
@@ -950,14 +950,14 @@ class PKGDWMAPR:
                     })
                     
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '112', w_pm)
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '112', w_pm)
             
             # Additional validations if all logic is valid
             if w_return == 'Y':
                 # Check for duplicate value column names within mapping combination codes
                 cursor.execute(f"""
                     SELECT valclnm, mapcmbcd, COUNT(*) cnt
-                    FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                    FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                     WHERE curflg = 'Y'
                     AND mapref = :mapref
                     GROUP BY valclnm, mapcmbcd
@@ -973,19 +973,19 @@ class PKGDWMAPR:
                     
                     try:
                         cursor.execute(f"""
-                            INSERT INTO {DWT_SCHEMA_PREFIX}DWMAPERR
+                            INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPERR
                             (maperrid, mapdtlid, mapref, maplogic, errtyp, errmsg, reccrdt)
-                            VALUES ({DWT_SCHEMA_PREFIX}DWMAPERRSEQ.nextval, NULL, :mapref, NULL, 'ERR', :errmsg, SYSDATE)
+                            VALUES ({DWT_SCHEMA_PREFIX}DMS_MAPERRSEQ.nextval, NULL, :mapref, NULL, 'ERR', :errmsg, SYSDATE)
                         """, {'mapref': p_mapref, 'errmsg': w_err})
                     except Exception as e:
-                        raise PKGDWMAPRError(self.G_NAME, w_procnm, '127', w_parm)
+                        raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '127', w_parm)
                 
                 # Check for multiple mapping combinations per SQL code
                 cursor.execute(f"""
                     SELECT maprsqlcd, mapcmbcd, COUNT(*) cnt
                     FROM (
                         SELECT DISTINCT maprsqlcd, mapcmbcd
-                        FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                        FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                         WHERE curflg = 'Y'
                         AND mapref = :mapref
                     ) x
@@ -1002,18 +1002,18 @@ class PKGDWMAPR:
                     
                     try:
                         cursor.execute(f"""
-                            INSERT INTO {DWT_SCHEMA_PREFIX}DWMAPERR
+                            INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPERR
                             (maperrid, mapdtlid, mapref, maplogic, errtyp, errmsg, reccrdt)
-                            VALUES ({DWT_SCHEMA_PREFIX}DWMAPERRSEQ.nextval, NULL, :mapref, NULL, 'ERR', :errmsg, SYSDATE)
+                            VALUES ({DWT_SCHEMA_PREFIX}DMS_MAPERRSEQ.nextval, NULL, :mapref, NULL, 'ERR', :errmsg, SYSDATE)
                         """, {'mapref': p_mapref, 'errmsg': w_err})
                     except Exception as e:
-                        raise PKGDWMAPRError(self.G_NAME, w_procnm, '140', w_parm)
+                        raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '140', w_parm)
             
             # If all validations passed, update mapping record
             if w_return == 'Y':
                 try:
                     cursor.execute(f"""
-                        UPDATE {DWT_SCHEMA_PREFIX}DWMAPR
+                        UPDATE {DWT_SCHEMA_PREFIX}DMS_MAPR
                         SET lgvrfydt = SYSDATE,
                             lgvrfyflg = :lgvrfyflg,
                             lgvrfby = :p_user
@@ -1025,17 +1025,17 @@ class PKGDWMAPR:
                         'mapref': p_mapref
                     })
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '113', w_parm)
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '113', w_parm)
             
             self.connection.commit()
             cursor.close()
             
             return w_return
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '129', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '129', w_parm)
     
     # -------------------------------------------------------------------------
     # VALIDATE_MAPPING_DETAILS - Validate complete mapping details
@@ -1068,14 +1068,14 @@ class PKGDWMAPR:
                     w_msg = 'Some/All target columns logic validation failed, please verify logic(SQL).'
                     w_return = 'N'
             except Exception as e:
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '115', w_parm)
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '115', w_parm)
             
             # Check primary key specifications
             if not w_msg:
                 try:
                     cursor.execute(f"""
                         SELECT trgkeyseq, COUNT(*) cnt
-                        FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                        FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                         WHERE curflg = 'Y'
                         AND mapref = :mapref
                         AND trgkeyflg = 'Y'
@@ -1091,14 +1091,14 @@ class PKGDWMAPR:
                         w_msg = 'Primary sequence cannot repeat within mapping.'
                         w_return = 'N'
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '125', w_parm)
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '125', w_parm)
             
             # Check for duplicate column names
             if not w_msg:
                 try:
                     cursor.execute(f"""
                         SELECT trgclnm, COUNT(*) cnt
-                        FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                        FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                         WHERE curflg = 'Y'
                         AND mapref = :mapref
                         GROUP BY trgclnm
@@ -1111,14 +1111,14 @@ class PKGDWMAPR:
                         w_msg = 'Target column name cannot repeat within mapping.'
                         w_return = 'N'
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '126', w_parm)
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '126', w_parm)
             
             # Check for duplicate value column names within mapping codes
             if not w_msg:
                 try:
                     cursor.execute(f"""
                         SELECT valclnm, mapcmbcd, COUNT(*) cnt
-                        FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                        FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                         WHERE curflg = 'Y'
                         AND mapref = :mapref
                         GROUP BY valclnm, mapcmbcd
@@ -1132,16 +1132,16 @@ class PKGDWMAPR:
                                 f'a mapping code ({w_c2_rec[1]}). Please use alias if required.')
                         w_return = 'N'
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '130', w_parm)
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '130', w_parm)
             
             cursor.close()
             
             return w_return, w_msg
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '116', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '116', w_parm)
     
     # -------------------------------------------------------------------------
     # ACTIVATE_DEACTIVATE_MAPPING - Procedure to activate or deactivate mapping
@@ -1175,13 +1175,13 @@ class PKGDWMAPR:
                     if w_flg == 'N':
                         w_msg = f"{w_err}\nCannot activate mapping few columns logic failed."
                 except Exception as e:
-                    raise PKGDWMAPRError(self.G_NAME, w_procnm, '118', w_parm)
+                    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '118', w_parm)
                 
                 # If validation passed, update status
                 if not w_msg:
                     cursor = self.connection.cursor()
                     cursor.execute(f"""
-                        UPDATE {DWT_SCHEMA_PREFIX}DWMAPR
+                        UPDATE {DWT_SCHEMA_PREFIX}DMS_MAPR
                         SET stflg = :stflg,
                             actby = :p_user,
                             actdt = SYSDATE
@@ -1200,10 +1200,10 @@ class PKGDWMAPR:
             
             return True, 'Mapping status updated successfully.'
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '119', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '119', w_parm)
     
     # -------------------------------------------------------------------------
     # DELETE_MAPPING - Procedure to delete mapping
@@ -1228,7 +1228,7 @@ class PKGDWMAPR:
             # Check if job exists for this mapping
             cursor.execute(f"""
                 SELECT mapref, jobid
-                FROM {DWT_SCHEMA_PREFIX}DWJOB
+                FROM {DWT_SCHEMA_PREFIX}DMS_JOB
                 WHERE mapref = :mapref
                 AND curflg = 'Y'
             """, {'mapref': p_mapref})
@@ -1243,28 +1243,28 @@ class PKGDWMAPR:
             # Delete mapping details first
             try:
                 cursor.execute(f"""
-                    DELETE FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                    DELETE FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                     WHERE mapref = :mapref
                 """, {'mapref': p_mapref})
                 
                 # Delete mapping
                 cursor.execute(f"""
-                    DELETE FROM {DWT_SCHEMA_PREFIX}DWMAPR
+                    DELETE FROM {DWT_SCHEMA_PREFIX}DMS_MAPR
                     WHERE mapref = :mapref
                 """, {'mapref': p_mapref})
                 
                 self.connection.commit()
             except Exception as e:
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '121', w_parm)
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '121', w_parm)
             
             cursor.close()
             
             return True, f'Mapping "{p_mapref}" deleted successfully.'
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '122', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '122', w_parm)
     
     # -------------------------------------------------------------------------
     # DELETE_MAPPING_DETAILS - Procedure to delete mapping details
@@ -1290,7 +1290,7 @@ class PKGDWMAPR:
             # Check if job detail exists for this mapping detail
             cursor.execute(f"""
                 SELECT mapref, jobdtlid
-                FROM {DWT_SCHEMA_PREFIX}DWJOBdtl
+                FROM {DWT_SCHEMA_PREFIX}DMS_JOBdtl
                 WHERE mapref = :mapref
                 AND trgclnm = :trgclnm
                 AND curflg = 'Y'
@@ -1307,23 +1307,23 @@ class PKGDWMAPR:
             # Delete mapping detail
             try:
                 cursor.execute(f"""
-                    DELETE FROM {DWT_SCHEMA_PREFIX}DWMAPRdtl
+                    DELETE FROM {DWT_SCHEMA_PREFIX}DMS_MAPRdtl
                     WHERE mapref = :mapref
                     AND trgclnm = :trgclnm
                 """, {'mapref': p_mapref, 'trgclnm': p_trgclnm})
                 
                 self.connection.commit()
             except Exception as e:
-                raise PKGDWMAPRError(self.G_NAME, w_procnm, '123', w_parm)
+                raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '123', w_parm)
             
             cursor.close()
             
             return True, f'Mapping detail "{p_mapref}-{p_trgclnm}" deleted successfully.'
             
-        except PKGDWMAPRError:
+        except PKGDMS_MAPRError:
             raise
         except Exception as e:
-            raise PKGDWMAPRError(self.G_NAME, w_procnm, '124', w_parm)
+            raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '124', w_parm)
 
 
 # -----------------------------------------------------------------------------
@@ -1359,7 +1359,7 @@ def create_update_mapping_with_user(
     if not p_user:
         raise ValueError('Session user not provided.')
     
-    pkg = PKGDWMAPR(connection, p_user)
+    pkg = PKGDMS_MAPR(connection, p_user)
     return pkg.create_update_mapping(
         p_mapref, p_mapdesc, p_trgschm, p_trgtbtyp, p_trgtbnm,
         p_frqcd, p_srcsystm, p_lgvrfyflg, p_lgvrfydt, p_stflg, p_blkprcrows
@@ -1398,7 +1398,7 @@ def create_update_mapping_detail_with_user(
     if not p_user:
         raise ValueError('Session user not provided.')
     
-    pkg = PKGDWMAPR(connection, p_user)
+    pkg = PKGDMS_MAPR(connection, p_user)
     return pkg.create_update_mapping_detail(
         p_mapref, p_trgclnm, p_trgcldtyp, p_trgkeyflg, p_trgkeyseq,
         p_trgcldesc, p_maplogic, p_keyclnm, p_valclnm, p_mapcmbcd,
@@ -1425,7 +1425,7 @@ def validate_logic_with_user(
     if not p_user:
         raise ValueError('Session user not provided.')
     
-    pkg = PKGDWMAPR(connection, p_user)
+    pkg = PKGDMS_MAPR(connection, p_user)
     return pkg.validate_all_logic(p_mapref)
 
 
@@ -1448,7 +1448,7 @@ def validate_mapping_details_with_user(
     if not p_user:
         raise ValueError('Session user not provided.')
     
-    pkg = PKGDWMAPR(connection, p_user)
+    pkg = PKGDMS_MAPR(connection, p_user)
     return pkg.validate_mapping_details(p_mapref)
 
 
@@ -1473,7 +1473,7 @@ def activate_deactivate_mapping_with_user(
     if not p_user:
         raise ValueError('Session user not provided.')
     
-    pkg = PKGDWMAPR(connection, p_user)
+    pkg = PKGDMS_MAPR(connection, p_user)
     return pkg.activate_deactivate_mapping(p_mapref, p_stflg)
 
 
@@ -1483,6 +1483,6 @@ def activate_deactivate_mapping_with_user(
 
 if __name__ == "__main__":
     # Example usage (requires valid database connection)
-    print(f"PKGDWMAPR Python Package - Version: {PKGDWMAPR.version()}")
-    print("This module provides Python equivalents of PKGDWMAPR PL/SQL package functions")
+    print(f"PKGDMS_MAPR Python Package - Version: {PKGDMS_MAPR.version()}")
+    print("This module provides Python equivalents of PKGDMS_MAPR PL/SQL package functions")
 

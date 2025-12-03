@@ -1,4 +1,4 @@
-# Corrections Log - PKGDWJOB Python Implementation
+# Corrections Log - PKGDMS_JOB Python Implementation
 
 This document tracks corrections and improvements made to the initial implementation.
 
@@ -10,19 +10,19 @@ This document tracks corrections and improvements made to the initial implementa
 
 **Issue:** Schema was incorrectly sourced from environment variable for both metadata queries and target table creation.
 
-**Location:** `backend/modules/jobs/pkgdwjob_python.py` - Line 163
+**Location:** `backend/modules/jobs/pkgdms_job_python.py` - Line 163
 
 **Original Code:**
 ```python
 schema = os.getenv('SCHEMA', 'TRG')
-# Used for both DWJOB/DWJOBDTL queries AND target table creation
+# Used for both DMS_JOB/DMS_JOBDTL queries AND target table creation
 ```
 
 **Corrected Code:**
 ```python
 metadata_schema = os.getenv('SCHEMA', 'TRG')
-# Used ONLY for metadata tables (DWJOB, DWJOBDTL, DWPARAMS)
-# Target schema comes from job configuration: w_trgschm = trgschm (from DWJOB.TRGSCHM)
+# Used ONLY for metadata tables (DMS_JOB, DMS_JOBDTL, DMS_PARAMS)
+# Target schema comes from job configuration: w_trgschm = trgschm (from DMS_JOB.TRGSCHM)
 ```
 
 **Impact:** 
@@ -38,7 +38,7 @@ metadata_schema = os.getenv('SCHEMA', 'TRG')
 
 **Issue:** DDL building code had redundant/duplicate assignments that rebuilt the same DDL twice.
 
-**Location:** `backend/modules/jobs/pkgdwjob_python.py` - Lines 220-241 (original)
+**Location:** `backend/modules/jobs/pkgdms_job_python.py` - Lines 220-241 (original)
 
 **Original Code:**
 ```python
@@ -86,7 +86,7 @@ w_ddl = create_ddl
 
 **Issue:** Sequence name was missing schema prefix when being created, but the check query also needed adjustment.
 
-**Location:** `backend/modules/jobs/pkgdwjob_python.py` - Line 281
+**Location:** `backend/modules/jobs/pkgdms_job_python.py` - Line 281
 
 **User's Initial Correction:**
 ```python
@@ -134,7 +134,7 @@ if not seq_exists:
 
 **Issue:** The `blkprcrows` parameter was defined but not actually used for batch processing. Generated code fetched all rows at once.
 
-**Location:** `backend/modules/jobs/pkgdwjob_create_job_flow.py` - Line 235 (original)
+**Location:** `backend/modules/jobs/pkgdms_job_create_job_flow.py` - Line 235 (original)
 
 **Original Code:**
 ```python
@@ -193,8 +193,8 @@ while True:
 - Proper batch processing using `cursor.fetchmany(BULK_LIMIT)`
 - Memory-efficient for large datasets
 - Intermediate commits after each batch
-- `blkprcrows` from DWJOB.BLKPRCROWS now controls batch size
-- Falls back to DWPARAMS.BULKPRC.NOOFROWS if not set
+- `blkprcrows` from DMS_JOB.BLKPRCROWS now controls batch size
+- Falls back to DMS_PARAMS.BULKPRC.NOOFROWS if not set
 
 **Benefits:**
 1. **Memory Efficiency:** Processes data in chunks, not all at once
@@ -213,9 +213,9 @@ while True:
 **Date:** 2025-11-14
 
 **Location:** Multiple files
-- `backend/modules/jobs/pkgdwjob_python.py` - Lines 383-407 (create_update_job)
-- `backend/modules/jobs/pkgdwjob_python.py` - Lines 558-591 (create_job_flow)
-- `backend/modules/jobs/pkgdwjob_create_job_flow.py` - Lines 23-47, 97-103, 218-241, 280-311, 422-458, 480-491
+- `backend/modules/jobs/pkgdms_job_python.py` - Lines 383-407 (create_update_job)
+- `backend/modules/jobs/pkgdms_job_python.py` - Lines 558-591 (create_job_flow)
+- `backend/modules/jobs/pkgdms_job_create_job_flow.py` - Lines 23-47, 97-103, 218-241, 280-311, 422-458, 480-491
 - `doc/database_migration_add_checkpoint.sql` - New file
 - `doc/CHECKPOINT_RESTART_GUIDE.md` - New file
 - `doc/CHECKPOINT_QUICK_REFERENCE.md` - New file
@@ -243,12 +243,12 @@ while True:
 **Implementation Details:**
 
 ```python
-# Configuration added to DWMAPR and DWJOB:
+# Configuration added to DMS_MAPR and DMS_JOB:
 CHKPNTSTRATEGY VARCHAR2(20)  -- 'AUTO', 'KEY', 'PYTHON', 'NONE'
 CHKPNTCOLUMN VARCHAR2(100)   -- Column name for KEY strategy
 CHKPNTENABLED VARCHAR2(1)    -- 'Y'/'N'
 
-# Checkpoint stored in DWPRCLOG.PARAM1:
+# Checkpoint stored in DMS_PRCLOG.PARAM1:
 # - KEY strategy: Last processed key value (e.g., '100765')
 # - PYTHON strategy: Row count (e.g., '3000')
 # - On completion: 'COMPLETED'
@@ -273,7 +273,7 @@ elif CHECKPOINT_STRATEGY == 'PYTHON' and rows_to_skip > 0:
 
 # 3. Update checkpoint after each batch
 cursor.execute("""
-    UPDATE DWPRCLOG
+    UPDATE DMS_PRCLOG
     SET PARAM1 = :checkpoint_value
     WHERE sessionid = :sessionid AND prcid = :prcid
 """, {'checkpoint_value': str(checkpoint_value)})
@@ -281,7 +281,7 @@ connection.commit()
 
 # 4. Mark as COMPLETED on success
 cursor.execute("""
-    UPDATE DWPRCLOG SET PARAM1 = 'COMPLETED'
+    UPDATE DMS_PRCLOG SET PARAM1 = 'COMPLETED'
     WHERE sessionid = :sessionid AND prcid = :prcid
 """)
 ```
@@ -297,18 +297,18 @@ cursor.execute("""
 
 **Key Design Decisions:**
 
-1. **Use Existing DBTYP:** Leverages existing `DWDBCONDTLS.DBTYP` column instead of implementing database detection
+1. **Use Existing DBTYP:** Leverages existing `DMS_DBCONDTLS.DBTYP` column instead of implementing database detection
 2. **Standard SQL First:** KEY strategy uses standard SQL that works across all databases
 3. **Python Fallback:** PYTHON strategy guarantees 100% compatibility when KEY not possible
 4. **Batch-Level Checkpoint:** Updates checkpoint after each batch commit for fine-grained recovery
-5. **Session-Level Tracking:** Uses DWPRCLOG.PARAM1 for checkpoint storage (no new tables required)
+5. **Session-Level Tracking:** Uses DMS_PRCLOG.PARAM1 for checkpoint storage (no new tables required)
 
 **Benefits:**
 
 | Benefit | Impact |
 |---------|--------|
 | **Resume on Failure** | No reprocessing of committed data |
-| **Progress Tracking** | Monitor checkpoint value in DWPRCLOG |
+| **Progress Tracking** | Monitor checkpoint value in DMS_PRCLOG |
 | **Flexible** | Three strategies for different scenarios |
 | **Configurable** | Per-mapping configuration |
 | **Zero Downtime** | Can disable without regenerating jobs |
@@ -318,20 +318,20 @@ cursor.execute("""
 
 ```sql
 -- Fact table with transaction ID
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'TRANSACTION_ID',
     CHKPNTENABLED = 'Y'
 WHERE MAPREF = 'SALES_FACT_LOAD';
 
 -- Complex query without unique key
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'PYTHON',
     CHKPNTENABLED = 'Y'
 WHERE MAPREF = 'AGGREGATED_VIEW_LOAD';
 
 -- Small table (disable checkpoint)
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'NONE',
     CHKPNTENABLED = 'N'
 WHERE MAPREF = 'COUNTRY_LOOKUP';
@@ -342,17 +342,17 @@ WHERE MAPREF = 'COUNTRY_LOOKUP';
 ```python
 # Test restart capability:
 # 1. Start job
-job_result = pkgdwjob.execute_job(connection, session_params)
+job_result = pkgdms_job.execute_job(connection, session_params)
 
 # 2. Cancel midway (Ctrl+C or kill)
 
 # 3. Check checkpoint
-cursor.execute("SELECT param1 FROM DWPRCLOG WHERE sessionid = :sid", {'sid': session_id})
+cursor.execute("SELECT param1 FROM DMS_PRCLOG WHERE sessionid = :sid", {'sid': session_id})
 checkpoint = cursor.fetchone()[0]
 print(f"Checkpoint: {checkpoint}")  # e.g., "3000" or "100765"
 
 # 4. Restart - should resume from checkpoint
-job_result = pkgdwjob.execute_job(connection, session_params)
+job_result = pkgdms_job.execute_job(connection, session_params)
 # Output: "Resuming: Checkpoint at TRANSACTION_ID > 100765"
 ```
 
@@ -394,7 +394,7 @@ After these corrections, please test:
 1. **Schema Verification:**
    ```python
    # Create job with TRGSCHM different from metadata schema
-   job_id = pkgdwjob.create_update_job(connection, 'TEST_MAPREF')
+   job_id = pkgdms_job.create_update_job(connection, 'TEST_MAPREF')
    
    # Verify table created in correct schema
    cursor.execute("""
@@ -420,11 +420,11 @@ After these corrections, please test:
 4. **Batch Processing:**
    ```python
    # Test with large dataset and small batch size
-   # Set BLKPRCROWS = 100 in DWJOB table
-   UPDATE DWJOB SET BLKPRCROWS = 100 WHERE MAPREF = 'YOUR_MAPREF';
+   # Set BLKPRCROWS = 100 in DMS_JOB table
+   UPDATE DMS_JOB SET BLKPRCROWS = 100 WHERE MAPREF = 'YOUR_MAPREF';
    
    # Regenerate job
-   job_id = pkgdwjob.create_update_job(connection, 'YOUR_MAPREF')
+   job_id = pkgdms_job.create_update_job(connection, 'YOUR_MAPREF')
    
    # Execute job and monitor console output
    # Should see: "Processing batch 1: 100 rows"
@@ -443,7 +443,7 @@ After these corrections, please test:
 ## Lessons Learned
 
 1. **Schema Context Matters:** Always distinguish between:
-   - Metadata schema (where DWJOB, DWJOBDTL reside)
+   - Metadata schema (where DMS_JOB, DMS_JOBDTL reside)
    - Target schema (where ETL target tables reside)
    - These may be different in production environments
 

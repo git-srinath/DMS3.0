@@ -106,17 +106,17 @@ The scheduler service runs continuously. If it's already running, you should see
 ```
 1. User clicks "Run Job" in UI
    ↓
-2. Flask API queues request → DWPRCREQ (status='NEW')
+2. Flask API queues request → DMS_PRCREQ (status='NEW')
    ↓
-3. Scheduler service polls DWPRCREQ every 15 seconds
+3. Scheduler service polls DMS_PRCREQ every 15 seconds
    ↓
 4. Scheduler claims request → Updates status to 'CLAIMED'
    ↓
-5. Execution engine runs job → Creates DWPRCLOG entry
+5. Execution engine runs job → Creates DMS_PRCLOG entry
    ↓
-6. Job completes → Updates DWPRCLOG status to 'PC' or 'FL'
+6. Job completes → Updates DMS_PRCLOG status to 'PC' or 'FL'
    ↓
-7. Status screen queries DWPRCLOG → Shows results
+7. Status screen queries DMS_PRCLOG → Shows results
 ```
 
 **If step 3 doesn't happen**, the scheduler service isn't running!
@@ -166,14 +166,14 @@ tail -f dwtool.log | grep -i error
 
 **Check:**
 ```sql
--- Check for errors in DWPRCLOG
+-- Check for errors in DMS_PRCLOG
 SELECT mapref, status, msg, strtdt, enddt
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE status = 'FL'
 ORDER BY strtdt DESC;
 ```
 
-**Solution:** Check error messages in `DWPRCLOG.msg` or `DWJOBERR` table
+**Solution:** Check error messages in `DMS_PRCLOG.msg` or `DMS_JOBERR` table
 
 ---
 
@@ -189,7 +189,7 @@ SELECT
     requested_at,
     claimed_at,
     completed_at
-FROM DWPRCREQ
+FROM DMS_PRCREQ
 ORDER BY requested_at DESC
 FETCH FIRST 10 ROWS ONLY;
 ```
@@ -202,7 +202,7 @@ SELECT
     strtdt,
     enddt,
     msg
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE reccrdt >= SYSDATE - 1/24
 ORDER BY reccrdt DESC;
 ```
@@ -210,7 +210,7 @@ ORDER BY reccrdt DESC;
 ### Check for Stuck Jobs
 ```sql
 SELECT *
-FROM DWPRCREQ
+FROM DMS_PRCREQ
 WHERE status = 'NEW'
 AND requested_at < SYSTIMESTAMP - INTERVAL '5' MINUTE;
 ```
@@ -223,7 +223,7 @@ AND requested_at < SYSTIMESTAMP - INTERVAL '5' MINUTE;
 - [ ] Scheduler logs show "Starting scheduler service"
 - [ ] Scheduler logs show periodic "Polling queue" messages
 - [ ] Queue status shows jobs moving from NEW → CLAIMED → DONE
-- [ ] DWPRCLOG table has entries for executed jobs
+- [ ] DMS_PRCLOG table has entries for executed jobs
 - [ ] Status screen shows job results
 
 ---
@@ -240,6 +240,6 @@ AND requested_at < SYSTIMESTAMP - INTERVAL '5' MINUTE;
 **Still having issues?** Check:
 - Scheduler service logs (`dwtool.log`)
 - Database connection
-- Queue table (`DWPRCREQ`) for stuck jobs
-- Process log table (`DWPRCLOG`) for error messages
+- Queue table (`DMS_PRCREQ`) for stuck jobs
+- Process log table (`DMS_PRCLOG`) for error messages
 

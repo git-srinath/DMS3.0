@@ -1,11 +1,11 @@
-# PKGDWJOB Package Conversion - Analysis & Options
+# PKGDMS_JOB Package Conversion - Analysis & Options
 
 ## 📋 Current Situation
 
 ### What `CREATE_JOB_FLOW` Does:
-1. Reads mapping configuration from `DWMAPR` and `DWMAPRDTL` tables
+1. Reads mapping configuration from `DMS_MAPR` and `DMS_MAPRDTL` tables
 2. Generates a **dynamic PL/SQL block** based on the mapping rules
-3. Stores this PL/SQL block in `DWJOBFLW.DWLOGIC` column (CLOB)
+3. Stores this PL/SQL block in `DMS_JOBFLW.DWLOGIC` column (CLOB)
 4. When job executes, Oracle runs this PL/SQL block to:
    - Extract data from source
    - Transform data per mapping logic
@@ -15,20 +15,20 @@
 ```
 ┌──────────────────────────────────────────────────────┐
 │ MAPPING CONFIGURATION                                │
-│ (DWMAPR + DWMAPRDTL tables)                         │
+│ (DMS_MAPR + DMS_MAPRDTL tables)                         │
 └──────────────────────┬───────────────────────────────┘
                        │
                        ▼
 ┌──────────────────────────────────────────────────────┐
-│ PKGDWJOB.CREATE_JOB_FLOW (PL/SQL)                   │
+│ PKGDMS_JOB.CREATE_JOB_FLOW (PL/SQL)                   │
 │ - Reads mapping                                      │
 │ - Generates PL/SQL block dynamically                │
-│ - Stores in DWJOBFLW.DWLOGIC                        │
+│ - Stores in DMS_JOBFLW.DWLOGIC                        │
 └──────────────────────┬───────────────────────────────┘
                        │
                        ▼
 ┌──────────────────────────────────────────────────────┐
-│ DWJOBFLW.DWLOGIC (CLOB)                             │
+│ DMS_JOBFLW.DWLOGIC (CLOB)                             │
 │ Contains: Generated PL/SQL block                     │
 │ Example:                                             │
 │   BEGIN                                              │
@@ -80,7 +80,7 @@ def create_job_flow(connection, p_mapref):
     
     # Store in DWLOGIC
     cursor.execute("""
-        UPDATE DWJOBFLW 
+        UPDATE DMS_JOBFLW 
         SET DWLOGIC = :code 
         WHERE MAPREF = :ref
     """, {'code': python_code, 'ref': p_mapref})
@@ -119,7 +119,7 @@ result = execute_job(connection, params)
 #### ✅ **Pros:**
 - Similar to current architecture (code stored in DB)
 - No file system dependencies
-- Easy versioning (historization in DWJOBFLW)
+- Easy versioning (historization in DMS_JOBFLW)
 - Can view/edit code in UI
 - Code travels with data (backup/restore friendly)
 - Dynamic - regenerate when mapping changes
@@ -162,7 +162,7 @@ def create_job_flow(connection, p_mapref):
     
     # Store file path in DWLOGIC
     cursor.execute("""
-        UPDATE DWJOBFLW 
+        UPDATE DMS_JOBFLW 
         SET DWLOGIC = :path 
         WHERE MAPREF = :ref
     """, {'path': file_path, 'ref': p_mapref})
@@ -241,7 +241,7 @@ def create_job_flow(connection, p_mapref):
     
     # Store JSON in DWLOGIC
     cursor.execute("""
-        UPDATE DWJOBFLW 
+        UPDATE DMS_JOBFLW 
         SET DWLOGIC = :config 
         WHERE MAPREF = :ref
     """, {'config': json.dumps(config), 'ref': p_mapref})
@@ -369,11 +369,11 @@ result = job.execute(connection, params)
 ### Implementation Strategy:
 
 ```python
-# File: backend/modules/mapper/pkgdwjob_python.py
+# File: backend/modules/mapper/pkgdms_job_python.py
 
 def create_job_flow(connection, p_mapref):
     """
-    Creates Python ETL code and stores in DWJOBFLW.DWLOGIC
+    Creates Python ETL code and stores in DMS_JOBFLW.DWLOGIC
     Similar to PL/SQL CREATE_JOB_FLOW
     """
     # 1. Read mapping configuration
@@ -383,7 +383,7 @@ def create_job_flow(connection, p_mapref):
     # 2. Generate Python code
     python_code = PythonETLGenerator.generate(mapping_ref, mapping_details)
     
-    # 3. Store in DWJOBFLW.DWLOGIC
+    # 3. Store in DMS_JOBFLW.DWLOGIC
     store_job_logic(connection, p_mapref, python_code)
     
     return job_flow_id
@@ -461,7 +461,7 @@ class SafeJobExecutor:
 
 ## 📝 Next Steps if You Choose Option 1:
 
-1. **Create `pkgdwjob_python.py`** module
+1. **Create `pkgdms_job_python.py`** module
 2. **Implement `create_job_flow()`** function
 3. **Build `PythonETLGenerator`** class
 4. **Create `SafeJobExecutor`** for secure execution

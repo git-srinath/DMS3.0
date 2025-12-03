@@ -24,19 +24,19 @@ This document describes the two-schema architecture implemented for the DWTOOL a
 **Purpose:** Stores all application metadata, configuration, and control information
 
 **Tables:**
-- `dwmapr` - Mapping definitions
-- `dwmaprdtl` - Mapping detail definitions  
-- `dwmaprsql` - SQL query definitions
-- `dwmaperr` - Validation error logs
-- `dwparams` - Application parameters
-- `dwjob` - Job definitions
-- `dwjobdtl` - Job detail definitions
+- `DMS_MAPR` - Mapping definitions
+- `DMS_MAPRDTL` - Mapping detail definitions  
+- `DMS_MAPRSQL` - SQL query definitions
+- `DMS_MAPERR` - Validation error logs
+- `DMS_PARAMS` - Application parameters
+- `DMS_JOB` - Job definitions
+- `DMS_JOBDTL` - Job detail definitions
 
 **Sequences:**
-- `DWMAPRSEQ` - Mapping IDs
-- `DWMAPRDTLSEQ` - Mapping detail IDs
-- `DWMAPRSQLSEQ` - SQL query IDs
-- `DWMAPERRSEQ` - Error log IDs
+- `DMS_MAPRSEQ` - Mapping IDs
+- `DMS_MAPRDTLSEQ` - Mapping detail IDs
+- `DMS_MAPRSQLSEQ` - SQL query IDs
+- `DMS_MAPERRSEQ` - Error log IDs
 
 **Used By:**
 - Mapper module (`modules/mapper/`)
@@ -71,13 +71,13 @@ DWT Schema (Metadata)          CDR Schema (Data)
 
 ### 2. **No Synonym Management**
 - **Before:** Required `CREATE SYNONYM` statements in CDR for all DWT objects
-- **After:** Direct schema-qualified access (e.g., `DWT.dwmapr`)
+- **After:** Direct schema-qualified access (e.g., `DWT.DMS_MAPR`)
 - **Result:** Eliminates "table does not exist" errors
 
 ### 3. **Easier Permission Management**
 ```sql
 -- Clear, explicit grants
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmapr TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPR TO app_user;
 GRANT CREATE TABLE ON CDR TO app_user;
 ```
 
@@ -109,7 +109,7 @@ CDR_SCHEMA=CDR
 **All modules now support both schemas:**
 
 ```python
-# modules/mapper/pkgdwmapr.py (example)
+# modules/mapper/pkgdms_mapr.py (example)
 DWT_SCHEMA = os.getenv("DWT_SCHEMA", "")
 CDR_SCHEMA = os.getenv("CDR_SCHEMA", "")
 
@@ -118,13 +118,13 @@ CDR_SCHEMA_PREFIX = f"{CDR_SCHEMA}." if CDR_SCHEMA else ""
 
 # Usage in SQL:
 cursor.execute(f"""
-    SELECT * FROM {DWT_SCHEMA_PREFIX}dwmapr 
+    SELECT * FROM {DWT_SCHEMA_PREFIX}DMS_MAPR 
     WHERE mapref = :mapref
 """)
 ```
 
 **Updated modules:**
-- ✅ `modules/mapper/pkgdwmapr.py`
+- ✅ `modules/mapper/pkgdms_mapr.py`
 - ✅ `modules/helper_functions.py`
 - ✅ `modules/manage_sql/manage_sql.py`
 - ✅ `modules/jobs/jobs.py`
@@ -175,19 +175,19 @@ CDR_SCHEMA=CDR
 -- ==================================================
 
 -- Table permissions
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmapr TO app_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmaprdtl TO app_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmaprsql TO app_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmaperr TO app_user;
-GRANT SELECT ON DWT.dwparams TO app_user;
-GRANT SELECT ON DWT.dwjob TO app_user;
-GRANT SELECT ON DWT.dwjobdtl TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPR TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPRDTL TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPRSQL TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPERR TO app_user;
+GRANT SELECT ON DWT.DMS_PARAMS TO app_user;
+GRANT SELECT ON DWT.DMS_JOB TO app_user;
+GRANT SELECT ON DWT.DMS_JOBDTL TO app_user;
 
 -- Sequence permissions
-GRANT SELECT ON DWT.DWMAPRSEQ TO app_user;
-GRANT SELECT ON DWT.DWMAPRDTLSEQ TO app_user;
-GRANT SELECT ON DWT.DWMAPRSQLSEQ TO app_user;
-GRANT SELECT ON DWT.DWMAPERRSEQ TO app_user;
+GRANT SELECT ON DWT.DMS_MAPRSEQ TO app_user;
+GRANT SELECT ON DWT.DMS_MAPRDTLSEQ TO app_user;
+GRANT SELECT ON DWT.DMS_MAPRSQLSEQ TO app_user;
+GRANT SELECT ON DWT.DMS_MAPERRSEQ TO app_user;
 
 -- ==================================================
 -- CDR Schema Permissions (Data)
@@ -215,8 +215,8 @@ print(f"CDR_SCHEMA: {os.getenv('CDR_SCHEMA')}")
 
 **Check application logs:**
 ```
-PKGDWMAPR: DWT metadata schema prefix: 'DWT.'
-PKGDWMAPR: CDR data schema prefix: 'CDR.' (for future data operations)
+PKGDMS_MAPR: DWT metadata schema prefix: 'DWT.'
+PKGDMS_MAPR: CDR data schema prefix: 'CDR.' (for future data operations)
 ```
 
 ### Step 4: Test Operations
@@ -225,7 +225,7 @@ PKGDWMAPR: CDR data schema prefix: 'CDR.' (for future data operations)
 ```python
 # Should work with DWT schema prefix
 # Example: Creating a mapping
-# SQL generated: INSERT INTO DWT.dwmapr VALUES (DWT.DWMAPRSEQ.nextval, ...)
+# SQL generated: INSERT INTO DWT.DMS_MAPR VALUES (DWT.DMS_MAPRSEQ.nextval, ...)
 ```
 
 **Test data operations (future):**
@@ -264,7 +264,7 @@ CDR_SCHEMA=CDR  # Data will go here
 
 ```sql
 -- Export data tables from DWT
-expdp user/pass DIRECTORY=dpdir DUMPFILE=data_tables.dmp SCHEMAS=DWT EXCLUDE=TABLE:"IN ('dwmapr','dwmaprdtl','dwmaprsql','dwmaperr','dwparams','dwjob','dwjobdtl')"
+expdp user/pass DIRECTORY=dpdir DUMPFILE=data_tables.dmp SCHEMAS=DWT EXCLUDE=TABLE:"IN ('DMS_MAPR','DMS_MAPRDTL','DMS_MAPRSQL','DMS_MAPERR','DMS_PARAMS','DMS_JOB','DMS_JOBDTL')"
 
 -- Import into CDR
 impdp user/pass DIRECTORY=dpdir DUMPFILE=data_tables.dmp REMAP_SCHEMA=DWT:CDR
@@ -281,11 +281,11 @@ When implementing data loading, use `CDR_SCHEMA_PREFIX` for target tables.
 **Before:**
 ```sql
 -- In CDR schema
-CREATE SYNONYM dwmapr FOR DWT.dwmapr;
-CREATE SYNONYM dwmaprdtl FOR DWT.dwmaprdtl;
+CREATE SYNONYM DMS_MAPR FOR DWT.DMS_MAPR;
+CREATE SYNONYM DMS_MAPRDTL FOR DWT.DMS_MAPRDTL;
 -- etc...
 
--- Application used: SELECT * FROM dwmapr
+-- Application used: SELECT * FROM DMS_MAPR
 ```
 
 **After:**
@@ -296,13 +296,13 @@ CDR_SCHEMA=CDR
 ```
 
 ```python
-# Application now uses: SELECT * FROM DWT.dwmapr
+# Application now uses: SELECT * FROM DWT.DMS_MAPR
 ```
 
 **Cleanup synonyms (optional):**
 ```sql
-DROP SYNONYM dwmapr;
-DROP SYNONYM dwmaprdtl;
+DROP SYNONYM DMS_MAPR;
+DROP SYNONYM DMS_MAPRDTL;
 -- etc...
 ```
 
@@ -314,11 +314,11 @@ DROP SYNONYM dwmaprdtl;
 ```python
 # Uses DWT_SCHEMA_PREFIX
 cursor.execute(f"""
-    INSERT INTO {DWT_SCHEMA_PREFIX}dwmapr 
+    INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPR 
     (mapid, mapref, mapdesc, ...)
-    VALUES ({DWT_SCHEMA_PREFIX}DWMAPRSEQ.nextval, :mapref, :mapdesc, ...)
+    VALUES ({DWT_SCHEMA_PREFIX}DMS_MAPRSEQ.nextval, :mapref, :mapdesc, ...)
 """)
-# Generates: INSERT INTO DWT.dwmapr VALUES (DWT.DWMAPRSEQ.nextval, ...)
+# Generates: INSERT INTO DWT.DMS_MAPR VALUES (DWT.DMS_MAPRSEQ.nextval, ...)
 ```
 
 ### Example 2: Data Operations (Future Implementation)
@@ -412,10 +412,10 @@ SELECT * FROM user_sys_privs WHERE privilege LIKE '%CREATE%';
 When implementing ETL/data loading:
 
 ```python
-from modules.mapper.pkgdwmapr import CDR_SCHEMA_PREFIX
+from modules.mapper.pkgdms_mapr import CDR_SCHEMA_PREFIX
 
 # Get mapping from DWT schema
-mapping = get_mapping(mapping_ref)  # From DWT.dwmapr
+mapping = get_mapping(mapping_ref)  # From DWT.DMS_MAPR
 
 # Create/load target table in CDR schema
 target_table = f"{CDR_SCHEMA_PREFIX}{mapping['target_table']}"

@@ -21,8 +21,8 @@ load_dotenv()  # ❌ TOO LATE! Modules already loaded with empty schema values
 ### What Happened
 
 1. Python imports blueprint modules
-2. Blueprint modules import `pkgdwmapr.py`
-3. `pkgdwmapr.py` executes module-level code:
+2. Blueprint modules import `pkgdms_mapr.py`
+3. `pkgdms_mapr.py` executes module-level code:
    ```python
    DWT_SCHEMA = os.getenv("DWT_SCHEMA", "")  # Returns "" because .env not loaded yet!
    DWT_SCHEMA_PREFIX = f"{DWT_SCHEMA}." if DWT_SCHEMA else ""  # Results in ""
@@ -75,8 +75,8 @@ After this fix:
 
 2. **Verify in logs** - you should see:
    ```
-   CREATE_UPDATE_MAPPING: Inserting into table 'DWT.dwmapr'
-   CREATE_UPDATE_MAPPING: Using sequence 'DWT.DWMAPRSEQ.nextval'
+   CREATE_UPDATE_MAPPING: Inserting into table 'DWT.DMS_MAPR'
+   CREATE_UPDATE_MAPPING: Using sequence 'DWT.DMS_MAPRSEQ.nextval'
    CREATE_UPDATE_MAPPING: DWT_SCHEMA='DWT', DWT_SCHEMA_PREFIX='DWT.'
    ```
 
@@ -99,7 +99,7 @@ load_dotenv()  # Too late!
 ## Related Files
 
 - `backend/app.py` - Main application entry point (FIXED)
-- `backend/modules/mapper/pkgdwmapr.py` - Uses schema prefixes
+- `backend/modules/mapper/pkgdms_mapr.py` - Uses schema prefixes
 - `backend/modules/helper_functions.py` - Uses schema prefixes
 - `backend/modules/manage_sql/manage_sql.py` - Uses schema prefixes
 

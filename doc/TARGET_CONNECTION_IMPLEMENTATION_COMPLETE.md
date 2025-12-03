@@ -16,24 +16,24 @@ The target connection feature has been successfully implemented, allowing users 
 ### **Step 1: Database Schema Changes** ✅
 *(Completed by user)*
 
-- Added `TRGCONID` column to `DWMAPR` table
-- Added `TRGCONID` column to `DWJOB` table  
-- Added foreign key constraint to `DWDBCONDTLS`
+- Added `TRGCONID` column to `DMS_MAPR` table
+- Added `TRGCONID` column to `DMS_JOB` table  
+- Added foreign key constraint to `DMS_DBCONDTLS`
 - Existing records default to `NULL` for `TRGCONID`
 
 ---
 
 ### **Step 2: Backend Python Changes** ✅
 
-#### **2.1: `backend/modules/mapper/pkgdwmapr_python.py`**
+#### **2.1: `backend/modules/mapper/pkgdms_mapr_python.py`**
 
 **Changes:**
 - Modified `create_update_mapping()` function signature to accept `p_trgconid` parameter
 - Added validation logic for `p_trgconid`:
   - Checks if value is numeric
-  - Validates that `conid` exists in `DWDBCONDTLS` and is active (`curflg='Y'`)
+  - Validates that `conid` exists in `DMS_DBCONDTLS` and is active (`curflg='Y'`)
   - Raises appropriate errors if validation fails
-- Updated `SELECT` query to fetch `trgconid` from `DWMAPR`
+- Updated `SELECT` query to fetch `trgconid` from `DMS_MAPR`
 - Updated change detection logic to compare `trgconid`
 - Updated `INSERT` statement to include `trgconid` column and value
 
@@ -59,7 +59,7 @@ if p_trgconid is not None:
     # Validate connection exists and is active
     cursor.execute("""
         SELECT COUNT(*)
-        FROM DWDBCONDTLS
+        FROM DMS_DBCONDTLS
         WHERE conid = :1 AND curflg = 'Y'
     """, [trgconid_val])
     
@@ -75,7 +75,7 @@ if p_trgconid is not None:
 **Changes:**
 - Modified `get_mapping_ref()` query to include `TRGCONID` column
 - Modified `create_update_mapping()` function signature to accept `p_trgconid` parameter
-- Updated call to `pkgdwmapr.create_update_mapping()` to pass `p_trgconid`
+- Updated call to `pkgdms_mapr.create_update_mapping()` to pass `p_trgconid`
 
 **Updated Query:**
 ```python
@@ -83,7 +83,7 @@ query = """
     SELECT 
     MAPID, MAPREF, MAPDESC, TRGSCHM, TRGTBTYP, 
     TRGTBNM, FRQCD, SRCSYSTM, STFLG, BLKPRCROWS, LGVRFYFLG, TRGCONID
-    FROM DWMAPR WHERE MAPREF = :1  AND  CURFLG = 'Y'
+    FROM DMS_MAPR WHERE MAPREF = :1  AND  CURFLG = 'Y'
 """
 ```
 
@@ -100,13 +100,13 @@ def create_update_mapping(connection, p_mapref, p_mapdesc, p_trgschm, p_trgtbtyp
 
 **Changes:**
 - Added `create_target_connection(connection_id)` function
-  - Fetches connection details from `DWDBCONDTLS` using metadata connection
+  - Fetches connection details from `DMS_DBCONDTLS` using metadata connection
   - Closes metadata connection
   - Establishes new connection to target database
   - Returns target connection object
 
 - Added `get_connection_for_mapping(mapref)` function
-  - Checks if mapping has a `trgconid` in `DWMAPR`
+  - Checks if mapping has a `trgconid` in `DMS_MAPR`
   - If yes: returns target connection via `create_target_connection()`
   - If no: returns metadata connection
   - Returns tuple: `(connection, is_target_connection, trgconid)`
@@ -116,10 +116,10 @@ def create_update_mapping(connection, p_mapref, p_mapdesc, p_trgschm, p_trgtbtyp
 def create_target_connection(connection_id):
     """
     Create a database connection for target data operations
-    based on connection ID from DWDBCONDTLS
+    based on connection ID from DMS_DBCONDTLS
     
     Args:
-        connection_id: CONID from DWDBCONDTLS table
+        connection_id: CONID from DMS_DBCONDTLS table
     
     Returns:
         Oracle connection object
@@ -148,7 +148,7 @@ def get_connection_for_mapping(mapref):
 #### **2.4: `backend/modules/mapper/mapper.py`**
 
 **Changes:**
-- Added `/get-connections` API endpoint to fetch active connections from `DWDBCONDTLS`
+- Added `/get-connections` API endpoint to fetch active connections from `DMS_DBCONDTLS`
 - Updated `save_to_db()` to extract and pass `targetConnectionId` to `create_update_mapping()`
 - Updated `get_by_reference()` to include `targetConnectionId` in the response
 
@@ -157,7 +157,7 @@ def get_connection_for_mapping(mapref):
 @mapper_bp.route('/get-connections', methods=['GET'])
 def get_connections():
     """
-    Get list of active database connections from DWDBCONDTLS
+    Get list of active database connections from DMS_DBCONDTLS
     """
     # Returns: [{'conid': '1', 'connm': 'DEV_DB', 'dbhost': 'localhost', 'dbsrvnm': 'ORCL'}, ...]
 ```
@@ -267,7 +267,7 @@ form_data = {
 
 1. **User opens Mapper Module**
    - Connection dropdown is displayed in the form
-   - Dropdown loads active connections from `DWDBCONDTLS`
+   - Dropdown loads active connections from `DMS_DBCONDTLS`
 
 2. **User creates/edits a mapping**
    - User can select a target connection from the dropdown
@@ -276,11 +276,11 @@ form_data = {
 3. **User saves the mapping**
    - `targetConnectionId` is sent to backend
    - Backend validates the connection ID
-   - Backend stores `trgconid` in `DWMAPR` table
+   - Backend stores `trgconid` in `DMS_MAPR` table
 
 4. **Data processing (future implementation)**
    - When processing the mapping, the system will:
-     - Check if `trgconid` is set in `DWMAPR`
+     - Check if `trgconid` is set in `DMS_MAPR`
      - Use `get_connection_for_mapping(mapref)` to get the appropriate connection
      - Create objects and load data into the target database
      - Use metadata connection for metadata operations
@@ -301,7 +301,7 @@ form_data = {
                           │
                           ▼
            ┌──────────────────────────────┐
-           │  Check DWMAPR.TRGCONID       │
+           │  Check DMS_MAPR.TRGCONID       │
            └──────────────┬───────────────┘
                           │
          ┌────────────────┴─────────────────┐
@@ -314,7 +314,7 @@ Return metadata connection    Call create_target_connection()
          │                                  │
          │                                  ▼
          │                    Fetch connection details from
-         │                         DWDBCONDTLS
+         │                         DMS_DBCONDTLS
          │                                  │
          │                                  ▼
          │                    Return target connection
@@ -333,18 +333,18 @@ Return metadata connection    Call create_target_connection()
 
 ## 📝 Database Schema
 
-### **DWMAPR Table** (Updated)
+### **DMS_MAPR Table** (Updated)
 ```sql
-ALTER TABLE DWMAPR ADD (
+ALTER TABLE DMS_MAPR ADD (
     TRGCONID NUMBER,
-    CONSTRAINT FK_DWMAPR_TRGCONID FOREIGN KEY (TRGCONID)
-        REFERENCES DWDBCONDTLS(CONID)
+    CONSTRAINT FK_DMS_MAPR_TRGCONID FOREIGN KEY (TRGCONID)
+        REFERENCES DMS_DBCONDTLS(CONID)
 );
 ```
 
-### **DWDBCONDTLS Table** (Existing)
+### **DMS_DBCONDTLS Table** (Existing)
 ```sql
-CREATE TABLE DWDBCONDTLS (
+CREATE TABLE DMS_DBCONDTLS (
     CONID NUMBER PRIMARY KEY,
     CONNM VARCHAR2(100),
     DBHOST VARCHAR2(100),
@@ -373,13 +373,13 @@ CREATE TABLE DWDBCONDTLS (
   - Create a new mapping
   - Select a target connection from dropdown
   - Save the mapping
-  - Verify `TRGCONID` is stored in `DWMAPR` table
+  - Verify `TRGCONID` is stored in `DMS_MAPR` table
 
 - [ ] **Test 3: Create new mapping without target connection**
   - Create a new mapping
   - Leave connection as "Use Metadata Connection"
   - Save the mapping
-  - Verify `TRGCONID` is NULL in `DWMAPR` table
+  - Verify `TRGCONID` is NULL in `DMS_MAPR` table
 
 - [ ] **Test 4: Load existing mapping with target connection**
   - Open an existing mapping that has `TRGCONID` set
@@ -407,7 +407,7 @@ CREATE TABLE DWDBCONDTLS (
   - Verify appropriate error message is shown
 
 - [ ] **Test 9: Validation - Inactive connection**
-  - Set a connection's `CURFLG` to 'N' in `DWDBCONDTLS`
+  - Set a connection's `CURFLG` to 'N' in `DMS_DBCONDTLS`
   - Try to use that connection in mapping
   - Verify appropriate error message is shown
 
@@ -462,7 +462,7 @@ GET /mapper/get-by-reference/<reference>
 | Step | Component | Status |
 |------|-----------|--------|
 | 1    | Database Schema | ✅ Complete |
-| 2.1  | pkgdwmapr_python.py | ✅ Complete |
+| 2.1  | pkgdms_mapr_python.py | ✅ Complete |
 | 2.2  | helper_functions.py | ✅ Complete |
 | 2.3  | dbconnect.py | ✅ Complete |
 | 2.4  | mapper.py | ✅ Complete |
@@ -489,7 +489,7 @@ All implementation changes are complete. The feature is now ready for end-to-end
 - `TARGET_CONNECTION_IMPLEMENTATION_PLAN.md` - Original implementation plan
 - `TARGET_CONNECTION_PROGRESS.md` - Progress tracking document
 - `backend/database/dbconnect.py` - Connection management functions
-- `backend/modules/mapper/pkgdwmapr_python.py` - Mapping functions
+- `backend/modules/mapper/pkgdms_mapr_python.py` - Mapping functions
 - `frontend/src/app/mapper_module/ReferenceForm.js` - Mapper UI component
 
 ---

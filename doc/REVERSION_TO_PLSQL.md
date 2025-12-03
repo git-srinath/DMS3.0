@@ -4,7 +4,7 @@
 
 ## Action Taken: Reverted Python Conversion
 
-At the user's request, all changes related to the PL/SQL to Python conversion have been reverted. The application has been restored to use the original PL/SQL `PKGDWMAPR` package.
+At the user's request, all changes related to the PL/SQL to Python conversion have been reverted. The application has been restored to use the original PL/SQL `PKGDMS_MAPR` package.
 
 ## Reason for Reversion
 
@@ -26,19 +26,19 @@ The following files were restored using `git restore`:
 
 ### 2. **backend/modules/helper_functions.py**
    - Restored to original PL/SQL calls
-   - Uses: `PKGDWMAPR.ACTIVATE_DEACTIVATE_MAPPING`
-   - Uses: `PKGDWMAPR.CREATE_UPDATE_MAPPING`
-   - Uses: `PKGDWMAPR.CREATE_UPDATE_MAPPING_DETAIL`
-   - Uses: `PKGDWMAPR.VALIDATE_LOGIC`
-   - Uses: `PKGDWMAPR.VALIDATE_LOGIC2`
-   - Uses: `PKGDWMAPR.VALIDATE_MAPPING_DETAILS`
-   - Uses: `PKGDWMAPR.DELETE_MAPPING`
-   - Uses: `PKGDWMAPR.DELETE_MAPPING_DETAILS`
+   - Uses: `PKGDMS_MAPR.ACTIVATE_DEACTIVATE_MAPPING`
+   - Uses: `PKGDMS_MAPR.CREATE_UPDATE_MAPPING`
+   - Uses: `PKGDMS_MAPR.CREATE_UPDATE_MAPPING_DETAIL`
+   - Uses: `PKGDMS_MAPR.VALIDATE_LOGIC`
+   - Uses: `PKGDMS_MAPR.VALIDATE_LOGIC2`
+   - Uses: `PKGDMS_MAPR.VALIDATE_MAPPING_DETAILS`
+   - Uses: `PKGDMS_MAPR.DELETE_MAPPING`
+   - Uses: `PKGDMS_MAPR.DELETE_MAPPING_DETAILS`
 
 ### 3. **backend/modules/manage_sql/manage_sql.py**
    - Restored to original PL/SQL calls
-   - Uses: `PKGDWMAPR.CREATE_UPDATE_SQL`
-   - Uses: `PKGDWMAPR.VALIDATE_SQL`
+   - Uses: `PKGDMS_MAPR.CREATE_UPDATE_SQL`
+   - Uses: `PKGDMS_MAPR.VALIDATE_SQL`
 
 ### 4. **backend/modules/jobs/jobs.py**
    - Restored to original state
@@ -55,15 +55,15 @@ All Python conversion work has been preserved in an archive folder for future re
 ### Archived Files:
 
 #### Python Module Files
-- `pkgdwmapr.py` - Main Python equivalent of PKGDWMAPR package
-- `pkgdwmapr_example.py` - Usage examples
+- `pkgdms_mapr.py` - Main Python equivalent of PKGDMS_MAPR package
+- `pkgdms_mapr_example.py` - Usage examples
 - `test_schema_sequences.py` - Diagnostic script for schema testing
 - `check_schema_config.py` - Environment configuration checker
 
 #### Documentation Files
-- `PKGDWMAPR_README.md` - Comprehensive module documentation
-- `PKGDWMAPR_SUMMARY.md` - Conversion summary
-- `PKGDWMAPR_INDEX.md` - Quick navigation guide
+- `PKGDMS_MAPR_README.md` - Comprehensive module documentation
+- `PKGDMS_MAPR_SUMMARY.md` - Conversion summary
+- `PKGDMS_MAPR_INDEX.md` - Quick navigation guide
 - `PLSQL_TO_PYTHON_MAPPING.md` - Migration guide
 - `INTEGRATION_COMPLETE.md` - Integration summary
 
@@ -99,7 +99,7 @@ The application is now using the original, stable PL/SQL package:
 1. **Manage SQL Module**
    - ✅ Create/Update SQL queries via PL/SQL
    - ✅ Validate SQL via PL/SQL
-   - ✅ All operations call `PKGDWMAPR` package directly
+   - ✅ All operations call `PKGDMS_MAPR` package directly
 
 2. **Mapper Module**
    - ✅ Create/Update mappings via PL/SQL
@@ -124,7 +124,7 @@ The application uses `oracledb` Python library to call PL/SQL package procedures
 # Python code in helper_functions.py
 sql = f"""
 BEGIN
-    :result := {ORACLE_SCHEMA}.PKGDWMAPR.CREATE_UPDATE_MAPPING(
+    :result := {ORACLE_SCHEMA}.PKGDMS_MAPR.CREATE_UPDATE_MAPPING(
         p_mapref => :p_mapref,
         p_mapdesc => :p_mapdesc,
         p_trgschm => :p_trgschm,
@@ -163,7 +163,7 @@ mapid = result.getvalue()
 If/when you decide to revisit the Python conversion, the archived files contain:
 
 ### ✅ What Was Working
-- Complete Python equivalent of PKGDWMAPR package
+- Complete Python equivalent of PKGDMS_MAPR package
 - All functions converted and tested
 - Comprehensive documentation
 
@@ -198,15 +198,15 @@ To verify the reversion was successful:
 ### 1. Check File Contents
 ```bash
 # Should show PL/SQL calls, not Python imports
-grep -n "PKGDWMAPR\." backend/modules/helper_functions.py
-grep -n "PKGDWMAPR\." backend/modules/manage_sql/manage_sql.py
+grep -n "PKGDMS_MAPR\." backend/modules/helper_functions.py
+grep -n "PKGDMS_MAPR\." backend/modules/manage_sql/manage_sql.py
 ```
 
 ### 2. Check for Python Imports
 ```bash
 # Should return no results
-grep -n "from modules.mapper.pkgdwmapr import" backend/modules/helper_functions.py
-grep -n "from modules.mapper.pkgdwmapr import" backend/modules/manage_sql/manage_sql.py
+grep -n "from modules.mapper.pkgdms_mapr import" backend/modules/helper_functions.py
+grep -n "from modules.mapper.pkgdms_mapr import" backend/modules/manage_sql/manage_sql.py
 ```
 
 ### 3. Test Application
@@ -233,9 +233,9 @@ All Python conversion files are untracked (in archive folder).
 
 If you encounter any issues with the PL/SQL package:
 
-1. Check the PL/SQL package is compiled: `SELECT object_name, status FROM user_objects WHERE object_name = 'PKGDWMAPR';`
-2. Check for compilation errors: `SELECT * FROM user_errors WHERE name = 'PKGDWMAPR';`
-3. Verify schema access: `SELECT GRANTEE, PRIVILEGE FROM DBA_TAB_PRIVS WHERE TABLE_NAME = 'PKGDWMAPR';`
+1. Check the PL/SQL package is compiled: `SELECT object_name, status FROM user_objects WHERE object_name = 'PKGDMS_MAPR';`
+2. Check for compilation errors: `SELECT * FROM user_errors WHERE name = 'PKGDMS_MAPR';`
+3. Verify schema access: `SELECT GRANTEE, PRIVILEGE FROM DBA_TAB_PRIVS WHERE TABLE_NAME = 'PKGDMS_MAPR';`
 
 ## Archive Access
 

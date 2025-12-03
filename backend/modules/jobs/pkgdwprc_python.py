@@ -16,7 +16,10 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Any, Dict, Optional
 
-from modules.logger import info, error
+from modules.logger import info, error, warning
+from modules.common.id_provider import next_id as get_next_id
+from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
+import os
 
 ALLOWED_FREQUENCY_CODES = {"ID", "DL", "WK", "FN", "MN", "HY", "YR"}
 WEEKDAY_CODES = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"}
@@ -125,18 +128,14 @@ def _serialize_payload(payload: Dict[str, Any]) -> str:
 
 def _generate_numeric_id(cursor, sequence_name: str) -> int:
     """
-    Generate surrogate numeric ID. Tries to use Oracle sequences first,
-    otherwise falls back to a timestamp-based integer.
+    Generate surrogate numeric ID using ID provider (supports Oracle/PostgreSQL).
+    Falls back to timestamp-based integer on error.
     """
     try:
-        cursor.execute(f"SELECT {sequence_name}.NEXTVAL FROM dual")
-        row = cursor.fetchone()
-        if row:
-            return int(row[0])
-    except Exception:
-        # Fallback for non-Oracle databases
+        return int(get_next_id(cursor, sequence_name))
+    except Exception as exc:
+        warning(f"ID provider failed for {sequence_name}: {exc}. Falling back to timestamp.")
         return int(datetime.utcnow().timestamp() * 1000)
-    return int(datetime.utcnow().timestamp() * 1000)
 
 
 class JobSchedulerService:
@@ -151,6 +150,8 @@ class JobSchedulerService:
 
     def __init__(self, connection):
         self.connection = connection
+        self.db_type = _detect_db_type(connection)
+        self.schema = os.getenv('DMS_SCHEMA', 'TRG')
 
     # ------------------------------------------------------------------ #
     # Schedule creation / maintenance
@@ -182,17 +183,17 @@ class JobSchedulerService:
                 replaced_jobschid = active_schedule["JOBSCHID"]
                 cursor.execute(
                     """
-                    UPDATE DWJOBSCH
+                    UPDATE DMS_JOBSCH
                     SET curflg = 'N', recupdt = SYSTIMESTAMP
                     WHERE jobschid = :jobschid
                     """,
                     {"jobschid": replaced_jobschid},
                 )
 
-            jobschid = _generate_numeric_id(cursor, "DWJOBSCHSEQ")
+            jobschid = _generate_numeric_id(cursor, "DMS_JOBSCHSEQ")
             cursor.execute(
                 """
-                INSERT INTO DWJOBSCH (
+                INSERT INTO DMS_JOBSCH (
                     jobschid, jobflwid, mapref,
                     frqcd, frqdd, frqhh, frqmi,
                     strtdt, enddt, stflg,
@@ -247,7 +248,7 @@ class JobSchedulerService:
 
             cursor.execute(
                 """
-                UPDATE DWJOBSCH
+                UPDATE DMS_JOBSCH
                 SET dpnd_jobschid = :parent_jobschid, recupdt = SYSTIMESTAMP
                 WHERE jobschid = :child_jobschid AND curflg = 'Y'
                 """,
@@ -278,7 +279,7 @@ class JobSchedulerService:
             desired_flag = "Y" if action == "E" else "N"
             cursor.execute(
                 """
-                UPDATE DWJOBSCH
+                UPDATE DMS_JOBSCH
                 SET schflg = :schflg, recupdt = SYSTIMESTAMP
                 WHERE jobschid = :jobschid
                 """,
@@ -318,6 +319,18 @@ class JobSchedulerService:
             payload=payload,
         )
 
+    def queue_report_request(self, report_id: int, payload: Optional[Dict[str, Any]] = None) -> str:
+        if not report_id:
+            raise SchedulerValidationError("Report ID is required.")
+        normalized_payload = payload.copy() if payload else {}
+        normalized_payload["reportId"] = report_id
+        mapref = f"REPORT:{report_id}"
+        return self._insert_queue_request(
+            mapref=mapref,
+            request_type=JobRequestType.REPORT,
+            payload=normalized_payload,
+        )
+
     def request_job_stop(self, mapref: str, start_timestamp: datetime, force: str = "N") -> str:
         payload = {
             "start_timestamp": start_timestamp.isoformat(),
@@ -336,7 +349,7 @@ class JobSchedulerService:
         cursor.execute(
             """
             SELECT jobflwid, jobid
-            FROM DWJOBFLW
+            FROM DMS_JOBFLW
             WHERE mapref = :mapref
               AND curflg = 'Y'
               AND stflg = 'A'
@@ -352,7 +365,7 @@ class JobSchedulerService:
         cursor.execute(
             """
             SELECT jobschid, frqcd, frqdd, frqhh, frqmi, strtdt, enddt, schflg
-            FROM DWJOBSCH
+            FROM DMS_JOBSCH
             WHERE mapref = :mapref
               AND curflg = 'Y'
             """,
@@ -397,31 +410,70 @@ class JobSchedulerService:
         cursor = self.connection.cursor()
         try:
             request_id = str(uuid.uuid4())
-            cursor.execute(
-                """
-                INSERT INTO DWPRCREQ (
-                    request_id,
-                    mapref,
-                    request_type,
-                    payload,
-                    status,
-                    requested_at
-                ) VALUES (
-                    :request_id,
-                    :mapref,
-                    :request_type,
-                    :payload,
-                    'NEW',
-                    SYSTIMESTAMP
+            
+            # Get table reference for PostgreSQL (handles case sensitivity)
+            if self.db_type == "POSTGRESQL":
+                schema_lower = self.schema.lower() if self.schema else 'public'
+                dms_prcreq_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_PRCREQ')
+                # Quote table name if it contains uppercase letters (was created with quotes)
+                dms_prcreq_ref = f'"{dms_prcreq_table}"' if dms_prcreq_table != dms_prcreq_table.lower() else dms_prcreq_table
+                schema_prefix = f'{schema_lower}.' if self.schema else ''
+                dms_prcreq_full = f'{schema_prefix}{dms_prcreq_ref}'
+                
+                # PostgreSQL: Use %s for bind variables and CURRENT_TIMESTAMP
+                cursor.execute(
+                    f"""
+                    INSERT INTO {dms_prcreq_full} (
+                        request_id,
+                        mapref,
+                        request_type,
+                        payload,
+                        status,
+                        requested_at
+                    ) VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'NEW',
+                        CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (
+                        request_id,
+                        mapref,
+                        request_type.value,
+                        _serialize_payload(payload or {}),
+                    ),
                 )
-                """,
-                {
-                    "request_id": request_id,
-                    "mapref": mapref,
-                    "request_type": request_type.value,
-                    "payload": _serialize_payload(payload or {}),
-                },
-            )
+            else:  # Oracle
+                schema_prefix = f'{self.schema}.' if self.schema else ''
+                # Oracle: Use :param for bind variables and SYSTIMESTAMP
+                cursor.execute(
+                    f"""
+                    INSERT INTO {schema_prefix}DMS_PRCREQ (
+                        request_id,
+                        mapref,
+                        request_type,
+                        payload,
+                        status,
+                        requested_at
+                    ) VALUES (
+                        :request_id,
+                        :mapref,
+                        :request_type,
+                        :payload,
+                        'NEW',
+                        SYSTIMESTAMP
+                    )
+                    """,
+                    {
+                        "request_id": request_id,
+                        "mapref": mapref,
+                        "request_type": request_type.value,
+                        "payload": _serialize_payload(payload or {}),
+                    },
+                )
             self.connection.commit()
             info(f"Queued {request_type.value} request {request_id} for mapref {mapref}")
             return request_id

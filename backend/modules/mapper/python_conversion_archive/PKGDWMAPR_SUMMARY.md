@@ -1,19 +1,19 @@
-# PKGDWMAPR Python Conversion - Summary
+# PKGDMS_MAPR Python Conversion - Summary
 
 ## Overview
 
-This document summarizes the successful conversion of the PL/SQL `PKGDWMAPR` package to Python.
+This document summarizes the successful conversion of the PL/SQL `PKGDMS_MAPR` package to Python.
 
 ## Files Created
 
-### 1. `pkgdwmapr.py` (Main Module)
-**Location:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\pkgdwmapr.py`
+### 1. `pkgdms_mapr.py` (Main Module)
+**Location:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\pkgdms_mapr.py`
 
-**Description:** Complete Python implementation of all functions from `PKGDWMAPR_bdy.sql`
+**Description:** Complete Python implementation of all functions from `PKGDMS_MAPR_bdy.sql`
 
 **Key Components:**
-- `PKGDWMAPR` class with all methods
-- `PKGDWMAPRError` custom exception class
+- `PKGDMS_MAPR` class with all methods
+- `PKGDMS_MAPRError` custom exception class
 - Convenience functions with user parameter
 - Comprehensive error handling and logging
 
@@ -32,8 +32,8 @@ This document summarizes the successful conversion of the PL/SQL `PKGDWMAPR` pac
 
 **Lines of Code:** ~1,350 lines (including documentation)
 
-### 2. `PKGDWMAPR_README.md` (Documentation)
-**Location:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\PKGDWMAPR_README.md`
+### 2. `PKGDMS_MAPR_README.md` (Documentation)
+**Location:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\PKGDMS_MAPR_README.md`
 
 **Description:** Comprehensive user guide with examples
 
@@ -47,8 +47,8 @@ This document summarizes the successful conversion of the PL/SQL `PKGDWMAPR` pac
 - Database table descriptions
 - Complete workflow example
 
-### 3. `pkgdwmapr_example.py` (Examples)
-**Location:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\pkgdwmapr_example.py`
+### 3. `pkgdms_mapr_example.py` (Examples)
+**Location:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\pkgdms_mapr_example.py`
 
 **Description:** Practical, runnable examples
 
@@ -113,7 +113,7 @@ This document summarizes the successful conversion of the PL/SQL `PKGDWMAPR` pac
 - Comprehensive docstrings
 
 ### 3. Error Handling
-- Custom `PKGDWMAPRError` exception class
+- Custom `PKGDMS_MAPRError` exception class
 - Detailed error messages with context
 - Automatic logging of all errors
 - Proper exception propagation
@@ -138,11 +138,11 @@ All PL/SQL validation rules preserved:
 
 ### Pattern 1: Direct Class Usage
 ```python
-from modules.mapper.pkgdwmapr import PKGDWMAPR
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR
 import oracledb
 
 connection = oracledb.connect(...)
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 
 mapid = pkg.create_update_mapping(...)
 connection.commit()
@@ -150,7 +150,7 @@ connection.commit()
 
 ### Pattern 2: Convenience Functions
 ```python
-from modules.mapper.pkgdwmapr import create_update_mapping_with_user
+from modules.mapper.pkgdms_mapr import create_update_mapping_with_user
 
 mapid = create_update_mapping_with_user(
     connection=connection,
@@ -162,13 +162,13 @@ connection.commit()
 
 ### Pattern 3: Error Handling
 ```python
-from modules.mapper.pkgdwmapr import PKGDWMAPR, PKGDWMAPRError
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR, PKGDMS_MAPRError
 
 try:
-    pkg = PKGDWMAPR(connection, user='admin')
+    pkg = PKGDMS_MAPR(connection, user='admin')
     result = pkg.create_update_mapping(...)
     connection.commit()
-except PKGDWMAPRError as e:
+except PKGDMS_MAPRError as e:
     print(f"Error: {e.message}")
     connection.rollback()
 ```
@@ -194,19 +194,19 @@ Test complete workflows:
 ### Sample Test Structure
 ```python
 import unittest
-from modules.mapper.pkgdwmapr import PKGDWMAPR, PKGDWMAPRError
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR, PKGDMS_MAPRError
 
-class TestPKGDWMAPR(unittest.TestCase):
+class TestPKGDMS_MAPR(unittest.TestCase):
     def setUp(self):
         self.connection = oracledb.connect(...)
-        self.pkg = PKGDWMAPR(self.connection, user='test_user')
+        self.pkg = PKGDMS_MAPR(self.connection, user='test_user')
     
     def test_create_mapping(self):
         mapid = self.pkg.create_update_mapping(...)
         self.assertIsNotNone(mapid)
         
     def test_invalid_schema_name(self):
-        with self.assertRaises(PKGDWMAPRError):
+        with self.assertRaises(PKGDMS_MAPRError):
             self.pkg.create_update_mapping(
                 p_trgschm='Invalid Schema!'  # Has space and special char
                 ...
@@ -230,7 +230,7 @@ The existing `helper_functions.py` already has some functions that call the PL/S
 **Option 1: Gradual Migration**
 ```python
 # Keep both implementations temporarily
-from modules.mapper.pkgdwmapr import PKGDWMAPR as PKGPython
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR as PKGPython
 
 def create_update_mapping(connection, ..., use_python=False):
     if use_python:
@@ -245,7 +245,7 @@ def create_update_mapping(connection, ..., use_python=False):
 **Option 2: Direct Replacement**
 Replace PL/SQL calls with Python calls:
 ```python
-from modules.mapper.pkgdwmapr import create_update_mapping_with_user
+from modules.mapper.pkgdms_mapr import create_update_mapping_with_user
 
 def create_update_mapping(connection, p_mapref, ..., user_id):
     return create_update_mapping_with_user(
@@ -299,18 +299,18 @@ def create_update_mapping(connection, p_mapref, ..., user_id):
 
 ### Database Requirements
 - Oracle database with required tables:
-  - `DWMAPR`
-  - `DWMAPRDTL`
-  - `DWMAPRSQL`
-  - `DWMAPERR`
-  - `DWPARAMS`
-  - `DWJOB`
-  - `DWJOBDTL`
+  - `DMS_MAPR`
+  - `DMS_MAPRDTL`
+  - `DMS_MAPRSQL`
+  - `DMS_MAPERR`
+  - `DMS_PARAMS`
+  - `DMS_JOB`
+  - `DMS_JOBDTL`
 - Sequences:
-  - `DWMAPRSEQ`
-  - `DWMAPRDTLSEQ`
-  - `DWMAPRSQLSEQ`
-  - `DWMAPERRSEQ`
+  - `DMS_MAPRSEQ`
+  - `DMS_MAPRDTLSEQ`
+  - `DMS_MAPRSQLSEQ`
+  - `DMS_MAPERRSEQ`
 
 ## Maintenance
 
@@ -364,14 +364,14 @@ If PL/SQL package is updated, apply equivalent changes to Python:
 ## Support
 
 For questions or issues:
-- Refer to `PKGDWMAPR_README.md` for API documentation
-- Check `pkgdwmapr_example.py` for usage examples
+- Refer to `PKGDMS_MAPR_README.md` for API documentation
+- Check `pkgdms_mapr_example.py` for usage examples
 - Review `PLSQL_TO_PYTHON_MAPPING.md` for migration help
-- Examine the source code in `pkgdwmapr.py` for implementation details
+- Examine the source code in `pkgdms_mapr.py` for implementation details
 
 ## Conclusion
 
-The PL/SQL `PKGDWMAPR` package has been successfully converted to Python with:
+The PL/SQL `PKGDMS_MAPR` package has been successfully converted to Python with:
 - ✅ Complete feature parity
 - ✅ Enhanced error handling
 - ✅ Comprehensive documentation
@@ -384,7 +384,7 @@ The Python implementation is ready for integration and testing in your DWTOOL pr
 ---
 
 **Conversion Date:** November 12, 2025  
-**Source File:** `D:\Git-Srinath\DWTOOL\PLSQL\PKGDWMAPR_bdy.sql`  
-**Target Module:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\pkgdwmapr.py`  
+**Source File:** `D:\Git-Srinath\DWTOOL\PLSQL\PKGDMS_MAPR_bdy.sql`  
+**Target Module:** `D:\CursorTesting\DWTOOL\backend\modules\mapper\pkgdms_mapr.py`  
 **Status:** ✅ Complete
 

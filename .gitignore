@@ -19,6 +19,9 @@ backend/database/__pycache__/
 # Logs and local data
 *.log
 backend/dwtool.log
+backend/accounts.csv/
+backend/data/reports_output/
+backend/report_output/
 
 # Databases / generated files
 *.sqlite
@@ -31,3 +34,6 @@ Thumbs.db
 
 # Nested repo placeholder
 DMS/
+
+# Version backups (exclude from git)
+version_backups/

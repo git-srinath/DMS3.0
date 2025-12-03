@@ -1,8 +1,8 @@
-# PKGDWJOB Python Implementation with Hash-Based Change Detection
+# PKGDMS_JOB Python Implementation with Hash-Based Change Detection
 
 ## Overview
 
-This document describes the Python implementation of the `PKGDWJOB` PL/SQL package, which has been converted to Python with enhanced **hash-based change detection** for improved performance in ETL operations.
+This document describes the Python implementation of the `PKGDMS_JOB` PL/SQL package, which has been converted to Python with enhanced **hash-based change detection** for improved performance in ETL operations.
 
 ### Key Features
 
@@ -19,14 +19,14 @@ This document describes the Python implementation of the `PKGDWJOB` PL/SQL packa
 
 ### Components
 
-1. **`pkgdwjob_python.py`** - Main module with core functions:
+1. **`pkgdms_job_python.py`** - Main module with core functions:
    - `create_target_table()` - Creates tables with RWHKEY column
    - `create_update_job()` - Creates/updates job metadata
    - `create_job_flow()` - Generates dynamic Python ETL code
    - `create_all_jobs()` - Batch processes all mappings
    - Helper functions for hash generation and column parsing
 
-2. **`pkgdwjob_create_job_flow.py`** - Code generator module:
+2. **`pkgdms_job_create_job_flow.py`** - Code generator module:
    - `build_job_flow_code()` - Generates complete Python ETL jobs
    - Handles complex mapping logic with hash-based comparisons
 
@@ -114,12 +114,12 @@ CREATE TABLE CUSTOMER_DIM (
 
 ```sql
 -- Backup existing job flows
-CREATE TABLE DWJOBFLW_BACKUP AS
-SELECT * FROM DWJOBFLW WHERE CURFLG = 'Y';
+CREATE TABLE DMS_JOBFLW_BACKUP AS
+SELECT * FROM DMS_JOBFLW WHERE CURFLG = 'Y';
 
 -- Backup existing jobs
-CREATE TABLE DWJOB_BACKUP AS
-SELECT * FROM DWJOB WHERE CURFLG = 'Y';
+CREATE TABLE DMS_JOB_BACKUP AS
+SELECT * FROM DMS_JOB WHERE CURFLG = 'Y';
 ```
 
 ### Step 2: Add RWHKEY Column
@@ -143,8 +143,8 @@ Ensure the new Python modules are deployed:
 
 ```
 backend/modules/jobs/
-├── pkgdwjob_python.py
-└── pkgdwjob_create_job_flow.py
+├── pkgdms_job_python.py
+└── pkgdms_job_create_job_flow.py
 ```
 
 ### Step 4: Update Helper Functions
@@ -152,24 +152,24 @@ backend/modules/jobs/
 The `helper_functions.py` has been updated to call the Python version:
 
 ```python
-# Old: Called PL/SQL PKGDWJOB.CREATE_UPDATE_JOB
-# New: Calls pkgdwjob_python.create_update_job()
+# Old: Called PL/SQL PKGDMS_JOB.CREATE_UPDATE_JOB
+# New: Calls pkgdms_job_python.create_update_job()
 ```
 
 ### Step 5: Regenerate Job Flows
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 # For all jobs
 connection = create_oracle_connection()
-pkgdwjob.create_all_jobs(connection)
+pkgdms_job.create_all_jobs(connection)
 connection.close()
 
 # Or for a specific mapping
 connection = create_oracle_connection()
-job_id = pkgdwjob.create_update_job(connection, 'YOUR_MAPREF')
+job_id = pkgdms_job.create_update_job(connection, 'YOUR_MAPREF')
 connection.close()
 ```
 
@@ -179,7 +179,7 @@ Check that job flows have been regenerated:
 
 ```sql
 SELECT mapref, trgschm, trgtbnm, recrdt
-FROM DWJOBFLW
+FROM DMS_JOBFLW
 WHERE CURFLG = 'Y'
 ORDER BY recrdt DESC;
 ```
@@ -192,11 +192,11 @@ ORDER BY recrdt DESC;
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
 try:
-    job_id = pkgdwjob.create_update_job(
+    job_id = pkgdms_job.create_update_job(
         connection=connection,
         p_mapref='CUSTOMER_DIM_LOAD'
     )
@@ -209,11 +209,11 @@ finally:
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
 try:
-    pkgdwjob.create_all_jobs(connection)
+    pkgdms_job.create_all_jobs(connection)
     print("All jobs created successfully")
 finally:
     connection.close()
@@ -222,7 +222,7 @@ finally:
 ### Example 3: Execute Generated Job
 
 ```python
-# The generated Python code in DWJOBFLW.DWLOGIC can be executed
+# The generated Python code in DMS_JOBFLW.DWLOGIC can be executed
 from database.dbconnect import create_oracle_connection
 
 connection = create_oracle_connection()
@@ -230,7 +230,7 @@ cursor = connection.cursor()
 
 # Retrieve generated code
 cursor.execute("""
-    SELECT dwlogic FROM DWJOBFLW
+    SELECT dwlogic FROM DMS_JOBFLW
     WHERE mapref = :mapref AND curflg = 'Y'
 """, {'mapref': 'CUSTOMER_DIM_LOAD'})
 
@@ -360,14 +360,14 @@ if src_hash != tgt_hash:
 
 **Solution:** Ensure columns are ordered by execution sequence (EXCSEQ).
 
-### Issue: Import Error for pkgdwjob_python
+### Issue: Import Error for pkgdms_job_python
 
 **Cause:** Module path incorrect.
 
 **Solution:** Verify module location:
 
 ```python
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 ```
 
 ### Issue: Generated Code Has Syntax Errors
@@ -414,7 +414,7 @@ Creates or updates job metadata and job details.
 **Returns:** Job ID (int) or None
 
 **Side Effects:**
-- Inserts/updates records in DWJOB and DWJOBDTL
+- Inserts/updates records in DMS_JOB and DMS_JOBDTL
 - Calls `create_target_table()`
 - Calls `create_job_flow()`
 
@@ -422,14 +422,14 @@ Creates or updates job metadata and job details.
 
 ### `create_job_flow(connection, p_mapref)`
 
-Generates dynamic Python code for ETL execution and stores in DWJOBFLW.
+Generates dynamic Python code for ETL execution and stores in DMS_JOBFLW.
 
 **Parameters:**
 - `connection` - Oracle database connection
 - `p_mapref` - Mapping reference
 
 **Side Effects:**
-- Inserts/updates record in DWJOBFLW with generated Python code
+- Inserts/updates record in DMS_JOBFLW with generated Python code
 
 ---
 
@@ -452,8 +452,8 @@ Generates MD5 hash from column values.
 Ensure column order in hash calculation matches execution sequence:
 
 ```sql
--- In DWMAPRDTL, set EXCSEQ properly
-UPDATE DWMAPRDTL
+-- In DMS_MAPRDTL, set EXCSEQ properly
+UPDATE DMS_MAPRDTL
 SET EXCSEQ = 10
 WHERE MAPREF = 'YOUR_MAP' AND TRGCLNM = 'COLUMN1';
 ```
@@ -462,7 +462,7 @@ WHERE MAPREF = 'YOUR_MAP' AND TRGCLNM = 'COLUMN1';
 
 ```python
 # After any mapping change
-pkgdwjob.create_update_job(connection, 'YOUR_MAPREF')
+pkgdms_job.create_update_job(connection, 'YOUR_MAPREF')
 ```
 
 ### 3. Monitor Hash Column Population
@@ -482,7 +482,7 @@ Dates are formatted as `YYYY-MM-DD HH:MM:SS` in hash calculation for consistency
 
 ```python
 # Test on single mapping before batch processing
-job_id = pkgdwjob.create_update_job(connection, 'TEST_MAPREF')
+job_id = pkgdms_job.create_update_job(connection, 'TEST_MAPREF')
 ```
 
 ---
@@ -513,7 +513,7 @@ Potential improvements for future versions:
 
 For issues or questions:
 1. Check the troubleshooting section
-2. Review generated code in DWJOBFLW.DWLOGIC
+2. Review generated code in DMS_JOBFLW.DWLOGIC
 3. Enable debug logging in Python modules
 4. Consult `HASH_BASED_CHANGE_DETECTION.md` for algorithm details
 
@@ -529,7 +529,7 @@ For issues or questions:
 
 ## Conclusion
 
-The Python implementation of PKGDWJOB with hash-based change detection provides:
+The Python implementation of PKGDMS_JOB with hash-based change detection provides:
 
 ✅ **Better Performance** - Up to 85% faster for wide tables  
 ✅ **Cleaner Code** - Python is more maintainable than dynamic PL/SQL  
@@ -545,5 +545,5 @@ The hash-based approach is particularly beneficial for:
 
 **Generated:** 2025-11-14  
 **Author:** AI Assistant  
-**Module:** PKGDWJOB Python Implementation
+**Module:** PKGDMS_JOB Python Implementation
 

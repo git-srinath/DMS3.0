@@ -1,4 +1,4 @@
-# PKGDWJOB Python - Quick Start Guide
+# PKGDMS_JOB Python - Quick Start Guide
 
 ## 🚀 Quick Setup (5 Minutes)
 
@@ -13,10 +13,10 @@ sqlplus your_username/your_password@your_database @doc/database_migration_add_rw
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
-job_id = pkgdwjob.create_update_job(connection, 'YOUR_MAPREF')
+job_id = pkgdms_job.create_update_job(connection, 'YOUR_MAPREF')
 print(f"Job created: {job_id}")
 connection.close()
 ```
@@ -25,10 +25,10 @@ connection.close()
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
-pkgdwjob.create_all_jobs(connection)
+pkgdms_job.create_all_jobs(connection)
 connection.close()
 ```
 
@@ -40,7 +40,7 @@ connection.close()
 - [ ] Verify RWHKEY column added to all DIM/FCT tables
 - [ ] Test on one mapping first
 - [ ] Regenerate all job flows
-- [ ] Verify generated Python code in DWJOBFLW
+- [ ] Verify generated Python code in DMS_JOBFLW
 - [ ] Test job execution
 
 ---
@@ -60,7 +60,7 @@ ORDER BY table_name;
 
 ```sql
 SELECT mapref, LENGTH(dwlogic) as code_length, recrdt
-FROM DWJOBFLW
+FROM DMS_JOBFLW
 WHERE CURFLG = 'Y'
 ORDER BY recrdt DESC;
 ```
@@ -68,7 +68,7 @@ ORDER BY recrdt DESC;
 ### Regenerate Single Job
 
 ```python
-job_id = pkgdwjob.create_update_job(connection, 'CUSTOMER_DIM_LOAD')
+job_id = pkgdms_job.create_update_job(connection, 'CUSTOMER_DIM_LOAD')
 ```
 
 ---
@@ -119,7 +119,7 @@ if src_hash != tgt_hash:
 | Problem | Solution |
 |---------|----------|
 | "RWHKEY column not found" | Run migration script |
-| "Module pkgdwjob_python not found" | Check `backend/modules/jobs/` path |
+| "Module pkgdms_job_python not found" | Check `backend/modules/jobs/` path |
 | "Job flow not generated" | Check mapping is active (STFLG='A') |
 | "Hash always different" | Verify column order in EXCSEQ |
 
@@ -127,12 +127,12 @@ if src_hash != tgt_hash:
 
 ## 📚 Full Documentation
 
-- **Implementation Guide:** `doc/PKGDWJOB_PYTHON_IMPLEMENTATION.md`
+- **Implementation Guide:** `doc/PKGDMS_JOB_PYTHON_IMPLEMENTATION.md`
 - **Hash Algorithm Details:** `doc/HASH_BASED_CHANGE_DETECTION.md`
 - **Migration Script:** `doc/database_migration_add_rwhkey.sql`
 - **Code Modules:**
-  - `backend/modules/jobs/pkgdwjob_python.py`
-  - `backend/modules/jobs/pkgdwjob_create_job_flow.py`
+  - `backend/modules/jobs/pkgdms_job_python.py`
+  - `backend/modules/jobs/pkgdms_job_create_job_flow.py`
 
 ---
 
@@ -140,7 +140,7 @@ if src_hash != tgt_hash:
 
 1. **Test First:** Always test on a single mapping before batch processing
 2. **Check Logs:** Monitor Python console output for generation details
-3. **Backup:** Keep backup of DWJOBFLW before regenerating
+3. **Backup:** Keep backup of DMS_JOBFLW before regenerating
 4. **Performance:** Hash-based detection is fastest for tables with 50+ columns
 5. **Verification:** Compare old vs new job execution results
 
@@ -150,7 +150,7 @@ if src_hash != tgt_hash:
 
 You're done when:
 - ✅ All dimension/fact tables have RWHKEY column
-- ✅ All job flows regenerated (check DWJOBFLW.RECRDT)
+- ✅ All job flows regenerated (check DMS_JOBFLW.RECRDT)
 - ✅ Generated code uses `generate_hash()` function
 - ✅ Sample job executes successfully
 - ✅ Performance improvement observed
@@ -166,5 +166,5 @@ You're done when:
 
 ---
 
-**Need Help?** Review the full documentation in `doc/PKGDWJOB_PYTHON_IMPLEMENTATION.md`
+**Need Help?** Review the full documentation in `doc/PKGDMS_JOB_PYTHON_IMPLEMENTATION.md`
 

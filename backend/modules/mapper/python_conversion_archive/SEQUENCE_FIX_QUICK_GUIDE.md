@@ -2,7 +2,7 @@
 
 ## ⚠️ Issue
 ```
-Error: Error in PKGDWMAPR.CREATE_UPDATE_SQL [133]: SqlCode=testsqlcd123 - 
+Error: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [133]: SqlCode=testsqlcd123 - 
 ORA-02289: sequence does not exist
 ```
 
@@ -36,10 +36,10 @@ The sequences are already defined in your existing DDL file!
 
    ```sql
    -- From DWT_DDL_DWT.sql (lines 31, 58, 208, 402)
-   CREATE SEQUENCE dwmaprseq START WITH 1 INCREMENT BY 1;
-   CREATE SEQUENCE dwmaprdtlseq START WITH 1 INCREMENT BY 1;
-   CREATE SEQUENCE dwmaperrseq START WITH 1 INCREMENT BY 1;
-   CREATE SEQUENCE dwmaprsqlseq START WITH 1 INCREMENT BY 1;
+   CREATE SEQUENCE DMS_MAPRSEQ START WITH 1 INCREMENT BY 1;
+   CREATE SEQUENCE DMS_MAPRDTLSEQ START WITH 1 INCREMENT BY 1;
+   CREATE SEQUENCE DMS_MAPERRSEQ START WITH 1 INCREMENT BY 1;
+   CREATE SEQUENCE DMS_MAPRSQLSEQ START WITH 1 INCREMENT BY 1;
    COMMIT;
    ```
 
@@ -47,7 +47,7 @@ The sequences are already defined in your existing DDL file!
    ```sql
    SELECT sequence_name, last_number 
    FROM user_sequences 
-   WHERE sequence_name IN ('DWMAPRSQLSEQ', 'DWMAPRSEQ', 'DWMAPRDTLSEQ', 'DWMAPERRSEQ');
+   WHERE sequence_name IN ('DMS_MAPRSQLSEQ', 'DMS_MAPRSEQ', 'DMS_MAPRDTLSEQ', 'DMS_MAPERRSEQ');
    ```
 
 ---
@@ -68,7 +68,7 @@ If you prefer a standalone script with more options:
 
 1. **Test in SQL:**
    ```sql
-   SELECT DWMAPRSQLSEQ.NEXTVAL FROM DUAL;  -- Should return 1 (or next number)
+   SELECT DMS_MAPRSQLSEQ.NEXTVAL FROM DUAL;  -- Should return 1 (or next number)
    ```
 
 2. **Test in Application:**
@@ -84,10 +84,10 @@ If you prefer a standalone script with more options:
 
 | Sequence | Purpose | Table | Line in DDL |
 |----------|---------|-------|-------------|
-| `DWMAPRSQLSEQ` | SQL query mappings | DWMAPRSQL | Line 402 |
-| `DWMAPRSEQ` | Mappings | DWMAPR | Line 31 |
-| `DWMAPRDTLSEQ` | Mapping details | DWMAPRDTL | Line 58 |
-| `DWMAPERRSEQ` | Error logs | DWMAPERR | Line 208 |
+| `DMS_MAPRSQLSEQ` | SQL query mappings | DMS_MAPRSQL | Line 402 |
+| `DMS_MAPRSEQ` | Mappings | DMS_MAPR | Line 31 |
+| `DMS_MAPRDTLSEQ` | Mapping details | DMS_MAPRDTL | Line 58 |
+| `DMS_MAPERRSEQ` | Error logs | DMS_MAPERR | Line 208 |
 
 ---
 
@@ -99,7 +99,7 @@ Check if they exist elsewhere:
 ```sql
 SELECT owner, sequence_name 
 FROM all_sequences 
-WHERE sequence_name IN ('DWMAPRSQLSEQ', 'DWMAPRSEQ', 'DWMAPRDTLSEQ', 'DWMAPERRSEQ');
+WHERE sequence_name IN ('DMS_MAPRSQLSEQ', 'DMS_MAPRSEQ', 'DMS_MAPRDTLSEQ', 'DMS_MAPERRSEQ');
 ```
 
 If they exist in a different schema (e.g., `DWT`), you need to either:
@@ -107,19 +107,19 @@ If they exist in a different schema (e.g., `DWT`), you need to either:
 **A) Grant Access:**
 ```sql
 -- Run as the schema owner or DBA
-GRANT SELECT ON DWT.DWMAPRSQLSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPRSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPRDTLSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPERRSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRSQLSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRDTLSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPERRSEQ TO your_username;
 ```
 
 **B) Create Synonyms:**
 ```sql
 -- Run as your user
-CREATE SYNONYM DWMAPRSQLSEQ FOR DWT.DWMAPRSQLSEQ;
-CREATE SYNONYM DWMAPRSEQ FOR DWT.DWMAPRSEQ;
-CREATE SYNONYM DWMAPRDTLSEQ FOR DWT.DWMAPRDTLSEQ;
-CREATE SYNONYM DWMAPERRSEQ FOR DWT.DWMAPERRSEQ;
+CREATE SYNONYM DMS_MAPRSQLSEQ FOR DWT.DMS_MAPRSQLSEQ;
+CREATE SYNONYM DMS_MAPRSEQ FOR DWT.DMS_MAPRSEQ;
+CREATE SYNONYM DMS_MAPRDTLSEQ FOR DWT.DMS_MAPRDTLSEQ;
+CREATE SYNONYM DMS_MAPERRSEQ FOR DWT.DMS_MAPERRSEQ;
 ```
 
 (You can find synonym examples in `DWT_DDL_CDR.sql` file)
@@ -141,7 +141,7 @@ SELECT USER FROM DUAL;
 ```sql
 SELECT synonym_name, table_owner, table_name 
 FROM user_synonyms 
-WHERE synonym_name IN ('DWMAPRSQLSEQ', 'DWMAPRSEQ', 'DWMAPRDTLSEQ', 'DWMAPERRSEQ');
+WHERE synonym_name IN ('DMS_MAPRSQLSEQ', 'DMS_MAPRSEQ', 'DMS_MAPRDTLSEQ', 'DMS_MAPERRSEQ');
 ```
 
 **If synonyms don't exist, create them:**

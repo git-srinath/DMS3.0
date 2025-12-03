@@ -50,7 +50,7 @@ INFO: Synchronising job schedules...
 
 Query database:
 ```sql
-SELECT COUNT(*) FROM DWPRCREQ WHERE status = 'NEW';
+SELECT COUNT(*) FROM DMS_PRCREQ WHERE status = 'NEW';
 ```
 
 ---
@@ -73,7 +73,7 @@ See `doc/SCHEDULER_STARTUP_GUIDE.md` for:
 ---
 
 **That's it!** The scheduler is now running and will:
-- ✅ Sync schedules from DWJOBSCH
+- ✅ Sync schedules from DMS_JOBSCH
 - ✅ Execute recurring jobs automatically
 - ✅ Process immediate job requests
 - ✅ Handle parent→child job dependencies

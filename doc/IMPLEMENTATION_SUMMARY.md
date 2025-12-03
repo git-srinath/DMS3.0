@@ -1,8 +1,8 @@
-# PKGDWJOB Python Implementation - Summary
+# PKGDMS_JOB Python Implementation - Summary
 
 ## 🎉 Implementation Complete!
 
-The Python equivalent of `PKGDWJOB_bdy.sql` has been successfully created with integrated **MD5 hash-based change detection** for optimal performance.
+The Python equivalent of `PKGDMS_JOB_bdy.sql` has been successfully created with integrated **MD5 hash-based change detection** for optimal performance.
 
 ---
 
@@ -10,7 +10,7 @@ The Python equivalent of `PKGDWJOB_bdy.sql` has been successfully created with i
 
 ### 1. Core Python Modules
 
-#### **`backend/modules/jobs/pkgdwjob_python.py`** (722 lines)
+#### **`backend/modules/jobs/pkgdms_job_python.py`** (722 lines)
 Main module containing:
 - ✅ `version()` - Package version info
 - ✅ `get_columns()` - Parse comma-delimited column lists
@@ -21,7 +21,7 @@ Main module containing:
 - ✅ `create_all_jobs()` - Batch job processing
 - ✅ Error handling with `_raise_error()` function
 
-#### **`backend/modules/jobs/pkgdwjob_create_job_flow.py`** (464+ lines)
+#### **`backend/modules/jobs/pkgdms_job_create_job_flow.py`** (464+ lines)
 Code generator module:
 - ✅ `build_job_flow_code()` - Generates complete ETL Python code
 - ✅ Hash-based comparison logic
@@ -47,14 +47,14 @@ Code generator module:
 - ✅ Progress reporting with summary
 
 #### **`doc/database_migration_add_checkpoint.sql`**
-- ✅ Adds checkpoint configuration columns to DWMAPR and DWJOB
+- ✅ Adds checkpoint configuration columns to DMS_MAPR and DMS_JOB
 - ✅ Configuration examples for different scenarios
 - ✅ Verification queries and setup instructions
 - ✅ Backward compatible (defaults to AUTO strategy)
 
 ### 4. Comprehensive Documentation
 
-#### **`doc/PKGDWJOB_PYTHON_IMPLEMENTATION.md`** (680 lines)
+#### **`doc/PKGDMS_JOB_PYTHON_IMPLEMENTATION.md`** (680 lines)
 Complete technical documentation covering:
 - ✅ Architecture overview
 - ✅ Hash algorithm details
@@ -66,7 +66,7 @@ Complete technical documentation covering:
 - ✅ API reference
 - ✅ Best practices
 
-#### **`doc/PKGDWJOB_QUICK_START.md`**
+#### **`doc/PKGDMS_JOB_QUICK_START.md`**
 Quick reference guide with:
 - ✅ 5-minute setup instructions
 - ✅ Key commands
@@ -129,7 +129,7 @@ Quick checkpoint reference:
 | Feature | Details |
 |---------|---------|
 | **Strategies** | KEY (recommended), PYTHON (fallback), AUTO, NONE |
-| **Storage** | DWPRCLOG.PARAM1 |
+| **Storage** | DMS_PRCLOG.PARAM1 |
 | **Granularity** | Per-batch (configurable via BLKPRCROWS) |
 | **Database Support** | All RDBMS (Oracle, SQL Server, PostgreSQL, MySQL, Snowflake, BigQuery) |
 | **Resume Behavior** | Resumes from last committed batch on failure |
@@ -137,7 +137,7 @@ Quick checkpoint reference:
 **Quick Example:**
 ```sql
 -- Enable checkpoint with KEY strategy
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'TRANSACTION_ID',
     CHKPNTENABLED = 'Y'
@@ -154,13 +154,13 @@ D:\CursorTesting\DWTOOL\
 ├── backend/
 │   └── modules/
 │       ├── jobs/
-│       │   ├── pkgdwjob_python.py              ← Main module
-│       │   └── pkgdwjob_create_job_flow.py     ← Code generator
+│       │   ├── pkgdms_job_python.py              ← Main module
+│       │   └── pkgdms_job_create_job_flow.py     ← Code generator
 │       └── helper_functions.py                  ← Updated to call Python version
 │
 └── doc/
-    ├── PKGDWJOB_PYTHON_IMPLEMENTATION.md        ← Full documentation
-    ├── PKGDWJOB_QUICK_START.md                  ← Quick reference
+    ├── PKGDMS_JOB_PYTHON_IMPLEMENTATION.md        ← Full documentation
+    ├── PKGDMS_JOB_QUICK_START.md                  ← Quick reference
     ├── HASH_BASED_CHANGE_DETECTION.md           ← Algorithm details
     ├── CHECKPOINT_RESTART_GUIDE.md              ← Checkpoint complete guide (NEW!)
     ├── CHECKPOINT_QUICK_REFERENCE.md            ← Checkpoint quick ref (NEW!)
@@ -169,8 +169,8 @@ D:\CursorTesting\DWTOOL\
     ├── database_migration_add_rwhkey.sql        ← RWHKEY column migration
     ├── database_migration_add_checkpoint.sql    ← Checkpoint migration (NEW!)
     ├── database_migration_manage_sql_connection.sql
-    ├── PKGDWJOB_CONVERSION_OPTIONS.md
-    └── PKGDWJOB_OPTIONS_SUMMARY.txt
+    ├── PKGDMS_JOB_CONVERSION_OPTIONS.md
+    └── PKGDMS_JOB_OPTIONS_SUMMARY.txt
 ```
 
 ---
@@ -184,8 +184,8 @@ cd D:\CursorTesting\DWTOOL
 ```
 
 Review:
-- `backend/modules/jobs/pkgdwjob_python.py`
-- `backend/modules/jobs/pkgdwjob_create_job_flow.py`
+- `backend/modules/jobs/pkgdms_job_python.py`
+- `backend/modules/jobs/pkgdms_job_create_job_flow.py`
 
 ### 2. Run Migration Script
 
@@ -202,12 +202,12 @@ This will:
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
 try:
     # Test with one mapping first
-    job_id = pkgdwjob.create_update_job(connection, 'YOUR_TEST_MAPREF')
+    job_id = pkgdms_job.create_update_job(connection, 'YOUR_TEST_MAPREF')
     print(f"Success! Job ID: {job_id}")
 finally:
     connection.close()
@@ -221,7 +221,7 @@ SELECT mapref,
        SUBSTR(dwlogic, 1, 200) as code_preview,
        LENGTH(dwlogic) as code_length,
        recrdt
-FROM DWJOBFLW
+FROM DMS_JOBFLW
 WHERE CURFLG = 'Y'
   AND mapref = 'YOUR_TEST_MAPREF';
 ```
@@ -235,11 +235,11 @@ Look for:
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
 try:
-    pkgdwjob.create_all_jobs(connection)
+    pkgdms_job.create_all_jobs(connection)
     print("All jobs regenerated successfully!")
 finally:
     connection.close()
@@ -251,9 +251,9 @@ finally:
 
 - [ ] **Module Import Test**
   ```python
-  from modules.jobs import pkgdwjob_python as pkgdwjob
-  print(pkgdwjob.version())
-  # Should print: PKGDWJOB_PYTHON:V001
+  from modules.jobs import pkgdms_job_python as pkgdms_job
+  print(pkgdms_job.version())
+  # Should print: PKGDMS_JOB_PYTHON:V001
   ```
 
 - [ ] **RWHKEY Column Added**
@@ -264,13 +264,13 @@ finally:
 
 - [ ] **Job Flow Generated**
   ```sql
-  SELECT COUNT(*) FROM DWJOBFLW WHERE CURFLG = 'Y';
+  SELECT COUNT(*) FROM DMS_JOBFLW WHERE CURFLG = 'Y';
   -- Should show active job flows
   ```
 
 - [ ] **Hash Function Works**
   ```python
-  from modules.jobs.pkgdwjob_python import generate_hash
+  from modules.jobs.pkgdms_job_python import generate_hash
   hash_val = generate_hash({'COL1': 'test', 'COL2': 123}, ['COL1', 'COL2'])
   print(f"Hash: {hash_val}")
   # Should print 32-character hash
@@ -278,7 +278,7 @@ finally:
 
 - [ ] **Create Table with RWHKEY**
   ```python
-  job_id = pkgdwjob.create_update_job(connection, 'YOUR_MAPREF')
+  job_id = pkgdms_job.create_update_job(connection, 'YOUR_MAPREF')
   # Check target table has RWHKEY column
   ```
 
@@ -295,7 +295,7 @@ finally:
 | **Maintainability** | Complex | Simplified |
 | **Hash Column** | Not used | RWHKEY VARCHAR2(32) |
 | **NULL Handling** | NVL comparisons | `<NULL>` marker |
-| **Package** | PKGDWJOB | pkgdwjob_python.py |
+| **Package** | PKGDMS_JOB | pkgdms_job_python.py |
 
 ---
 
@@ -349,16 +349,16 @@ Potential improvements you might consider:
 
 If you need clarification on any aspect:
 
-1. **Implementation Details:** Review `doc/PKGDWJOB_PYTHON_IMPLEMENTATION.md`
+1. **Implementation Details:** Review `doc/PKGDMS_JOB_PYTHON_IMPLEMENTATION.md`
 2. **Hash Algorithm:** Review `doc/HASH_BASED_CHANGE_DETECTION.md`
-3. **Quick Commands:** Review `doc/PKGDWJOB_QUICK_START.md`
+3. **Quick Commands:** Review `doc/PKGDMS_JOB_QUICK_START.md`
 4. **Code Comments:** Check inline documentation in Python modules
 
 ---
 
 ## ✨ Summary
 
-You now have a **complete, production-ready Python implementation** of PKGDWJOB with:
+You now have a **complete, production-ready Python implementation** of PKGDMS_JOB with:
 
 ✅ **Hash-based change detection** (MD5 algorithm)  
 ✅ **Automatic RWHKEY column** addition  

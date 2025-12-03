@@ -1,6 +1,7 @@
 Flask
 flask_cors
 oracledb
+psycopg2-binary
 sqlalchemy
 python-dotenv
 pandas

@@ -46,13 +46,13 @@ const JobStatusAndLogs = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [sortBy, setSortBy] = useState('log_date');
   const [sortOrder, setSortOrder] = useState('desc');
-  const [timePeriod, setTimePeriod] = useState(2); // Default to 7 days
+  const [timePeriod, setTimePeriod] = useState('7'); // Default to 7 days
 
   // Fetch scheduled jobs data
   const fetchScheduledJobs = async () => {
     try {
       setRefreshing(true);
-      const response = await fetch(`${API_BASE_URL}/job/get_scheduled_jobs?period=${timePeriod}`);
+      const response = await fetch(`${API_BASE_URL}/job/get_scheduled_jobs?period=${timePeriod === 'ALL' ? 'ALL' : timePeriod}`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -423,7 +423,7 @@ const JobStatusAndLogs = () => {
                 <div className="w-full md:w-48">
                   <select
                     value={timePeriod}
-                    onChange={(e) => setTimePeriod(Number(e.target.value))}
+                    onChange={(e) => setTimePeriod(e.target.value)}
                     className={`
                       w-full px-3 py-2 rounded-lg border text-sm
                       ${darkMode 
@@ -432,10 +432,11 @@ const JobStatusAndLogs = () => {
                       focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all
                     `}
                   >
-                   <option value={2}>Last 2 Days</option>
-                    <option value={7}>Last 7 Days</option>
-                    <option value={15}>Last 15 Days</option>
-                    <option value={30}>Last 30 Days</option>
+                    <option value="2">Last 2 Days</option>
+                    <option value="7">Last 7 Days</option>
+                    <option value="15">Last 15 Days</option>
+                    <option value="30">Last 30 Days</option>
+                    <option value="ALL">All</option>
                   </select>
                 </div>
 

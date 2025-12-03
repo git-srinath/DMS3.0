@@ -358,7 +358,7 @@ const LoginPage = () => {
                 letterSpacing: '-0.5px',
               }}
             >
-              Data Warehouse Tool
+              Data Management Solution
             </Typography>
             <Typography
               variant="h5"
@@ -408,7 +408,7 @@ const LoginPage = () => {
                   marginRight: '0.5rem',
                 }}
               />
-              DW<span>Tool</span>
+              DMS
             </Logo>
 
             <Typography

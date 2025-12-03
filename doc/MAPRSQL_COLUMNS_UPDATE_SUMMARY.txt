@@ -1,0 +1,38 @@
+DMS_MAPRSQL Column Name Update Summary
+================================================================================
+
+Column renames:
+  - dwmaprsqlid => maprsqlid
+  - dwmaprsqlcd => maprsqlcd
+  - dwmaprsql => maprsql
+
+Files updated: 6
+
+backend\modules\jobs\execution_engine.py:
+  - dwmaprsqlcd -> maprsqlcd
+  - DWMAPRSQL -> MAPRSQL
+
+backend\modules\jobs\pkgdwjob_create_job_flow.py:
+  - dwmaprsqlcd -> maprsqlcd
+  - DWMAPRSQL -> MAPRSQL
+
+backend\modules\manage_sql\manage_sql.py:
+  - DWMAPRSQLCD -> MAPRSQLCD
+  - DWMAPRSQL -> MAPRSQL
+
+backend\modules\mapper\pkgdwmapr_python.py:
+  - dwmaprsqlid -> maprsqlid
+  - dwmaprsqlcd -> maprsqlcd
+  - w_rec_dwmaprsql -> w_rec_maprsql
+  - w_rec_dwmaprsqlid -> w_rec_maprsqlid
+  - w_rec_dwmaprsqlcd -> w_rec_maprsqlcd
+  - dwmaprsql -> maprsql
+
+backend\modules\mapper\python_conversion_archive\pkgdwmapr.py:
+  - dwmaprsqlcd -> maprsqlcd
+  - DWMAPRSQL -> MAPRSQL
+  - dwmaprsqlid -> maprsqlid
+
+backend\modules\mapper\python_conversion_archive\test_schema_sequences.py:
+  - DWMAPRSQL -> MAPRSQL
+

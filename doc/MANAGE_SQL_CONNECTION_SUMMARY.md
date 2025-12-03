@@ -16,8 +16,8 @@ Connection string support has been successfully added to the `manage_sql` module
 
 ### 2. **Database Migration Script** - READY ✅
 - Created `database_migration_manage_sql_connection.sql`
-- Adds `SQLCONID` column to `DWMAPRSQL` table
-- Creates foreign key constraint to `DWDBCONDTLS`
+- Adds `SQLCONID` column to `DMS_MAPRSQL` table
+- Creates foreign key constraint to `DMS_DBCONDTLS`
 
 ### 3. **Documentation** - COMPLETE ✅
 - Created comprehensive implementation guide
@@ -38,20 +38,20 @@ SQL> @database_migration_manage_sql_connection.sql
 
 ### Option B: Run Commands Manually
 ```sql
--- Add SQLCONID column to DWMAPRSQL table
-ALTER TABLE DWMAPRSQL ADD (SQLCONID NUMBER);
+-- Add SQLCONID column to DMS_MAPRSQL table
+ALTER TABLE DMS_MAPRSQL ADD (SQLCONID NUMBER);
 
 -- Add foreign key constraint
-ALTER TABLE DWMAPRSQL ADD CONSTRAINT FK_DWMAPRSQL_SQLCONID 
-    FOREIGN KEY (SQLCONID) REFERENCES DWDBCONDTLS(CONID);
+ALTER TABLE DMS_MAPRSQL ADD CONSTRAINT FK_DMS_MAPRSQL_SQLCONID 
+    FOREIGN KEY (SQLCONID) REFERENCES DMS_DBCONDTLS(CONID);
 
 -- Add comment
-COMMENT ON COLUMN DWMAPRSQL.SQLCONID IS 'Source database connection ID from DWDBCONDTLS. NULL means use metadata connection.';
+COMMENT ON COLUMN DMS_MAPRSQL.SQLCONID IS 'Source database connection ID from DMS_DBCONDTLS. NULL means use metadata connection.';
 
 -- Verify changes
 SELECT column_name, data_type, nullable 
 FROM user_tab_columns 
-WHERE table_name = 'DWMAPRSQL' 
+WHERE table_name = 'DMS_MAPRSQL' 
 AND column_name = 'SQLCONID';
 ```
 
@@ -65,20 +65,20 @@ AND column_name = 'SQLCONID';
 
 ### After (New Behavior):
 - SQL queries can optionally specify a source connection
-- Connection ID references `DWDBCONDTLS` table
+- Connection ID references `DMS_DBCONDTLS` table
 - NULL connection (default) = use metadata connection ✅ Backward compatible!
 
 ---
 
 ## 📊 Database Schema
 
-### DWMAPRSQL Table (Updated)
+### DMS_MAPRSQL Table (Updated)
 ```
 Column          Type          Nullable   Description
 ---------------------------------------------------------
-DWMAPRSQLID     NUMBER        NO         Primary key
-DWMAPRSQLCD     VARCHAR2(100) NO         SQL code
-DWMAPRSQL       CLOB          NO         SQL content
+DMS_MAPRSQLID     NUMBER        NO         Primary key
+DMS_MAPRSQLCD     VARCHAR2(100) NO         SQL code
+DMS_MAPRSQL       CLOB          NO         SQL content
 SQLCONID        NUMBER        YES        ⭐ NEW: Source connection ID
 RECCRDT         DATE          NO         Created date
 RECUPDT         DATE          NO         Updated date
@@ -160,14 +160,14 @@ curl http://localhost:5000/manage-sql/fetch-sql-logic?sql_code=TEST_002
 ```sql
 -- Check SQL records with their connections
 SELECT 
-    s.DWMAPRSQLCD as SQL_CODE,
+    s.DMS_MAPRSQLCD as SQL_CODE,
     s.SQLCONID as CONNECTION_ID,
     c.CONNM as CONNECTION_NAME,
     s.CURFLG as ACTIVE
-FROM DWMAPRSQL s
-LEFT JOIN DWDBCONDTLS c ON s.SQLCONID = c.CONID
+FROM DMS_MAPRSQL s
+LEFT JOIN DMS_DBCONDTLS c ON s.SQLCONID = c.CONID
 WHERE s.CURFLG = 'Y'
-ORDER BY s.DWMAPRSQLCD;
+ORDER BY s.DMS_MAPRSQLCD;
 ```
 
 ---
@@ -224,7 +224,7 @@ The frontend needs to be updated to:
 |---------------------|--------------------|--------------------|
 | **Column Name**     | `TRGCONID`         | `SQLCONID`         |
 | **Purpose**         | Target (write to)  | Source (read from) |
-| **Table**           | `DWMAPR`           | `DWMAPRSQL`        |
+| **Table**           | `DMS_MAPR`           | `DMS_MAPRSQL`        |
 | **Implementation**  | ✅ Complete        | ✅ Complete        |
 | **Pattern**         | Same approach used in both modules      |
 
@@ -236,12 +236,12 @@ The frontend needs to be updated to:
 - `database_migration_manage_sql_connection.sql` - Database script
 - `MANAGE_SQL_CONNECTION_IMPLEMENTATION.md` - Full documentation
 - `backend/modules/manage_sql/manage_sql.py` - Updated endpoints
-- `backend/modules/mapper/pkgdwmapr_python.py` - Updated function
+- `backend/modules/mapper/pkgdms_mapr_python.py` - Updated function
 
 **Need Help?**
 - Check the full implementation document
 - Review the test cases
-- Verify database connections in `DWDBCONDTLS`
+- Verify database connections in `DMS_DBCONDTLS`
 
 ---
 

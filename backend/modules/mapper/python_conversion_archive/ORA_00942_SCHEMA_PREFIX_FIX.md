@@ -7,12 +7,12 @@ Fixed **ORA-00942: table or view does not exist** error by adding support for Or
 **User Error Message:**
 ```
 Operation failed: An error occurred while saving the mapping data 
-Error in PKGDWMAPR.CREATE_UPDATE_MAPPING [102]: Mapref=TEST_DIM-Test dimension table - ORA-00942: table or view does not exist
+Error in PKGDMS_MAPR.CREATE_UPDATE_MAPPING [102]: Mapref=TEST_DIM-Test dimension table - ORA-00942: table or view does not exist
 Help: https://docs.oracle.com/error-help/db/ora-00942/
 ```
 
 **Context:** 
-- User confirmed the `dwmapr` table exists and has all necessary permissions
+- User confirmed the `DMS_MAPR` table exists and has all necessary permissions
 - The error was occurring on INSERT statement
 
 ## Root Cause
@@ -25,23 +25,23 @@ The application uses an `ORACLE_SCHEMA` environment variable (from `os.getenv("S
 ORACLE_SCHEMA = os.getenv("SCHEMA")
 
 # Used like:
-:result := {ORACLE_SCHEMA}.PKGDWMAPR.CREATE_UPDATE_MAPPING(...)
+:result := {ORACLE_SCHEMA}.PKGDMS_MAPR.CREATE_UPDATE_MAPPING(...)
 ```
 
-However, the `pkgdwmapr.py` module was **not using** this schema prefix for sequence references.
+However, the `pkgdms_mapr.py` module was **not using** this schema prefix for sequence references.
 
 ### The Problem
 When sequences are in a different schema than the one the user is connected to, they need to be prefixed with the schema name:
-- ❌ `dwmaprseq.nextval` - fails if sequence is in another schema
-- ✅ `SCHEMANAME.DWMAPRSEQ.nextval` - works with schema prefix
+- ❌ `DMS_MAPRSEQ.nextval` - fails if sequence is in another schema
+- ✅ `SCHEMANAME.DMS_MAPRSEQ.nextval` - works with schema prefix
 
 ### Why ORA-00942 for Sequences?
 Oracle throws **ORA-00942** (table or view does not exist) for sequences too, not just tables. This is because sequences are database objects that can be in different schemas.
 
 ### Additional Issue: Case Inconsistency
 The original code had inconsistent casing:
-- Line 165: `DWMAPRSQLSEQ.nextval` (UPPERCASE)
-- Line 334: `dwmaprseq.nextval` (lowercase) ← The problematic one
+- Line 165: `DMS_MAPRSQLSEQ.nextval` (UPPERCASE)
+- Line 334: `DMS_MAPRSEQ.nextval` (lowercase) ← The problematic one
 - Other lines: lowercase
 
 Oracle stores unquoted identifiers in UPPERCASE by default, so this inconsistency could also cause issues.
@@ -75,31 +75,31 @@ All sequence references were updated to:
 2. Use UPPERCASE names for consistency
 3. Use f-strings to include the prefix
 
-#### Sequence 1: DWMAPRSQLSEQ (Line 168-172)
+#### Sequence 1: DMS_MAPRSQLSEQ (Line 168-172)
 **Before:**
 ```python
 cursor.execute("""
-    INSERT INTO dwmaprsql
-    VALUES (DWMAPRSQLSEQ.nextval, :sqlcd, :sql, SYSDATE, SYSDATE, 'Y')
-    RETURNING dwmaprsqlid INTO :ret_id
+    INSERT INTO DMS_MAPRSQL
+    VALUES (DMS_MAPRSQLSEQ.nextval, :sqlcd, :sql, SYSDATE, SYSDATE, 'Y')
+    RETURNING dms_maprsqlid INTO :ret_id
 """, {
 ```
 
 **After:**
 ```python
 cursor.execute(f"""
-    INSERT INTO dwmaprsql
-    VALUES ({SCHEMA_PREFIX}DWMAPRSQLSEQ.nextval, :sqlcd, :sql, SYSDATE, SYSDATE, 'Y')
-    RETURNING dwmaprsqlid INTO :ret_id
+    INSERT INTO DMS_MAPRSQL
+    VALUES ({SCHEMA_PREFIX}DMS_MAPRSQLSEQ.nextval, :sqlcd, :sql, SYSDATE, SYSDATE, 'Y')
+    RETURNING dms_maprsqlid INTO :ret_id
 """, {
 ```
 
-#### Sequence 2: DWMAPRSEQ (Line 336-343)
+#### Sequence 2: DMS_MAPRSEQ (Line 336-343)
 **Before:**
 ```python
 cursor.execute("""
-    INSERT INTO dwmapr 
-    VALUES (dwmaprseq.nextval, :mapref, ...)
+    INSERT INTO DMS_MAPR 
+    VALUES (DMS_MAPRSEQ.nextval, :mapref, ...)
     RETURNING mapid INTO :ret_id
 """, {
 ```
@@ -107,18 +107,18 @@ cursor.execute("""
 **After:**
 ```python
 cursor.execute(f"""
-    INSERT INTO dwmapr 
-    VALUES ({SCHEMA_PREFIX}DWMAPRSEQ.nextval, :mapref, ...)
+    INSERT INTO DMS_MAPR 
+    VALUES ({SCHEMA_PREFIX}DMS_MAPRSEQ.nextval, :mapref, ...)
     RETURNING mapid INTO :ret_id
 """, {
 ```
 
-#### Sequence 3: DWMAPRDTLSEQ (Line 577-586)
+#### Sequence 3: DMS_MAPRDTLSEQ (Line 577-586)
 **Before:**
 ```python
 cursor.execute("""
-    INSERT INTO dwmaprdtl 
-    VALUES (dwmaprdtlseq.nextval, :mapref, ...)
+    INSERT INTO DMS_MAPRDTL 
+    VALUES (DMS_MAPRDTLSEQ.nextval, :mapref, ...)
     RETURNING mapdtlid INTO :ret_id
 """, {
 ```
@@ -126,26 +126,26 @@ cursor.execute("""
 **After:**
 ```python
 cursor.execute(f"""
-    INSERT INTO dwmaprdtl 
-    VALUES ({SCHEMA_PREFIX}DWMAPRDTLSEQ.nextval, :mapref, ...)
+    INSERT INTO DMS_MAPRDTL 
+    VALUES ({SCHEMA_PREFIX}DMS_MAPRDTLSEQ.nextval, :mapref, ...)
     RETURNING mapdtlid INTO :ret_id
 """, {
 ```
 
-#### Sequences 4-6: DWMAPERRSEQ (Lines 843, 897, 926)
+#### Sequences 4-6: DMS_MAPERRSEQ (Lines 843, 897, 926)
 **Before:**
 ```python
 cursor.execute("""
-    INSERT INTO dwmaperr
-    VALUES (dwmaperrseq.nextval, ...)
+    INSERT INTO DMS_MAPERR
+    VALUES (DMS_MAPERRSEQ.nextval, ...)
 """, {
 ```
 
 **After:**
 ```python
 cursor.execute(f"""
-    INSERT INTO dwmaperr
-    VALUES ({SCHEMA_PREFIX}DWMAPERRSEQ.nextval, ...)
+    INSERT INTO DMS_MAPERR
+    VALUES ({SCHEMA_PREFIX}DMS_MAPERRSEQ.nextval, ...)
 """, {
 ```
 
@@ -158,7 +158,7 @@ ORACLE_SCHEMA = "DWT"
 SCHEMA_PREFIX = "DWT."
 
 # Generated SQL:
-INSERT INTO dwmapr VALUES (DWT.DWMAPRSEQ.nextval, ...)
+INSERT INTO DMS_MAPR VALUES (DWT.DMS_MAPRSEQ.nextval, ...)
 ```
 
 ### Without Schema Prefix (Single-Schema Setup)
@@ -168,7 +168,7 @@ ORACLE_SCHEMA = ""
 SCHEMA_PREFIX = ""
 
 # Generated SQL:
-INSERT INTO dwmapr VALUES (DWMAPRSEQ.nextval, ...)
+INSERT INTO DMS_MAPR VALUES (DMS_MAPRSEQ.nextval, ...)
 ```
 
 ## Configuration
@@ -189,10 +189,10 @@ export SCHEMA=DWT
 
 All four sequences used in the application are now schema-aware:
 
-1. **DWMAPRSQLSEQ** - For SQL query records (`dwmaprsql` table)
-2. **DWMAPRSEQ** - For mapping records (`dwmapr` table)
-3. **DWMAPRDTLSEQ** - For mapping detail records (`dwmaprdtl` table)
-4. **DWMAPERRSEQ** - For error records (`dwmaperr` table)
+1. **DMS_MAPRSQLSEQ** - For SQL query records (`DMS_MAPRSQL` table)
+2. **DMS_MAPRSEQ** - For mapping records (`DMS_MAPR` table)
+3. **DMS_MAPRDTLSEQ** - For mapping detail records (`DMS_MAPRDTL` table)
+4. **DMS_MAPERRSEQ** - For error records (`DMS_MAPERR` table)
 
 ## Testing Instructions
 
@@ -203,10 +203,10 @@ All four sequences used in the application are now schema-aware:
    ```
 
 2. **Test INSERT operations:**
-   - Create new SQL query (uses DWMAPRSQLSEQ)
-   - Create new mapping (uses DWMAPRSEQ)
-   - Create new mapping detail (uses DWMAPRDTLSEQ)
-   - Trigger validation error (uses DWMAPERRSEQ)
+   - Create new SQL query (uses DMS_MAPRSQLSEQ)
+   - Create new mapping (uses DMS_MAPRSEQ)
+   - Create new mapping detail (uses DMS_MAPRDTLSEQ)
+   - Trigger validation error (uses DMS_MAPERRSEQ)
 
 3. **Verify generated SQL** - Check application logs to see the actual SQL being executed
 
@@ -226,18 +226,18 @@ All four sequences used in the application are now schema-aware:
 2. **Verify you have permissions:**
    ```sql
    -- Grant SELECT permission on sequences
-   GRANT SELECT ON DWT.DWMAPRSQLSEQ TO your_username;
-   GRANT SELECT ON DWT.DWMAPRSEQ TO your_username;
-   GRANT SELECT ON DWT.DWMAPRDTLSEQ TO your_username;
-   GRANT SELECT ON DWT.DWMAPERRSEQ TO your_username;
+   GRANT SELECT ON DWT.DMS_MAPRSQLSEQ TO your_username;
+   GRANT SELECT ON DWT.DMS_MAPRSEQ TO your_username;
+   GRANT SELECT ON DWT.DMS_MAPRDTLSEQ TO your_username;
+   GRANT SELECT ON DWT.DMS_MAPERRSEQ TO your_username;
    ```
 
 3. **Create synonyms (alternative to schema prefix):**
    ```sql
-   CREATE SYNONYM DWMAPRSQLSEQ FOR DWT.DWMAPRSQLSEQ;
-   CREATE SYNONYM DWMAPRSEQ FOR DWT.DWMAPRSEQ;
-   CREATE SYNONYM DWMAPRDTLSEQ FOR DWT.DWMAPRDTLSEQ;
-   CREATE SYNONYM DWMAPERRSEQ FOR DWT.DWMAPERRSEQ;
+   CREATE SYNONYM DMS_MAPRSQLSEQ FOR DWT.DMS_MAPRSQLSEQ;
+   CREATE SYNONYM DMS_MAPRSEQ FOR DWT.DMS_MAPRSEQ;
+   CREATE SYNONYM DMS_MAPRDTLSEQ FOR DWT.DMS_MAPRDTLSEQ;
+   CREATE SYNONYM DMS_MAPERRSEQ FOR DWT.DMS_MAPERRSEQ;
    ```
 
 4. **Check if SCHEMA environment variable is set:**
@@ -252,7 +252,7 @@ All four sequences used in the application are now schema-aware:
 ## Changes Summary
 
 ### Files Modified
-- `backend/modules/mapper/pkgdwmapr.py`
+- `backend/modules/mapper/pkgdms_mapr.py`
   - Added `import os` (line 11)
   - Added `ORACLE_SCHEMA` and `SCHEMA_PREFIX` configuration (lines 18-21)
   - Updated 6 SQL INSERT statements to use `SCHEMA_PREFIX`

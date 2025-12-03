@@ -63,5 +63,5 @@ code_parts.append(f'''
 2025-11-19
 
 ## Files Modified
-- `backend/modules/jobs/pkgdwjob_create_job_flow.py` (lines 488-491, 889-891)
+- `backend/modules/jobs/pkgdms_job_create_job_flow.py` (lines 488-491, 889-891)
 

@@ -7,7 +7,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/app/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, FileSpreadsheet, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, FileSpreadsheet, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, History } from 'lucide-react';
 import CustomDbIcon from './CustomDbIcon';
 import CustomParameterIcon from './CustomParameterIcon';
 
@@ -230,10 +230,26 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
 
         <SidebarItem 
           icon={<FileSpreadsheet />} 
-          text="Manage Jobs" 
+          text="Jobs" 
           active={pathname === '/jobs'} 
           expanded={sidebarOpen}
           href="/jobs"
+        /> 
+
+        <SidebarItem 
+          icon={<FileText />} 
+          text="Reports" 
+          active={pathname === '/reports'} 
+          expanded={sidebarOpen}
+          href="/reports"
+        /> 
+
+        <SidebarItem 
+          icon={<History />} 
+          text="Report Runs" 
+          active={pathname === '/report_runs'} 
+          expanded={sidebarOpen}
+          href="/report_runs"
         /> 
 
         <SidebarItem 
@@ -255,7 +271,7 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
   
         <SidebarItem
           icon={<CustomParameterIcon size={18} />}
-          text="Type Mapping"
+          text="Parameters"
           active={pathname === '/type_mapper'}
           expanded={sidebarOpen}
           href="/type_mapper"
@@ -275,7 +291,7 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
 
         <SidebarItem 
           icon={<Settings />} 
-          text="Admin Module" 
+          text="Admin" 
           active={pathname === '/admin'} 
           expanded={sidebarOpen}
           href="/admin"

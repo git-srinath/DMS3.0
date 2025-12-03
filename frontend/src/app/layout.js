@@ -50,8 +50,8 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <head>
-        <title>DW Tool</title>
-        <meta name="description" content="Data Warehouse Tool | A tool for data warehouse management" />
+        <title>DMS</title>
+        <meta name="description" content="Data Management Solution | A tool for unified data management" />
         {/* Removed Google Fonts link - now using local fonts */}
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} antialiased font-sans`}>

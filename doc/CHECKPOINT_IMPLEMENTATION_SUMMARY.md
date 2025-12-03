@@ -16,8 +16,8 @@
 - Created: `doc/database_migration_add_checkpoint.sql`
 
 **Tables Updated:**
-- `DWMAPR` - Added 3 checkpoint configuration columns
-- `DWJOB` - Added 3 checkpoint configuration columns
+- `DMS_MAPR` - Added 3 checkpoint configuration columns
+- `DMS_JOB` - Added 3 checkpoint configuration columns
 
 **New Columns:**
 ```sql
@@ -32,19 +32,19 @@ CHKPNTENABLED VARCHAR2(1) DEFAULT 'Y'
 ```
 
 **Checkpoint Storage:**
-- Uses existing `DWPRCLOG.PARAM1` column (no new columns needed)
+- Uses existing `DMS_PRCLOG.PARAM1` column (no new columns needed)
 
 ---
 
 ### 2. **Backend Code Changes**
 
-#### **A. `backend/modules/jobs/pkgdwjob_python.py`**
+#### **A. `backend/modules/jobs/pkgdms_job_python.py`**
 
 **Modified Functions:**
 
 1. **`create_update_job()` (Lines 383-407)**
    - Added checkpoint columns to INSERT statement
-   - Copies checkpoint config from DWMAPR to DWJOB
+   - Copies checkpoint config from DMS_MAPR to DMS_JOB
    - Default values: `CHKPNTSTRATEGY='AUTO'`, `CHKPNTENABLED='Y'`
 
 2. **`create_job_flow()` (Lines 558-591)**
@@ -54,7 +54,7 @@ CHKPNTENABLED VARCHAR2(1) DEFAULT 'Y'
 
 ---
 
-#### **B. `backend/modules/jobs/pkgdwjob_create_job_flow.py`**
+#### **B. `backend/modules/jobs/pkgdms_job_create_job_flow.py`**
 
 **Modified Function:**
 
@@ -123,7 +123,7 @@ CHKPNTENABLED VARCHAR2(1) DEFAULT 'Y'
            total_processed = batch_num * BULK_LIMIT
        
        cursor.execute("""
-           UPDATE DWPRCLOG SET PARAM1 = :checkpoint_value
+           UPDATE DMS_PRCLOG SET PARAM1 = :checkpoint_value
            WHERE sessionid = :sessionid AND prcid = :prcid
        """)
    ```
@@ -133,7 +133,7 @@ CHKPNTENABLED VARCHAR2(1) DEFAULT 'Y'
    # Mark as COMPLETED on successful finish
    if CHECKPOINT_ENABLED:
        cursor.execute("""
-           UPDATE DWPRCLOG SET PARAM1 = 'COMPLETED'
+           UPDATE DMS_PRCLOG SET PARAM1 = 'COMPLETED'
            WHERE sessionid = :sessionid AND prcid = :prcid
        """)
    ```
@@ -189,7 +189,7 @@ CHKPNTENABLED VARCHAR2(1) DEFAULT 'Y'
 
 **Configuration:**
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'TRANSACTION_ID',
     CHKPNTENABLED = 'Y'
@@ -225,7 +225,7 @@ ORDER BY TRANSACTION_ID
 
 **Configuration:**
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'PYTHON',
     CHKPNTCOLUMN = NULL,
     CHKPNTENABLED = 'Y'
@@ -261,7 +261,7 @@ for skip_idx in range(rows_to_skip):
 
 **Configuration:**
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'AUTO',
     CHKPNTCOLUMN = 'ORDER_ID',  -- Will use KEY
     CHKPNTENABLED = 'Y'
@@ -278,7 +278,7 @@ WHERE MAPREF = 'MY_MAPPING';
 
 **Configuration:**
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'NONE',
     CHKPNTENABLED = 'N'
 WHERE MAPREF = 'SMALL_LOOKUP_TABLE';
@@ -296,7 +296,7 @@ sqlplus user/pass@db @doc/database_migration_add_checkpoint.sql
 ### Step 2: Configure Mapping
 ```sql
 -- For fact table with transaction ID
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'TRANSACTION_ID',
     CHKPNTENABLED = 'Y'
@@ -306,10 +306,10 @@ WHERE MAPREF = 'SALES_FACT_LOAD';
 ### Step 3: Regenerate Job
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
-job_id = pkgdwjob.create_update_job(connection, 'SALES_FACT_LOAD')
+job_id = pkgdms_job.create_update_job(connection, 'SALES_FACT_LOAD')
 connection.close()
 ```
 
@@ -322,7 +322,7 @@ connection.close()
 ### Test Scenario
 ```python
 # 1. Start job
-job_result = pkgdwjob.execute_job(connection, session_params)
+job_result = pkgdms_job.execute_job(connection, session_params)
 
 # 2. Cancel midway (Ctrl+C)
 # Let it process a few batches, then stop
@@ -330,7 +330,7 @@ job_result = pkgdwjob.execute_job(connection, session_params)
 # 3. Check checkpoint
 cursor.execute("""
     SELECT param1 as checkpoint, status
-    FROM DWPRCLOG
+    FROM DMS_PRCLOG
     WHERE mapref = 'SALES_FACT_LOAD'
       AND status = 'IP'
     ORDER BY reccrdt DESC
@@ -342,7 +342,7 @@ print(f"Checkpoint: {result[0]}")
 # Or: Checkpoint: 3000 (rows processed)
 
 # 4. Restart job
-job_result = pkgdwjob.execute_job(connection, session_params)
+job_result = pkgdms_job.execute_job(connection, session_params)
 # Console output:
 # "Resuming: Checkpoint at TRANSACTION_ID > 100765"
 # "Applied KEY checkpoint: TRANSACTION_ID > 100765"
@@ -356,7 +356,7 @@ job_result = pkgdwjob.execute_job(connection, session_params)
 ### View Current Checkpoint
 ```sql
 SELECT param1 as checkpoint, status, strtdt
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE mapref = 'YOUR_MAPREF'
   AND status = 'IP'
 ORDER BY reccrdt DESC
@@ -366,7 +366,7 @@ FETCH FIRST 1 ROW ONLY;
 ### View Checkpoint History
 ```sql
 SELECT reccrdt, param1 as checkpoint, status, enddt - strtdt as duration
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE mapref = 'YOUR_MAPREF'
 ORDER BY reccrdt DESC
 FETCH FIRST 10 ROWS ONLY;
@@ -374,7 +374,7 @@ FETCH FIRST 10 ROWS ONLY;
 
 ### Clear Checkpoint (Force Full Reload)
 ```sql
-UPDATE DWPRCLOG
+UPDATE DMS_PRCLOG
 SET PARAM1 = NULL
 WHERE mapref = 'YOUR_MAPREF'
   AND sessionid = :current_session;
@@ -395,7 +395,7 @@ WHERE mapref = 'YOUR_MAPREF'
 - ✅ BigQuery (LIMIT/OFFSET)
 
 **Design Decision:**
-- Leverages existing `DWDBCONDTLS.DBTYP` column
+- Leverages existing `DMS_DBCONDTLS.DBTYP` column
 - No database detection needed
 - Standard SQL for KEY strategy
 - Python fallback for 100% compatibility
@@ -419,7 +419,7 @@ WHERE mapref = 'YOUR_MAPREF'
 | Benefit | Description |
 |---------|-------------|
 | **Resume on Failure** | No reprocessing of committed data |
-| **Progress Tracking** | Monitor checkpoint value in DWPRCLOG |
+| **Progress Tracking** | Monitor checkpoint value in DMS_PRCLOG |
 | **Flexible** | Three strategies for different scenarios |
 | **Configurable** | Per-mapping configuration |
 | **Zero Downtime** | Can enable/disable without code changes |
@@ -432,7 +432,7 @@ WHERE mapref = 'YOUR_MAPREF'
 ## 🎓 Key Design Decisions
 
 1. **Use Existing DBTYP**
-   - Leverages `DWDBCONDTLS.DBTYP` instead of implementing detection
+   - Leverages `DMS_DBCONDTLS.DBTYP` instead of implementing detection
    - Simpler, more reliable
 
 2. **Standard SQL First**
@@ -448,7 +448,7 @@ WHERE mapref = 'YOUR_MAPREF'
    - Fine-grained recovery
 
 5. **Session-Level Tracking**
-   - Uses `DWPRCLOG.PARAM1` for storage
+   - Uses `DMS_PRCLOG.PARAM1` for storage
    - No new tables required
    - Integrates with existing framework
 

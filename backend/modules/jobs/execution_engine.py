@@ -4,13 +4,14 @@ import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import oracledb
+from modules.common.db_table_utils import get_postgresql_table_name
 
-from database.dbconnect import create_oracle_connection
+from database.dbconnect import create_metadata_connection
 from modules.common.id_provider import next_id as get_next_id
 from modules.logger import info, warning, error, debug
 from modules.jobs.pkgdwprc_python import JobRequestType, SchedulerRepositoryError
@@ -108,12 +109,22 @@ class JobExecutionEngine:
                     if target_conn:
                         # Verify the target connection can access the schema
                         try:
+                            from modules.common.db_table_utils import _detect_db_type
+                            target_db_type = _detect_db_type(target_conn)
                             test_cursor = target_conn.cursor()
-                            # Try to query the current user/schema
-                            test_cursor.execute("SELECT USER FROM DUAL")
-                            current_user = test_cursor.fetchone()[0]
-                            test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
-                            current_schema = test_cursor.fetchone()[0]
+                            
+                            # Try to query the current user/schema with database-specific syntax
+                            if target_db_type == "POSTGRESQL":
+                                test_cursor.execute("SELECT current_user")
+                                current_user = test_cursor.fetchone()[0]
+                                test_cursor.execute("SELECT current_schema()")
+                                current_schema = test_cursor.fetchone()[0]
+                            else:  # Oracle
+                                test_cursor.execute("SELECT USER FROM DUAL")
+                                current_user = test_cursor.fetchone()[0]
+                                test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
+                                current_schema = test_cursor.fetchone()[0]
+                            
                             test_cursor.close()
                             info(f"Using target connection (ID: {trgconid}) - Current user: {current_user}, Current schema: {current_schema}")
                         except Exception as test_e:
@@ -365,11 +376,22 @@ class JobExecutionEngine:
                                     debug(f"Using TARGET connection for old signature")
                                     # Verify target connection schema access
                                     try:
+                                        from modules.common.db_table_utils import _detect_db_type
+                                        target_db_type = _detect_db_type(target_conn)
                                         test_cursor = target_conn.cursor()
-                                        test_cursor.execute("SELECT USER FROM DUAL")
-                                        conn_user = test_cursor.fetchone()[0]
-                                        test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
-                                        conn_schema = test_cursor.fetchone()[0]
+                                        
+                                        # Use database-specific syntax
+                                        if target_db_type == "POSTGRESQL":
+                                            test_cursor.execute("SELECT current_user")
+                                            conn_user = test_cursor.fetchone()[0]
+                                            test_cursor.execute("SELECT current_schema()")
+                                            conn_schema = test_cursor.fetchone()[0]
+                                        else:  # Oracle
+                                            test_cursor.execute("SELECT USER FROM DUAL")
+                                            conn_user = test_cursor.fetchone()[0]
+                                            test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
+                                            conn_schema = test_cursor.fetchone()[0]
+                                        
                                         test_cursor.close()
                                         debug(f"Target connection user: {conn_user}, schema: {conn_schema}")
                                     except Exception as e:
@@ -436,7 +458,7 @@ class JobExecutionEngine:
                             # Mark the job as failed due to timeout
                             with self._db_connection() as (timeout_conn, timeout_cursor):
                                 timeout_cursor.execute("""
-                                    UPDATE DWPRCLOG 
+                                    UPDATE DMS_PRCLOG 
                                     SET status = 'FAILED', 
                                         endtime = SYSTIMESTAMP,
                                         errmsg = :errmsg
@@ -592,11 +614,32 @@ class JobExecutionEngine:
         return {"status": "SUCCESS", "runs": runs}
 
     def _execute_report_job(self, request: QueueRequest) -> Dict[str, Any]:
-        warning(f"Report job execution not implemented yet ({request.request_id})")
-        return {
-            "status": "NOT_IMPLEMENTED",
-            "message": "Report execution pending implementation",
-        }
+        from modules.reports.report_service import ReportMetadataService, ReportServiceError
+
+        payload = request.payload or {}
+        report_id = payload.get("reportId") or self._extract_report_id(request.mapref)
+        if not report_id:
+            raise SchedulerRepositoryError("Report ID missing in request payload")
+
+        service = ReportMetadataService()
+        try:
+            result = service.execute_report(
+                report_id=report_id,
+                payload=payload,
+                username=payload.get("requestedBy", "system"),
+                request_id=request.request_id,
+            )
+            return {"status": "SUCCESS", **result}
+        except ReportServiceError as exc:
+            raise SchedulerRepositoryError(exc.message) from exc
+
+    def _extract_report_id(self, mapref: Optional[str]) -> Optional[int]:
+        if not mapref:
+            return None
+        if mapref.upper().startswith("REPORT:"):
+            with suppress(Exception):
+                return int(mapref.split(":", 1)[1])
+        return None
 
     def _handle_stop_request(self, request: QueueRequest) -> Dict[str, Any]:
         """
@@ -608,7 +651,7 @@ class JobExecutionEngine:
             f"Stop request received for {request.mapref} (request_id={request.request_id})"
         )
         
-        # The stop request stays in DWPRCREQ with status 'CLAIMED' until the running job
+        # The stop request stays in DMS_PRCREQ with status 'CLAIMED' until the running job
         # acknowledges it and marks it as DONE. The generated job code polls for stop requests
         # and performs the actual cancellation.
         
@@ -621,58 +664,116 @@ class JobExecutionEngine:
     # DB helpers
     # ------------------------------------------------------------------ #
     def _load_job_flow(self, cursor, mapref: str) -> Optional[Dict[str, Any]]:
+        # Detect database type
+        from modules.common.db_table_utils import _detect_db_type
+        connection = cursor.connection
+        db_type = _detect_db_type(connection)
+        
         # Get schema from environment (default to no schema prefix if not set)
-        schema = os.getenv("SCHEMA", "").strip()
-        schema_prefix = f"{schema}." if schema else ""
+        schema = (os.getenv("DMS_SCHEMA", "")).strip()
+        
+        # Get table references for PostgreSQL (handles case sensitivity)
+        if db_type == "POSTGRESQL":
+            schema_lower = schema.lower() if schema else 'public'
+            dms_jobdtl_ref = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBDTL')
+            dms_maprsql_ref = get_postgresql_table_name(cursor, schema_lower, 'DMS_MAPRSQL')
+            dms_jobflw_ref = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBFLW')
+            dms_job_ref = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOB')
+            
+            # Quote if uppercase (was created with quotes)
+            dms_jobdtl_ref = f'"{dms_jobdtl_ref}"' if dms_jobdtl_ref != dms_jobdtl_ref.lower() else dms_jobdtl_ref
+            dms_maprsql_ref = f'"{dms_maprsql_ref}"' if dms_maprsql_ref != dms_maprsql_ref.lower() else dms_maprsql_ref
+            dms_jobflw_ref = f'"{dms_jobflw_ref}"' if dms_jobflw_ref != dms_jobflw_ref.lower() else dms_jobflw_ref
+            dms_job_ref = f'"{dms_job_ref}"' if dms_job_ref != dms_job_ref.lower() else dms_job_ref
+            
+            schema_prefix = f'{schema_lower}.' if schema else ''
+            dms_jobdtl_full = f'{schema_prefix}{dms_jobdtl_ref}'
+            dms_maprsql_full = f'{schema_prefix}{dms_maprsql_ref}'
+            dms_jobflw_full = f'{schema_prefix}{dms_jobflw_ref}'
+            dms_job_full = f'{schema_prefix}{dms_job_ref}'
+        else:
+            schema_prefix = f"{schema}." if schema else ""
+            dms_jobdtl_full = f"{schema_prefix}DMS_JOBDTL"
+            dms_maprsql_full = f"{schema_prefix}DMS_MAPRSQL"
+            dms_jobflw_full = f"{schema_prefix}DMS_JOBFLW"
+            dms_job_full = f"{schema_prefix}DMS_JOB"
         
         # Query matches PL/SQL logic: curflg = 'Y' AND stflg = 'A'
-        # Also get TRGCONID from DWJOB and SQLCONID from DWMAPRSQL to determine connections
-        # Use LEFT JOINs to get job flow even if DWJOB/DWMAPRSQL don't match conditions
-        query = f"""
-            SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
-                   (SELECT s.sqlconid 
-                    FROM {schema_prefix}DWJOBDTL jd
-                    LEFT JOIN {schema_prefix}DWMAPRSQL s ON s.dwmaprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
-                    WHERE jd.mapref = f.mapref AND jd.curflg = 'Y'
-                    FETCH FIRST 1 ROW ONLY) as sqlconid
-            FROM {schema_prefix}DWJOBFLW f
-            LEFT JOIN {schema_prefix}DWJOB j ON j.mapref = f.mapref AND j.curflg = 'Y' AND j.stflg = 'A'
-            WHERE f.mapref = :mapref
-              AND f.curflg = 'Y'
-              AND f.stflg = 'A'
-        """
-        
-        debug(f"Loading job flow for mapref={mapref} with query: {query}")
-        debug(f"Using schema prefix: '{schema_prefix}'")
-        
-        cursor.execute(query, {"mapref": mapref})
+        # Also get TRGCONID from DMS_JOB and SQLCONID FROM DMS_MAPRSQL to determine connections
+        # Use LEFT JOINs to get job flow even if DMS_JOB/MAPRSQL don't match conditions
+        if db_type == "POSTGRESQL":
+            query = f"""
+                SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
+                       (SELECT s.sqlconid 
+                        FROM {dms_jobdtl_full} jd
+                        LEFT JOIN {dms_maprsql_full} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
+                        WHERE jd.mapref = f.mapref AND jd.curflg = 'Y'
+                        LIMIT 1) as sqlconid
+                FROM {dms_jobflw_full} f
+                LEFT JOIN {dms_job_full} j ON j.mapref = f.mapref AND j.curflg = 'Y' AND j.stflg = 'A'
+                WHERE f.mapref = %s
+                  AND f.curflg = 'Y'
+                  AND f.stflg = 'A'
+            """
+            cursor.execute(query, (mapref,))
+        else:
+            query = f"""
+                SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
+                       (SELECT s.sqlconid 
+                        FROM {dms_jobdtl_full} jd
+                        LEFT JOIN {dms_maprsql_full} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
+                        WHERE jd.mapref = f.mapref AND jd.curflg = 'Y'
+                        FETCH FIRST 1 ROW ONLY) as sqlconid
+                FROM {dms_jobflw_full} f
+                LEFT JOIN {dms_job_full} j ON j.mapref = f.mapref AND j.curflg = 'Y' AND j.stflg = 'A'
+                WHERE f.mapref = :mapref
+                  AND f.curflg = 'Y'
+                  AND f.stflg = 'A'
+            """
+            cursor.execute(query, {"mapref": mapref})
         row = cursor.fetchone()
         
-        # Debug: Check if DWJOB record exists for this mapref
+        # Debug: Check if DMS_JOB record exists for this mapref
         if row:
-            debug(f"Found job flow record. Checking DWJOB for TRGCONID...")
-            check_dwjob_query = f"""
-                SELECT jobid, mapref, trgconid, curflg, stflg
-                FROM {schema_prefix}DWJOB
-                WHERE mapref = :mapref
-            """
-            cursor.execute(check_dwjob_query, {"mapref": mapref})
-            dwjob_rows = cursor.fetchall()
-            if dwjob_rows:
-                debug(f"Found {len(dwjob_rows)} DWJOB record(s) for mapref={mapref}:")
-                for dwjob_row in dwjob_rows:
-                    debug(f"  JOBID={dwjob_row[0]}, MAPREF={dwjob_row[1]}, TRGCONID={dwjob_row[2]}, CURFLG={dwjob_row[3]}, STFLG={dwjob_row[4]}")
+            debug(f"Found job flow record. Checking DMS_JOB for TRGCONID...")
+            if db_type == "POSTGRESQL":
+                check_dms_job_query = f"""
+                    SELECT jobid, mapref, trgconid, curflg, stflg
+                    FROM {dms_job_full}
+                    WHERE mapref = %s
+                """
+                cursor.execute(check_dms_job_query, (mapref,))
             else:
-                debug(f"No DWJOB records found for mapref={mapref}")
+                check_dms_job_query = f"""
+                    SELECT jobid, mapref, trgconid, curflg, stflg
+                    FROM {dms_job_full}
+                    WHERE mapref = :mapref
+                """
+                cursor.execute(check_dms_job_query, {"mapref": mapref})
+            dms_job_rows = cursor.fetchall()
+            if dms_job_rows:
+                debug(f"Found {len(dms_job_rows)} DMS_JOB record(s) for mapref={mapref}:")
+                for dms_job_row in dms_job_rows:
+                    debug(f"  JOBID={dms_job_row[0]}, MAPREF={dms_job_row[1]}, TRGCONID={dms_job_row[2]}, CURFLG={dms_job_row[3]}, STFLG={dms_job_row[4]}")
+            else:
+                debug(f"No DMS_JOB records found for mapref={mapref}")
         
         if not row:
             # Check if there are any records for this mapref (for debugging)
-            check_query = f"""
-                SELECT jobflwid, jobid, mapref, curflg, stflg
-                FROM {schema_prefix}DWJOBFLW
-                WHERE mapref = :mapref
-            """
-            cursor.execute(check_query, {"mapref": mapref})
+            if db_type == "POSTGRESQL":
+                check_query = f"""
+                    SELECT jobflwid, jobid, mapref, curflg, stflg
+                    FROM {dms_jobflw_full}
+                    WHERE mapref = %s
+                """
+                cursor.execute(check_query, (mapref,))
+            else:
+                check_query = f"""
+                    SELECT jobflwid, jobid, mapref, curflg, stflg
+                    FROM {dms_jobflw_full}
+                    WHERE mapref = :mapref
+                """
+                cursor.execute(check_query, {"mapref": mapref})
             all_rows = cursor.fetchall()
             
             if all_rows:
@@ -704,7 +805,47 @@ class JobExecutionEngine:
         return job_flow
 
     def _create_process_log(self, cursor, job_flow: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-        prcid = _generate_numeric_id(cursor, "DWPRCLOGSEQ")
+        # Detect database type
+        from modules.common.db_table_utils import _detect_db_type
+        connection = cursor.connection
+        db_type = _detect_db_type(connection)
+        schema = (os.getenv("DMS_SCHEMA", "")).strip()
+        
+        # Debug: Log database type detection
+        debug(f"[_create_process_log] Detected database type: {db_type}")
+        debug(f"[_create_process_log] Connection type: {type(connection).__name__}, module: {type(connection).__module__}")
+        debug(f"[_create_process_log] Schema: {schema}")
+        
+        # Verify database type by attempting a database-specific query
+        try:
+            test_cursor = connection.cursor()
+            if db_type == "POSTGRESQL":
+                test_cursor.execute("SELECT 1")
+            else:
+                test_cursor.execute("SELECT 1 FROM DUAL")
+            test_cursor.fetchone()
+            test_cursor.close()
+            debug(f"[_create_process_log] Database type verification successful: {db_type}")
+        except Exception as verify_e:
+            # If PostgreSQL query fails, try Oracle query to verify
+            try:
+                test_cursor = connection.cursor()
+                test_cursor.execute("SELECT 1 FROM DUAL")
+                test_cursor.fetchone()
+                test_cursor.close()
+                debug(f"[_create_process_log] Database type verification: Oracle query succeeded, switching to Oracle")
+                db_type = "ORACLE"
+            except Exception:
+                # If both fail, check environment variable
+                db_type_env = os.getenv("DB_TYPE", "ORACLE").upper()
+                if db_type_env == "POSTGRESQL":
+                    debug(f"[_create_process_log] Database type verification failed, using environment variable: POSTGRESQL")
+                    db_type = "POSTGRESQL"
+                else:
+                    debug(f"[_create_process_log] Database type verification failed, defaulting to Oracle")
+                    db_type = "ORACLE"
+        
+        prcid = _generate_numeric_id(cursor, "DMS_PRCLOGSEQ")
         # Ensure prcid is a valid integer
         if not isinstance(prcid, int):
             try:
@@ -734,19 +875,27 @@ class JobExecutionEngine:
             except (ValueError, TypeError):
                 raise ValueError(f"Cannot convert {type(value).__name__} '{value}' to integer")
         
-        # Get Oracle session ID (NUMBER type, not UUID string)
-        # DWPRCLOG.sessionid is NUMBER(30), matching PL/SQL: SYS_CONTEXT('USERENV','SESSIONID')
+        # Get session ID (NUMBER type, not UUID string)
+        # DMS_PRCLOG.sessionid is NUMBER(30), matching PL/SQL: SYS_CONTEXT('USERENV','SESSIONID')
         try:
-            cursor.execute("SELECT SYS_CONTEXT('USERENV','SESSIONID') FROM dual")
-            session_id_row = cursor.fetchone()
-            if session_id_row and session_id_row[0] is not None:
-                session_id = _to_int(session_id_row[0])
-            else:
-                # Fallback: use a numeric ID if Oracle session ID is not available
-                session_id = int(datetime.utcnow().timestamp() * 1000000) % (10**30)
+            if db_type == "POSTGRESQL":
+                # PostgreSQL: Use pg_backend_pid() or generate a numeric ID
+                cursor.execute("SELECT pg_backend_pid()")
+                session_id_row = cursor.fetchone()
+                if session_id_row and session_id_row[0] is not None:
+                    session_id = _to_int(session_id_row[0])
+                else:
+                    session_id = int(datetime.utcnow().timestamp() * 1000000) % (10**30)
+            else:  # Oracle
+                cursor.execute("SELECT SYS_CONTEXT('USERENV','SESSIONID') FROM dual")
+                session_id_row = cursor.fetchone()
+                if session_id_row and session_id_row[0] is not None:
+                    session_id = _to_int(session_id_row[0])
+                else:
+                    session_id = int(datetime.utcnow().timestamp() * 1000000) % (10**30)
             debug(f"Session ID: {session_id} (type: {type(session_id).__name__})")
         except Exception as e:
-            error(f"Failed to get Oracle session ID: {e}")
+            error(f"Failed to get session ID: {e}")
             # Fallback: use a numeric ID
             session_id = int(datetime.utcnow().timestamp() * 1000000) % (10**30)
             debug(f"Using fallback session ID: {session_id}")
@@ -793,95 +942,246 @@ class JobExecutionEngine:
             "param9": param_values[8],
             "param10": param_values[9],
         }
-        debug(f"Inserting into DWPRCLOG with values: {[(k, v, type(v).__name__) for k, v in insert_values.items()]}")
-
-        cursor.execute(
-            """
-            INSERT INTO DWPRCLOG (
-                prcid, jobid, jobflwid,
-                strtdt, status, reccrdt, recupdt,
-                prclog, mapref, sessionid,
-                param1, param2, param3, param4, param5,
-                param6, param7, param8, param9, param10
-            ) VALUES (
-                :prcid, :jobid, :jobflwid,
-                SYSTIMESTAMP, 'IP', SYSTIMESTAMP, SYSTIMESTAMP,
-                :prclog, :mapref, :sessionid,
-                :param1, :param2, :param3, :param4, :param5,
-                :param6, :param7, :param8, :param9, :param10
+        debug(f"Inserting into DMS_PRCLOG with values: {[(k, v, type(v).__name__) for k, v in insert_values.items()]}")
+        debug(f"[_create_process_log] About to execute INSERT - db_type={db_type}, schema={schema}")
+        
+        # Get table reference for PostgreSQL (handles case sensitivity)
+        if db_type == "POSTGRESQL":
+            debug(f"[_create_process_log] Using PostgreSQL INSERT syntax")
+            schema_lower = schema.lower() if schema else 'public'
+            dms_prclog_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_PRCLOG')
+            # Quote table name if it contains uppercase letters (was created with quotes)
+            dms_prclog_ref = f'"{dms_prclog_table}"' if dms_prclog_table != dms_prclog_table.lower() else dms_prclog_table
+            schema_prefix = f'{schema_lower}.' if schema else ''
+            dms_prclog_full = f'{schema_prefix}{dms_prclog_ref}'
+            
+            # PostgreSQL: Use %s for bind variables and CURRENT_TIMESTAMP
+            cursor.execute(
+                f"""
+                INSERT INTO {dms_prclog_full} (
+                    prcid, jobid, jobflwid,
+                    strtdt, status, reccrdt, recupdt,
+                    prclog, mapref, sessionid,
+                    param1, param2, param3, param4, param5,
+                    param6, param7, param8, param9, param10
+                ) VALUES (
+                    %s, %s, %s,
+                    CURRENT_TIMESTAMP, 'IP', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                    %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    insert_values["prcid"],
+                    insert_values["jobid"],
+                    insert_values["jobflwid"],
+                    insert_values["prclog"],
+                    insert_values["mapref"],
+                    insert_values["sessionid"],
+                    insert_values["param1"],
+                    insert_values["param2"],
+                    insert_values["param3"],
+                    insert_values["param4"],
+                    insert_values["param5"],
+                    insert_values["param6"],
+                    insert_values["param7"],
+                    insert_values["param8"],
+                    insert_values["param9"],
+                    insert_values["param10"],
+                ),
             )
-            """,
-            insert_values,
-        )
+        else:  # Oracle
+            debug(f"[_create_process_log] Using Oracle INSERT syntax (db_type={db_type})")
+            schema_prefix = f"{schema}." if schema else ""
+            # Oracle: Use :param for bind variables and SYSTIMESTAMP
+            cursor.execute(
+                f"""
+                INSERT INTO {schema_prefix}DMS_PRCLOG (
+                    prcid, jobid, jobflwid,
+                    strtdt, status, reccrdt, recupdt,
+                    prclog, mapref, sessionid,
+                    param1, param2, param3, param4, param5,
+                    param6, param7, param8, param9, param10
+                ) VALUES (
+                    :prcid, :jobid, :jobflwid,
+                    SYSTIMESTAMP, 'IP', SYSTIMESTAMP, SYSTIMESTAMP,
+                    :prclog, :mapref, :sessionid,
+                    :param1, :param2, :param3, :param4, :param5,
+                    :param6, :param7, :param8, :param9, :param10
+                )
+                """,
+                insert_values,
+            )
         return {"PRCID": prcid, "SESSIONID": session_id}
 
     def _finalize_success(self, cursor, job_flow, context, result):
-        cursor.execute(
-            """
-            UPDATE DWPRCLOG
-            SET enddt = SYSTIMESTAMP,
-                status = 'PC',
-                recupdt = SYSTIMESTAMP,
-                msg = NULL
-            WHERE prcid = :prcid
-            """,
-            {"prcid": context["PRCID"]},
-        )
-
-        cursor.execute(
-            "SELECT COUNT(1) FROM DWJOBLOG WHERE prcid = :prcid",
-            {"prcid": context["PRCID"]},
-        )
+        # Detect database type for table reference
+        from modules.common.db_table_utils import _detect_db_type
+        connection = cursor.connection
+        db_type = _detect_db_type(connection)
+        schema = (os.getenv("DMS_SCHEMA", "")).strip()
+        
+        # Get table references for PostgreSQL (handles case sensitivity)
+        if db_type == "POSTGRESQL":
+            schema_lower = schema.lower() if schema else 'public'
+            dms_prclog_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_PRCLOG')
+            dms_joblog_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBLOG')
+            # Quote table names if they contain uppercase letters (were created with quotes)
+            dms_prclog_ref = f'"{dms_prclog_table}"' if dms_prclog_table != dms_prclog_table.lower() else dms_prclog_table
+            dms_joblog_ref = f'"{dms_joblog_table}"' if dms_joblog_table != dms_joblog_table.lower() else dms_joblog_table
+            schema_prefix = f'{schema_lower}.' if schema else ''
+            dms_prclog_full = f'{schema_prefix}{dms_prclog_ref}'
+            dms_joblog_full = f'{schema_prefix}{dms_joblog_ref}'
+            
+            # PostgreSQL: Use %s for bind variables and CURRENT_TIMESTAMP
+            cursor.execute(
+                f"""
+                UPDATE {dms_prclog_full}
+                SET enddt = CURRENT_TIMESTAMP,
+                    status = 'PC',
+                    recupdt = CURRENT_TIMESTAMP,
+                    msg = NULL
+                WHERE prcid = %s
+                """,
+                (context["PRCID"],),
+            )
+            
+            cursor.execute(
+                f"SELECT COUNT(1) FROM {dms_joblog_full} WHERE prcid = %s",
+                (context["PRCID"],),
+            )
+        else:  # Oracle
+            schema_prefix = f"{schema}." if schema else ""
+            # Oracle: Use :param for bind variables and SYSTIMESTAMP
+            cursor.execute(
+                f"""
+                UPDATE {schema_prefix}DMS_PRCLOG
+                SET enddt = SYSTIMESTAMP,
+                    status = 'PC',
+                    recupdt = SYSTIMESTAMP,
+                    msg = NULL
+                WHERE prcid = :prcid
+                """,
+                {"prcid": context["PRCID"]},
+            )
+            
+            cursor.execute(
+                f"SELECT COUNT(1) FROM {schema_prefix}DMS_JOBLOG WHERE prcid = :prcid",
+                {"prcid": context["PRCID"]},
+            )
         existing_logs = cursor.fetchone()[0]
         if existing_logs:
             return
 
-        joblogid = _generate_numeric_id(cursor, "DWJOBLOGSEQ")
-        cursor.execute(
-            """
-            INSERT INTO DWJOBLOG (
-                joblogid, prcdt, mapref, jobid,
-                srcrows, trgrows, errrows,
-                reccrdt, prcid, sessionid
-            ) VALUES (
-                :joblogid, SYSTIMESTAMP, :mapref, :jobid,
-                :srcrows, :trgrows, :errrows,
-                SYSTIMESTAMP, :prcid, :sessionid
+        joblogid = _generate_numeric_id(cursor, "DMS_JOBLOGSEQ")
+        
+        if db_type == "POSTGRESQL":
+            # PostgreSQL: Use %s for bind variables and CURRENT_TIMESTAMP
+            cursor.execute(
+                f"""
+                INSERT INTO {dms_joblog_full} (
+                    joblogid, prcdt, mapref, jobid,
+                    srcrows, trgrows, errrows,
+                    reccrdt, prcid, sessionid
+                ) VALUES (
+                    %s, CURRENT_TIMESTAMP, %s, %s,
+                    %s, %s, %s,
+                    CURRENT_TIMESTAMP, %s, %s
+                )
+                """,
+                (
+                    joblogid,
+                    job_flow.get("MAPREF"),
+                    job_flow["JOBID"],
+                    result.get("source_rows"),
+                    result.get("target_rows"),
+                    result.get("error_rows"),
+                    context["PRCID"],
+                    context["SESSIONID"],
+                ),
             )
-            """,
-            {
-                "joblogid": joblogid,
-                "mapref": job_flow.get("MAPREF"),
-                "jobid": job_flow["JOBID"],
-                "srcrows": result.get("source_rows"),
-                "trgrows": result.get("target_rows"),
-                "errrows": result.get("error_rows"),
-                "prcid": context["PRCID"],
-                "sessionid": context["SESSIONID"],
-            },
-        )
+        else:  # Oracle
+            # Oracle: Use :param for bind variables and SYSTIMESTAMP
+            cursor.execute(
+                f"""
+                INSERT INTO {schema_prefix}DMS_JOBLOG (
+                    joblogid, prcdt, mapref, jobid,
+                    srcrows, trgrows, errrows,
+                    reccrdt, prcid, sessionid
+                ) VALUES (
+                    :joblogid, SYSTIMESTAMP, :mapref, :jobid,
+                    :srcrows, :trgrows, :errrows,
+                    SYSTIMESTAMP, :prcid, :sessionid
+                )
+                """,
+                {
+                    "joblogid": joblogid,
+                    "mapref": job_flow.get("MAPREF"),
+                    "jobid": job_flow["JOBID"],
+                    "srcrows": result.get("source_rows"),
+                    "trgrows": result.get("target_rows"),
+                    "errrows": result.get("error_rows"),
+                    "prcid": context["PRCID"],
+                    "sessionid": context["SESSIONID"],
+                },
+            )
 
     def _finalize_failure(self, cursor, context, message: str):
         if not context:
             return
-        cursor.execute(
-            """
-            UPDATE DWPRCLOG
-            SET enddt = SYSTIMESTAMP,
-                status = 'FL',
-                recupdt = SYSTIMESTAMP,
-                msg = :msg
-            WHERE prcid = :prcid
-            """,
-            {
-                "msg": message[:400] if message else None,
-                "prcid": context["PRCID"],
-            },
-        )
+        
+        # Detect database type for table reference
+        from modules.common.db_table_utils import _detect_db_type
+        connection = cursor.connection
+        db_type = _detect_db_type(connection)
+        schema = (os.getenv("DMS_SCHEMA", "")).strip()
+        
+        # Get table reference for PostgreSQL (handles case sensitivity)
+        if db_type == "POSTGRESQL":
+            schema_lower = schema.lower() if schema else 'public'
+            dms_prclog_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_PRCLOG')
+            # Quote table name if it contains uppercase letters (was created with quotes)
+            dms_prclog_ref = f'"{dms_prclog_table}"' if dms_prclog_table != dms_prclog_table.lower() else dms_prclog_table
+            schema_prefix = f'{schema_lower}.' if schema else ''
+            dms_prclog_full = f'{schema_prefix}{dms_prclog_ref}'
+            
+            # PostgreSQL: Use %s for bind variables and CURRENT_TIMESTAMP
+            cursor.execute(
+                f"""
+                UPDATE {dms_prclog_full}
+                SET enddt = CURRENT_TIMESTAMP,
+                    status = 'FL',
+                    recupdt = CURRENT_TIMESTAMP,
+                    msg = %s
+                WHERE prcid = %s
+                """,
+                (
+                    message[:400] if message else None,
+                    context["PRCID"],
+                ),
+            )
+        else:  # Oracle
+            schema_prefix = f"{schema}." if schema else ""
+            # Oracle: Use :param for bind variables and SYSTIMESTAMP
+            cursor.execute(
+                f"""
+                UPDATE {schema_prefix}DMS_PRCLOG
+                SET enddt = SYSTIMESTAMP,
+                    status = 'FL',
+                    recupdt = SYSTIMESTAMP,
+                    msg = :msg
+                WHERE prcid = :prcid
+                """,
+                {
+                    "msg": message[:400] if message else None,
+                    "prcid": context["PRCID"],
+                },
+            )
 
     @contextmanager
     def _db_connection(self):
-        connection = create_oracle_connection()
+        connection = create_metadata_connection()
         cursor = connection.cursor()
         try:
             yield connection, cursor

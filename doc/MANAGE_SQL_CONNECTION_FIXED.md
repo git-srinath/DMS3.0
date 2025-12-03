@@ -9,15 +9,15 @@ The issue was that **only the backend was updated** - the frontend UI was missin
 ## ✅ What's Complete Now
 
 ### 1. **Backend** ✅
-- `pkgdwmapr_python.py` - accepts and validates `connection_id`
+- `pkgdms_mapr_python.py` - accepts and validates `connection_id`
 - `manage_sql.py` - all endpoints updated:
   - `/fetch-sql-logic` - returns `connection_id`
   - `/save-sql` - accepts `connection_id`
   - `/get-connections` - NEW endpoint to fetch available connections
 
 ### 2. **Database** ✅
-- `SQLCONID` column added to `DWMAPRSQL` table
-- Foreign key constraint to `DWDBCONDTLS`
+- `SQLCONID` column added to `DMS_MAPRSQL` table
+- Foreign key constraint to `DMS_DBCONDTLS`
 
 ### 3. **Frontend** ✅ **JUST ADDED!**
 - Connection dropdown added to manage_sql UI
@@ -63,7 +63,7 @@ npm run dev
    - You should see the connection dropdown below the SQL Code selector
 
 2. **Check if connections load**
-   - The dropdown should show available connections from DWDBCONDTLS
+   - The dropdown should show available connections from DMS_DBCONDTLS
    - If empty, you need to register connections in "Register DB Connections" module
 
 3. **Create new SQL with connection**
@@ -92,11 +92,11 @@ npm run dev
 ```sql
 -- View SQL records with their connections
 SELECT 
-    s.DWMAPRSQLCD as SQL_CODE,
+    s.DMS_MAPRSQLCD as SQL_CODE,
     s.SQLCONID as CONNECTION_ID,
     c.CONNM as CONNECTION_NAME
-FROM DWMAPRSQL s
-LEFT JOIN DWDBCONDTLS c ON s.SQLCONID = c.CONID
+FROM DMS_MAPRSQL s
+LEFT JOIN DMS_DBCONDTLS c ON s.SQLCONID = c.CONID
 WHERE s.CURFLG = 'Y';
 ```
 
@@ -181,9 +181,9 @@ if (result.success) {
 
 ### Issue: Connection dropdown is empty
 **Solution:** 
-1. Check if connections exist in DWDBCONDTLS
+1. Check if connections exist in DMS_DBCONDTLS
 ```sql
-SELECT * FROM DWDBCONDTLS WHERE CURFLG = 'Y';
+SELECT * FROM DMS_DBCONDTLS WHERE CURFLG = 'Y';
 ```
 2. If empty, register connections in "Register DB Connections" module
 
@@ -194,7 +194,7 @@ SELECT * FROM DWDBCONDTLS WHERE CURFLG = 'Y';
 3. Verify SQLCONID column exists:
 ```sql
 SELECT column_name FROM user_tab_columns 
-WHERE table_name = 'DWMAPRSQL' AND column_name = 'SQLCONID';
+WHERE table_name = 'DMS_MAPRSQL' AND column_name = 'SQLCONID';
 ```
 
 ### Issue: Connection not showing after reload

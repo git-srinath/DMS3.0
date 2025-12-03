@@ -1,4 +1,4 @@
-# Bug Fix Summary - PKGDWMAPR Module
+# Bug Fix Summary - PKGDMS_MAPR Module
 
 **Date:** November 12, 2025  
 **Issue:** SQL creation/validation failing with incomplete error messages  
@@ -11,8 +11,8 @@
 When attempting to create or save SQL through the manage_sql module, the following error was logged:
 
 ```
-2025-11-12 14:42:37 : system : error : PKGDWMAPR Error: SqlCode=testsqlcd123
-2025-11-12 14:42:37 : system : error : PKGDWMAPR error in save_sql: SqlCode=testsqlcd123
+2025-11-12 14:42:37 : system : error : PKGDMS_MAPR Error: SqlCode=testsqlcd123
+2025-11-12 14:42:37 : system : error : PKGDMS_MAPR error in save_sql: SqlCode=testsqlcd123
 ```
 
 The error message was incomplete - showing only the parameter (`SqlCode=testsqlcd123`) but not the actual error message explaining what went wrong.
@@ -21,10 +21,10 @@ The error message was incomplete - showing only the parameter (`SqlCode=testsqlc
 
 ## Root Causes Identified
 
-### 1. **Incorrect Parameter Order in PKGDWMAPRError Constructor**
+### 1. **Incorrect Parameter Order in PKGDMS_MAPRError Constructor**
 
 **Problem:**
-The `PKGDWMAPRError` class constructor had only 4 parameters, but was being called with 4 arguments where the mapping was incorrect:
+The `PKGDMS_MAPRError` class constructor had only 4 parameters, but was being called with 4 arguments where the mapping was incorrect:
 
 ```python
 # Constructor signature (BEFORE)
@@ -33,8 +33,8 @@ def __init__(self, proc_name: str, error_code: str, params: str, message: str = 
 
 But called like:
 ```python
-raise PKGDWMAPRError(self.G_NAME, w_procnm, '134', w_parm)
-# Where: G_NAME='PKGDWMAPR', w_procnm='CREATE_UPDATE_SQL', '134'=error_code, w_parm=params
+raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '134', w_parm)
+# Where: G_NAME='PKGDMS_MAPR', w_procnm='CREATE_UPDATE_SQL', '134'=error_code, w_parm=params
 ```
 
 This caused misalignment:
@@ -54,7 +54,7 @@ When inserting records and using Oracle's `RETURNING INTO` clause, the code was 
 # BEFORE (INCORRECT)
 cursor.execute("""
     INSERT INTO ... 
-    RETURNING dwmaprsqlid INTO :ret_id
+    RETURNING dms_maprsqlid INTO :ret_id
 """, {
     'ret_id': cursor.var(oracledb.NUMBER)
 })
@@ -71,26 +71,26 @@ w_return = cursor.getvalue(cursor.bindvars[2])  # ❌ WRONG!
 
 ## Fixes Applied
 
-### Fix 1: Updated PKGDWMAPRError Constructor
+### Fix 1: Updated PKGDMS_MAPRError Constructor
 
-**File:** `pkgdwmapr.py`  
+**File:** `pkgdms_mapr.py`  
 **Lines:** 20-27
 
 **BEFORE:**
 ```python
-class PKGDWMAPRError(Exception):
+class PKGDMS_MAPRError(Exception):
     def __init__(self, proc_name: str, error_code: str, params: str, message: str = None):
         self.proc_name = proc_name
         self.error_code = error_code
         self.params = params
         self.message = message or f"Error in {proc_name}: {error_code} - {params}"
         super().__init__(self.message)
-        error(f"PKGDWMAPR Error: {self.message}")
+        error(f"PKGDMS_MAPR Error: {self.message}")
 ```
 
 **AFTER:**
 ```python
-class PKGDWMAPRError(Exception):
+class PKGDMS_MAPRError(Exception):
     def __init__(self, package_name: str, proc_name: str, error_code: str, params: str, message: str = None):
         self.package_name = package_name
         self.proc_name = proc_name
@@ -98,27 +98,27 @@ class PKGDWMAPRError(Exception):
         self.params = params
         self.message = message or f"Error in {package_name}.{proc_name} [{error_code}]: {params}"
         super().__init__(self.message)
-        error(f"PKGDWMAPR Error: {self.message}")
+        error(f"PKGDMS_MAPR Error: {self.message}")
 ```
 
 **Changes:**
 - ✅ Added `package_name` as first parameter
 - ✅ Proper parameter alignment
-- ✅ Better error message format: `Error in PKGDWMAPR.CREATE_UPDATE_SQL [134]: SqlCode=... The mapping SQL Code cannot be null.`
+- ✅ Better error message format: `Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [134]: SqlCode=... The mapping SQL Code cannot be null.`
 
 ### Fix 2: Corrected RETURNING Clause Handling (3 locations)
 
 #### Location 1: create_update_sql() method
-**File:** `pkgdwmapr.py`  
+**File:** `pkgdms_mapr.py`  
 **Lines:** 138-160
 
 **BEFORE:**
 ```python
 cursor.execute("""
-    INSERT INTO dwmaprsql ...
-    RETURNING dwmaprsqlid INTO :ret_id
+    INSERT INTO DMS_MAPRSQL ...
+    RETURNING dms_maprsqlid INTO :ret_id
 """, {
-    'sqlcd': p_dwmaprsqlcd,
+    'sqlcd': p_dms_maprsqlcd,
     'sql': clean_sql,
     'ret_id': cursor.var(oracledb.NUMBER)
 })
@@ -132,10 +132,10 @@ w_return = cursor.getvalue(cursor.bindvars[2])  # ❌ WRONG
 ret_id_var = cursor.var(oracledb.NUMBER)
 
 cursor.execute("""
-    INSERT INTO dwmaprsql ...
-    RETURNING dwmaprsqlid INTO :ret_id
+    INSERT INTO DMS_MAPRSQL ...
+    RETURNING dms_maprsqlid INTO :ret_id
 """, {
-    'sqlcd': p_dwmaprsqlcd,
+    'sqlcd': p_dms_maprsqlcd,
     'sql': clean_sql,
     'ret_id': ret_id_var
 })
@@ -145,13 +145,13 @@ w_return = ret_id_var.getvalue()  # ✅ CORRECT
 ```
 
 #### Location 2: create_update_mapping() method
-**File:** `pkgdwmapr.py`  
+**File:** `pkgdms_mapr.py`  
 **Lines:** 310-341
 
 Same pattern applied - create variable first, then retrieve value from it.
 
 #### Location 3: create_update_mapping_detail() method
-**File:** `pkgdwmapr.py`  
+**File:** `pkgdms_mapr.py`  
 **Lines:** 539-579
 
 Same pattern applied - create variable first, then retrieve value from it.
@@ -163,13 +163,13 @@ Added actual exception details to error messages for better debugging:
 **BEFORE:**
 ```python
 except Exception as e:
-    raise PKGDWMAPRError(self.G_NAME, w_procnm, '133', w_parm)
+    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '133', w_parm)
 ```
 
 **AFTER:**
 ```python
 except Exception as e:
-    raise PKGDWMAPRError(self.G_NAME, w_procnm, '133', f"{w_parm} - {str(e)}")
+    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '133', f"{w_parm} - {str(e)}")
 ```
 
 Now includes the actual exception message along with parameters.
@@ -180,13 +180,13 @@ Now includes the actual exception message along with parameters.
 
 ### 1. Linting Check
 ```bash
-pylint backend/modules/mapper/pkgdwmapr.py
+pylint backend/modules/mapper/pkgdms_mapr.py
 ```
 **Result:** ✅ 0 errors
 
 ### 2. Import Test
 ```python
-from modules.mapper.pkgdwmapr import PKGDWMAPR, PKGDWMAPRError
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR, PKGDMS_MAPRError
 # Should import without errors
 ```
 **Result:** ✅ Pass
@@ -197,13 +197,13 @@ from modules.mapper.pkgdwmapr import PKGDWMAPR, PKGDWMAPRError
 
 ### Before Fix:
 ```
-Error: PKGDWMAPR Error: SqlCode=testsqlcd123
+Error: PKGDMS_MAPR Error: SqlCode=testsqlcd123
 ```
 (No details about what's wrong)
 
 ### After Fix:
 ```
-Error: PKGDWMAPR Error: Error in PKGDWMAPR.CREATE_UPDATE_SQL [134]: SqlCode=testsqlcd123::The mapping SQL Code cannot be null.
+Error: PKGDMS_MAPR Error: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [134]: SqlCode=testsqlcd123::The mapping SQL Code cannot be null.
 ```
 (Clear error message with full context)
 
@@ -213,18 +213,18 @@ Error: PKGDWMAPR Error: Error in PKGDWMAPR.CREATE_UPDATE_SQL [134]: SqlCode=test
 
 ### Test Case 1: Create SQL with Empty Code
 ```python
-from modules.mapper.pkgdwmapr import PKGDWMAPR
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR
 import oracledb
 
 conn = oracledb.connect(...)
-pkg = PKGDWMAPR(conn, user='test_user')
+pkg = PKGDMS_MAPR(conn, user='test_user')
 
 try:
     # Try to create SQL with empty code
     sql_id = pkg.create_update_sql('', 'SELECT * FROM test')
 except Exception as e:
     print(e)
-    # Should print: Error in PKGDWMAPR.CREATE_UPDATE_SQL [134]: SqlCode=::The mapping SQL Code cannot be null.
+    # Should print: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [134]: SqlCode=::The mapping SQL Code cannot be null.
 ```
 
 ### Test Case 2: Create SQL with Space in Code
@@ -234,7 +234,7 @@ try:
     sql_id = pkg.create_update_sql('test sql', 'SELECT * FROM test')
 except Exception as e:
     print(e)
-    # Should print: Error in PKGDWMAPR.CREATE_UPDATE_SQL [134]: SqlCode=test sql::Space(s) not allowed to form mapping SQL Code.
+    # Should print: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [134]: SqlCode=test sql::Space(s) not allowed to form mapping SQL Code.
 ```
 
 ### Test Case 3: Create SQL with Empty Query
@@ -244,7 +244,7 @@ try:
     sql_id = pkg.create_update_sql('testsql', '')
 except Exception as e:
     print(e)
-    # Should print: Error in PKGDWMAPR.CREATE_UPDATE_SQL [134]: SqlCode=testsql::The SQL Query cannot be blank.
+    # Should print: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [134]: SqlCode=testsql::The SQL Query cannot be blank.
 ```
 
 ### Test Case 4: Valid SQL Creation
@@ -264,10 +264,10 @@ except Exception as e:
 
 | File | Changes |
 |------|---------|
-| `pkgdwmapr.py` | Fixed PKGDWMAPRError constructor (lines 20-27) |
-| `pkgdwmapr.py` | Fixed RETURNING in create_update_sql (lines 143-160) |
-| `pkgdwmapr.py` | Fixed RETURNING in create_update_mapping (lines 311-341) |
-| `pkgdwmapr.py` | Fixed RETURNING in create_update_mapping_detail (lines 543-579) |
+| `pkgdms_mapr.py` | Fixed PKGDMS_MAPRError constructor (lines 20-27) |
+| `pkgdms_mapr.py` | Fixed RETURNING in create_update_sql (lines 143-160) |
+| `pkgdms_mapr.py` | Fixed RETURNING in create_update_mapping (lines 311-341) |
+| `pkgdms_mapr.py` | Fixed RETURNING in create_update_mapping_detail (lines 543-579) |
 
 ---
 
@@ -293,7 +293,7 @@ except Exception as e:
 
 ## Verification Checklist
 
-- [x] Fixed PKGDWMAPRError constructor parameter order
+- [x] Fixed PKGDMS_MAPRError constructor parameter order
 - [x] Fixed RETURNING clause handling in create_update_sql
 - [x] Fixed RETURNING clause handling in create_update_mapping
 - [x] Fixed RETURNING clause handling in create_update_mapping_detail
@@ -306,7 +306,7 @@ except Exception as e:
 ## Deployment Notes
 
 ### Before Deployment:
-1. ✅ Back up current `pkgdwmapr.py`
+1. ✅ Back up current `pkgdms_mapr.py`
 2. ✅ Review all changes
 3. ✅ Test in development environment
 

@@ -4,9 +4,9 @@
 
 The scheduler service is a standalone Python process that runs independently from your Flask web application. It performs three main functions:
 
-1. **Schedule Synchronization**: Reads job schedules from `DWJOBSCH` and syncs them to APScheduler
-2. **Queue Polling**: Polls `DWPRCREQ` for immediate/history/stop requests and executes them
-3. **Job Execution**: Executes ETL job flows and logs results to `DWPRCLOG`/`DWJOBLOG`/`DWJOBERR`
+1. **Schedule Synchronization**: Reads job schedules from `DMS_JOBSCH` and syncs them to APScheduler
+2. **Queue Polling**: Polls `DMS_PRCREQ` for immediate/history/stop requests and executes them
+3. **Job Execution**: Executes ETL job flows and logs results to `DMS_PRCLOG`/`DMS_JOBLOG`/`DMS_JOBERR`
 
 ---
 
@@ -21,7 +21,7 @@ The scheduler service is a standalone Python process that runs independently fro
 
 ### 2. Database Setup
 - Oracle database connection configured
-- `DWPRCREQ` table created (run `doc/database_migration_add_scheduler_queue.sql`)
+- `DMS_PRCREQ` table created (run `doc/database_migration_add_scheduler_queue.sql`)
 - Environment variables configured (see below)
 
 ### 3. Environment Variables
@@ -37,7 +37,7 @@ DB_USER=your_username
 DB_PASSWORD=your_password
 
 # Schema Configuration
-SCHEMA=your_schema_name  # Schema containing DWJOBSCH, DWPRCREQ, etc.
+SCHEMA=your_schema_name  # Schema containing DMS_JOBSCH, DMS_PRCREQ, etc.
 
 # Optional: Scheduler Configuration (defaults shown)
 SCHEDULER_POLL_INTERVAL=15      # Seconds between queue polls
@@ -173,24 +173,24 @@ INFO: Polling queue for pending requests...
 
 ### Check Database
 
-Query `DWPRCREQ` to see if requests are being processed:
+Query `DMS_PRCREQ` to see if requests are being processed:
 
 ```sql
 SELECT request_id, mapref, request_type, status, 
        requested_at, claimed_at, completed_at
-FROM DWPRCREQ
+FROM DMS_PRCREQ
 ORDER BY requested_at DESC
 FETCH FIRST 10 ROWS ONLY;
 ```
 
 ### Check Active Schedules
 
-Query `DWJOBSCH` to see active schedules:
+Query `DMS_JOBSCH` to see active schedules:
 
 ```sql
 SELECT mapref, frqcd, frqdd, frqhh, frqmi, 
        strtdt, enddt, schflg
-FROM DWJOBSCH
+FROM DMS_JOBSCH
 WHERE curflg = 'Y' AND schflg = 'Y';
 ```
 
@@ -242,10 +242,10 @@ python -m modules.jobs.scheduler_service
 ### Issue: "No pending requests being processed"
 
 **Solution**:
-1. Verify `DWPRCREQ` table exists and has `status='NEW'` rows
+1. Verify `DMS_PRCREQ` table exists and has `status='NEW'` rows
 2. Check scheduler logs for errors
 3. Verify database connection is working
-4. Check that `DWJOBSCH` has active schedules (`curflg='Y'`)
+4. Check that `DMS_JOBSCH` has active schedules (`curflg='Y'`)
 
 ### Issue: "Scheduler stops unexpectedly"
 
@@ -258,7 +258,7 @@ python -m modules.jobs.scheduler_service
 ### Issue: "Jobs not executing on schedule"
 
 **Solution**:
-1. Verify `DWJOBSCH.schflg = 'Y'` for the schedule
+1. Verify `DMS_JOBSCH.schflg = 'Y'` for the schedule
 2. Check that `strtdt` is not in the future
 3. Verify `enddt` is not in the past (if set)
 4. Check scheduler logs for sync errors
@@ -297,10 +297,10 @@ taskkill /F /IM python.exe /FI "WINDOWTITLE eq scheduler*"
 
 ### Key Metrics to Monitor
 
-1. **Queue Depth**: Number of `status='NEW'` requests in `DWPRCREQ`
+1. **Queue Depth**: Number of `status='NEW'` requests in `DMS_PRCREQ`
 2. **Processing Rate**: Requests completed per minute
 3. **Error Rate**: Failed requests vs successful
-4. **Active Jobs**: Jobs currently executing (check `DWPRCLOG` with `status='IP'`)
+4. **Active Jobs**: Jobs currently executing (check `DMS_PRCLOG` with `status='IP'`)
 5. **Schedule Sync**: Frequency of schedule synchronization
 
 ### Sample Monitoring Queries
@@ -308,18 +308,18 @@ taskkill /F /IM python.exe /FI "WINDOWTITLE eq scheduler*"
 ```sql
 -- Queue depth
 SELECT COUNT(*) as pending_requests
-FROM DWPRCREQ
+FROM DMS_PRCREQ
 WHERE status = 'NEW';
 
 -- Recent activity
 SELECT request_type, status, COUNT(*) as count
-FROM DWPRCREQ
+FROM DMS_PRCREQ
 WHERE requested_at > SYSDATE - 1/24  -- Last hour
 GROUP BY request_type, status;
 
 -- Active jobs
 SELECT mapref, strtdt, status
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE status = 'IP'
 ORDER BY strtdt;
 ```
@@ -332,7 +332,7 @@ ORDER BY strtdt;
 2. **Monitor Logs**: Set up log rotation and monitoring
 3. **Resource Limits**: Adjust `max_workers` based on system capacity
 4. **Timezone**: Set timezone matching your business hours
-5. **Backup**: Ensure database backups include `DWPRCREQ`, `DWPRCLOG`, etc.
+5. **Backup**: Ensure database backups include `DMS_PRCREQ`, `DMS_PRCLOG`, etc.
 6. **High Availability**: Consider running multiple scheduler instances with proper coordination (future enhancement)
 
 ---
@@ -343,7 +343,7 @@ Once the scheduler is running:
 
 1. **Test Immediate Execution**: Use Flask API to queue an immediate job
 2. **Create Schedule**: Use Flask API to create a recurring schedule
-3. **Monitor Execution**: Check `DWPRCLOG` and `DWJOBLOG` for results
+3. **Monitor Execution**: Check `DMS_PRCLOG` and `DMS_JOBLOG` for results
 4. **Set Up Monitoring**: Configure alerts for failed jobs
 
 ---

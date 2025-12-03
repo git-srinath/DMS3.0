@@ -11,7 +11,7 @@
 
 ### Issue 1: DateTime Comparison Mismatch
 
-**Problem:** Line 329 in `pkgdwmapr.py` was comparing datetime objects incorrectly:
+**Problem:** Line 329 in `pkgdms_mapr.py` was comparing datetime objects incorrectly:
 ```python
 # WRONG:
 w_mapr_dict['LGVRFYDT'] != p_lgvrfydt
@@ -37,21 +37,21 @@ w_mapr_dict['LGVRFYDT'] != p_lgvrfydt
 **Problem:** Oracle table names were lowercase in SQL statements:
 ```python
 # WRONG:
-INSERT INTO {DWT_SCHEMA_PREFIX}dwmapr ...
-SELECT * FROM {DWT_SCHEMA_PREFIX}dwmaprdtl ...
+INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPR ...
+SELECT * FROM {DWT_SCHEMA_PREFIX}DMS_MAPRDTL ...
 ```
 
 **Why it failed:**
-- If Oracle tables were created with quoted identifiers (e.g., `CREATE TABLE "dwmapr"`), they become case-sensitive
+- If Oracle tables were created with quoted identifiers (e.g., `CREATE TABLE "DMS_MAPR"`), they become case-sensitive
 - Oracle's default is to convert unquoted identifiers to UPPERCASE
-- The user's database likely has tables as `DWMAPR`, `DWMAPRDTL`, etc. (uppercase)
-- SQL was looking for `dwmapr` (lowercase) which doesn't exist → `ORA-00942`
+- The user's database likely has tables as `DMS_MAPR`, `DMS_MAPRDTL`, etc. (uppercase)
+- SQL was looking for `DMS_MAPR` (lowercase) which doesn't exist → `ORA-00942`
 
 ## The Fixes
 
 ### Fix 1: DateTime Comparison Normalization
 
-**File:** `backend/modules/mapper/pkgdwmapr.py`  
+**File:** `backend/modules/mapper/pkgdms_mapr.py`  
 **Lines:** 320-341
 
 **Solution:**
@@ -86,30 +86,30 @@ if (...existing_lgvrfydt != new_lgvrfydt...):
 
 ### Fix 2: Table Names to Uppercase
 
-**File:** `backend/modules/mapper/pkgdwmapr.py`  
+**File:** `backend/modules/mapper/pkgdms_mapr.py`  
 **Changes:** Multiple locations throughout the file
 
 **Tables converted to uppercase:**
-- `dwmapr` → `DWMAPR`
-- `dwmaprdtl` → `DWMAPRDTL`
-- `dwmaprsql` → `DWMAPRSQL`
-- `dwmaperr` → `DWMAPERR`
-- `dwparams` → `DWPARAMS`
-- `dwjob` → `DWJOB`
-- `dwjobdtl` → `DWJOBDTL`
+- `DMS_MAPR` → `DMS_MAPR`
+- `DMS_MAPRDTL` → `DMS_MAPRDTL`
+- `DMS_MAPRSQL` → `DMS_MAPRSQL`
+- `DMS_MAPERR` → `DMS_MAPERR`
+- `DMS_PARAMS` → `DMS_PARAMS`
+- `DMS_JOB` → `DMS_JOB`
+- `DMS_JOBDTL` → `DMS_JOBDTL`
 - `allcdrs` → `ALLCDRS`
 
 **Example change:**
 ```python
 # BEFORE:
-INSERT INTO {DWT_SCHEMA_PREFIX}dwmapr (mapid, mapref, ...)
+INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPR (mapid, mapref, ...)
 
 # AFTER:
-INSERT INTO {DWT_SCHEMA_PREFIX}DWMAPR (mapid, mapref, ...)
+INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPR (mapid, mapref, ...)
 ```
 
 **Impact:**
-- ✅ Now references: `DWT.DWMAPR` instead of `DWT.dwmapr`
+- ✅ Now references: `DWT.DMS_MAPR` instead of `DWT.DMS_MAPR`
 - ✅ Matches Oracle's default uppercase table names
 - ✅ No more `ORA-00942` errors
 
@@ -128,13 +128,13 @@ After the update operation, verify in logs:
 ```
 CREATE_UPDATE_MAPPING: Comparing existing LGVRFYDT=2025-11-12 with new=2025-11-12
 CREATE_UPDATE_MAPPING: Changes detected for 'TEST_DIM', will create new version
-CREATE_UPDATE_MAPPING: Inserting into table 'DWT.DWMAPR'
-CREATE_UPDATE_MAPPING: Using sequence 'DWT.DWMAPRSEQ.nextval'
+CREATE_UPDATE_MAPPING: Inserting into table 'DWT.DMS_MAPR'
+CREATE_UPDATE_MAPPING: Using sequence 'DWT.DMS_MAPRSEQ.nextval'
 ```
 
 **Success indicators:**
 - ✅ DateTime comparison log shows dates being compared (not datetime objects)
-- ✅ Table name is uppercase: `DWT.DWMAPR`
+- ✅ Table name is uppercase: `DWT.DMS_MAPR`
 - ✅ No `ORA-00942` errors
 - ✅ Operation completes successfully
 
@@ -185,10 +185,10 @@ if new_dt is not None and hasattr(new_dt, 'date'):
 3. **Best Practice:** Always use UPPERCASE in SQL for consistency
    ```python
    # GOOD:
-   SELECT * FROM {SCHEMA_PREFIX}DWMAPR
+   SELECT * FROM {SCHEMA_PREFIX}DMS_MAPR
    
    # BAD:
-   SELECT * FROM {SCHEMA_PREFIX}dwmapr
+   SELECT * FROM {SCHEMA_PREFIX}DMS_MAPR
    ```
 
 ## Verification Query
@@ -203,13 +203,13 @@ WHERE owner = 'DWT'
 ORDER BY table_name;
 
 -- Result should show:
--- DWJOB
--- DWJOBDTL
--- DWMAPERR
--- DWMAPR
--- DWMAPRDTL
--- DWMAPRSQL
--- DWPARAMS
+-- DMS_JOB
+-- DMS_JOBDTL
+-- DMS_MAPERR
+-- DMS_MAPR
+-- DMS_MAPRDTL
+-- DMS_MAPRSQL
+-- DMS_PARAMS
 ```
 
 ## Related Documentation
@@ -227,7 +227,7 @@ ORDER BY table_name;
 3. ✅ Added logging for datetime comparison troubleshooting
 
 **Files Modified:**
-- `backend/modules/mapper/pkgdwmapr.py`
+- `backend/modules/mapper/pkgdms_mapr.py`
 
 **Testing Required:**
 - Restart application (critical!)

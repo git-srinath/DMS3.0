@@ -4,7 +4,7 @@
 
 ### 1. Core Architecture & Design
 - ✅ **Design Document**: `doc/SCHEDULER_SERVICE_DESIGN.md` - Comprehensive architecture documentation
-- ✅ **Database Migration**: `doc/database_migration_add_scheduler_queue.sql` - DWPRCREQ queue table created
+- ✅ **Database Migration**: `doc/database_migration_add_scheduler_queue.sql` - DMS_PRCREQ queue table created
 - ✅ **Requirements**: APScheduler added to `backend/requirements.txt`
 
 ### 2. Python Module Replacements
@@ -19,18 +19,18 @@
 
 ### 3. Scheduler Service (`scheduler_service.py`)
 - ✅ **APScheduler Integration**: Background scheduler running independently
-- ✅ **Schedule Synchronization**: Reads DWJOBSCH and syncs to APScheduler
-- ✅ **Queue Polling**: Polls DWPRCREQ for pending requests
+- ✅ **Schedule Synchronization**: Reads DMS_JOBSCH and syncs to APScheduler
+- ✅ **Queue Polling**: Polls DMS_PRCREQ for pending requests
 - ✅ **Frequency Mapping**: Converts FRQCD/FRQDD/FRQHH/FRQMI to APScheduler triggers
 - ✅ **Dependency Handling**: Automatically queues child jobs when parents complete
 - ✅ **Thread Pool**: Concurrent execution of multiple jobs
 - ✅ **Main Entry Point**: Can run as standalone process (`python -m modules.jobs.scheduler_service`)
 
 ### 4. Execution Engine (`execution_engine.py`)
-- ✅ **Job Flow Execution**: Loads DWJOBFLW.DWLOGIC and executes Python code
-- ✅ **Process Logging**: Creates DWPRCLOG entries (status: IP → PC/FL)
-- ✅ **Job Logging**: Creates DWJOBLOG entries with row counts
-- ✅ **Error Logging**: Creates DWJOBERR entries on failures
+- ✅ **Job Flow Execution**: Loads DMS_JOBFLW.DWLOGIC and executes Python code
+- ✅ **Process Logging**: Creates DMS_PRCLOG entries (status: IP → PC/FL)
+- ✅ **Job Logging**: Creates DMS_JOBLOG entries with row counts
+- ✅ **Error Logging**: Creates DMS_JOBERR entries on failures
 - ✅ **History Processing**: Loops through date ranges for historical loads
 - ✅ **Parameter Support**: Handles param1-param10 for job execution
 - ✅ **Checkpoint Compatibility**: Preserves all existing log fields for checkpoint strategy
@@ -59,7 +59,7 @@
 - **Needed**: 
   - Track running job threads/processes
   - Implement cancellation mechanism
-  - Update DWPRCLOG status to 'ST' (stopped)
+  - Update DMS_PRCLOG status to 'ST' (stopped)
   - Graceful shutdown of in-progress executions
 
 ### 2. Report Job Execution
@@ -112,13 +112,13 @@
 
 ### What Works Now
 1. ✅ Users can create/update job schedules via Flask API
-2. ✅ Schedules are stored in DWJOBSCH (same as before)
+2. ✅ Schedules are stored in DMS_JOBSCH (same as before)
 3. ✅ Scheduler service can run as standalone process
 4. ✅ Recurring jobs are automatically scheduled via APScheduler
 5. ✅ Immediate job requests are queued and executed
 6. ✅ History job requests are queued and executed (day-by-day loop)
 7. ✅ Parent jobs automatically trigger child jobs on completion
-8. ✅ All execution results are logged to DWPRCLOG/DWJOBLOG/DWJOBERR
+8. ✅ All execution results are logged to DMS_PRCLOG/DMS_JOBLOG/DMS_JOBERR
 9. ✅ Checkpoint strategy fields are preserved in logs
 
 ### What Needs Work

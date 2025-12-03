@@ -33,17 +33,17 @@ Your `app_user` needs these grants:
 
 ```sql
 -- On DWT Schema (Metadata)
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmapr TO app_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmaprdtl TO app_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmaprsql TO app_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.dwmaperr TO app_user;
-GRANT SELECT ON DWT.dwparams TO app_user;
-GRANT SELECT ON DWT.dwjob TO app_user;
-GRANT SELECT ON DWT.dwjobdtl TO app_user;
-GRANT SELECT ON DWT.DWMAPRSEQ TO app_user;
-GRANT SELECT ON DWT.DWMAPRDTLSEQ TO app_user;
-GRANT SELECT ON DWT.DWMAPRSQLSEQ TO app_user;
-GRANT SELECT ON DWT.DWMAPERRSEQ TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPR TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPRDTL TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPRSQL TO app_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON DWT.DMS_MAPERR TO app_user;
+GRANT SELECT ON DWT.DMS_PARAMS TO app_user;
+GRANT SELECT ON DWT.DMS_JOB TO app_user;
+GRANT SELECT ON DWT.DMS_JOBDTL TO app_user;
+GRANT SELECT ON DWT.DMS_MAPRSEQ TO app_user;
+GRANT SELECT ON DWT.DMS_MAPRDTLSEQ TO app_user;
+GRANT SELECT ON DWT.DMS_MAPRSQLSEQ TO app_user;
+GRANT SELECT ON DWT.DMS_MAPERRSEQ TO app_user;
 
 -- On CDR Schema (Data - for future use)
 GRANT CREATE TABLE TO app_user;
@@ -63,8 +63,8 @@ python app.py  # or your start command
 ### Check Logs
 You should see:
 ```
-PKGDWMAPR: DWT metadata schema prefix: 'DWT.'
-PKGDWMAPR: CDR data schema prefix: 'CDR.' (for future data operations)
+PKGDMS_MAPR: DWT metadata schema prefix: 'DWT.'
+PKGDMS_MAPR: CDR data schema prefix: 'CDR.' (for future data operations)
 ```
 
 ### Test Operations
@@ -75,7 +75,7 @@ It should now work without "table does not exist" errors!
 ## Files Changed
 
 ### Updated Files (5 total)
-1. `backend/modules/mapper/pkgdwmapr.py`
+1. `backend/modules/mapper/pkgdms_mapr.py`
 2. `backend/modules/helper_functions.py`
 3. `backend/modules/manage_sql/manage_sql.py`
 4. `backend/modules/jobs/jobs.py`
@@ -91,8 +91,8 @@ It should now work without "table does not exist" errors!
 ### Before (Single Schema with Synonyms)
 ```
 CDR Schema:
-├── CREATE SYNONYM dwmapr FOR DWT.dwmapr  ❌ Required
-├── CREATE SYNONYM dwmaprdtl FOR DWT.dwmaprdtl  ❌ Required
+├── CREATE SYNONYM DMS_MAPR FOR DWT.DMS_MAPR  ❌ Required
+├── CREATE SYNONYM DMS_MAPRDTL FOR DWT.DMS_MAPRDTL  ❌ Required
 └── ... many more synonyms needed
 
 Problems:
@@ -119,9 +119,9 @@ Benefits:
 
 ### Current Implementation (Metadata Only)
 All current operations use **DWT_SCHEMA** for metadata:
-- Creating/updating mappings → `DWT.dwmapr`
-- Managing SQL queries → `DWT.dwmaprsql`
-- Job management → `DWT.dwjob`
+- Creating/updating mappings → `DWT.DMS_MAPR`
+- Managing SQL queries → `DWT.DMS_MAPRSQL`
+- Job management → `DWT.DMS_JOB`
 
 ### Future Implementation (Data Loading)
 When implementing ETL, will use **CDR_SCHEMA** for data:
@@ -208,11 +208,11 @@ Application automatically uses it as `DWT_SCHEMA`.
 You can now remove all synonyms from CDR schema:
 ```sql
 -- No longer needed!
-DROP SYNONYM dwmapr;
-DROP SYNONYM dwmaprdtl;
-DROP SYNONYM dwmaprsql;
-DROP SYNONYM dwmaperr;
-DROP SYNONYM dwparams;
+DROP SYNONYM DMS_MAPR;
+DROP SYNONYM DMS_MAPRDTL;
+DROP SYNONYM DMS_MAPRSQL;
+DROP SYNONYM DMS_MAPERR;
+DROP SYNONYM DMS_PARAMS;
 -- etc...
 ```
 

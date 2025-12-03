@@ -11,8 +11,8 @@ Welcome to the DWTOOL documentation! This folder contains all technical document
 | Document | Description | When to Read |
 |----------|-------------|--------------|
 | **IMPLEMENTATION_SUMMARY.md** | ⭐ **Start here!** Complete overview of what was delivered | First thing to read |
-| **PKGDWJOB_QUICK_START.md** | 5-minute quick start guide | When you're ready to deploy |
-| **PKGDWJOB_PYTHON_IMPLEMENTATION.md** | Full technical documentation | For deep understanding |
+| **PKGDMS_JOB_QUICK_START.md** | 5-minute quick start guide | When you're ready to deploy |
+| **PKGDMS_JOB_PYTHON_IMPLEMENTATION.md** | Full technical documentation | For deep understanding |
 | **HASH_BASED_CHANGE_DETECTION.md** | Hash algorithm analysis and details | For algorithm understanding |
 
 ### Migration & Setup
@@ -26,8 +26,8 @@ Welcome to the DWTOOL documentation! This folder contains all technical document
 
 | Document | Description | Purpose |
 |----------|-------------|---------|
-| **PKGDWJOB_CONVERSION_OPTIONS.md** | Analysis of conversion approaches | Design decision reference |
-| **PKGDWJOB_OPTIONS_SUMMARY.txt** | Visual summary of options | Quick reference |
+| **PKGDMS_JOB_CONVERSION_OPTIONS.md** | Analysis of conversion approaches | Design decision reference |
+| **PKGDMS_JOB_OPTIONS_SUMMARY.txt** | Visual summary of options | Quick reference |
 
 ---
 
@@ -40,12 +40,12 @@ Welcome to the DWTOOL documentation! This folder contains all technical document
    - See the file structure
    - Review key features
 
-2. **Review:** `PKGDWJOB_QUICK_START.md` (5 minutes)
+2. **Review:** `PKGDMS_JOB_QUICK_START.md` (5 minutes)
    - Follow the quick setup steps
    - Run migration script
    - Test on sample mapping
 
-3. **Reference:** `PKGDWJOB_PYTHON_IMPLEMENTATION.md` (as needed)
+3. **Reference:** `PKGDMS_JOB_PYTHON_IMPLEMENTATION.md` (as needed)
    - Detailed API reference
    - Troubleshooting
    - Best practices
@@ -55,10 +55,10 @@ Welcome to the DWTOOL documentation! This folder contains all technical document
 ## 🎯 Quick Links by Task
 
 ### "I want to deploy this"
-→ Start with `PKGDWJOB_QUICK_START.md`
+→ Start with `PKGDMS_JOB_QUICK_START.md`
 
 ### "I want to understand how it works"
-→ Read `PKGDWJOB_PYTHON_IMPLEMENTATION.md`
+→ Read `PKGDMS_JOB_PYTHON_IMPLEMENTATION.md`
 
 ### "I want to know about the hash algorithm"
 → Read `HASH_BASED_CHANGE_DETECTION.md`
@@ -70,7 +70,7 @@ Welcome to the DWTOOL documentation! This folder contains all technical document
 → Read `IMPLEMENTATION_SUMMARY.md`
 
 ### "I want to understand why this approach was chosen"
-→ Read `PKGDWJOB_CONVERSION_OPTIONS.md`
+→ Read `PKGDMS_JOB_CONVERSION_OPTIONS.md`
 
 ---
 
@@ -78,8 +78,8 @@ Welcome to the DWTOOL documentation! This folder contains all technical document
 
 ```
 backend/modules/jobs/
-├── pkgdwjob_python.py              Main PKGDWJOB Python module
-└── pkgdwjob_create_job_flow.py     Dynamic code generator
+├── pkgdms_job_python.py              Main PKGDMS_JOB Python module
+└── pkgdms_job_create_job_flow.py     Dynamic code generator
 
 backend/modules/
 └── helper_functions.py              Updated to call Python version
@@ -103,7 +103,7 @@ Instead of comparing every column individually, the system:
 
 ### Dynamic Python Code Generation
 - Creates executable Python ETL jobs
-- Stores in DWJOBFLW.DWLOGIC (CLOB)
+- Stores in DMS_JOBFLW.DWLOGIC (CLOB)
 - Includes hash calculation and comparison logic
 - Supports SCD Type 1 and Type 2
 
@@ -116,9 +116,9 @@ START HERE
     ↓
 IMPLEMENTATION_SUMMARY.md
     ↓
-PKGDWJOB_QUICK_START.md
+PKGDMS_JOB_QUICK_START.md
     ↓
-PKGDWJOB_PYTHON_IMPLEMENTATION.md
+PKGDMS_JOB_PYTHON_IMPLEMENTATION.md
     ↓
 HASH_BASED_CHANGE_DETECTION.md
 ```
@@ -136,20 +136,20 @@ After reading the docs and deploying:
 
 2. **Verify job flows generated:**
    ```sql
-   SELECT mapref, recrdt FROM DWJOBFLW WHERE CURFLG = 'Y';
+   SELECT mapref, recrdt FROM DMS_JOBFLW WHERE CURFLG = 'Y';
    ```
 
 3. **Test hash generation:**
    ```python
-   from modules.jobs.pkgdwjob_python import generate_hash
+   from modules.jobs.pkgdms_job_python import generate_hash
    hash = generate_hash({'COL1': 'test', 'COL2': 123}, ['COL1', 'COL2'])
    print(hash)  # Should print 32-char hash
    ```
 
 4. **Run sample job:**
    ```python
-   from modules.jobs import pkgdwjob_python as pkgdwjob
-   job_id = pkgdwjob.create_update_job(connection, 'YOUR_MAPREF')
+   from modules.jobs import pkgdms_job_python as pkgdms_job
+   job_id = pkgdms_job.create_update_job(connection, 'YOUR_MAPREF')
    ```
 
 ---
@@ -160,10 +160,10 @@ After reading the docs and deploying:
 |-------|----------|
 | Can't find a file | Check this README's file list |
 | Don't know where to start | Read IMPLEMENTATION_SUMMARY.md |
-| Need step-by-step setup | Read PKGDWJOB_QUICK_START.md |
-| Want technical details | Read PKGDWJOB_PYTHON_IMPLEMENTATION.md |
+| Need step-by-step setup | Read PKGDMS_JOB_QUICK_START.md |
+| Want technical details | Read PKGDMS_JOB_PYTHON_IMPLEMENTATION.md |
 | Hash algorithm questions | Read HASH_BASED_CHANGE_DETECTION.md |
-| Deployment issues | Check troubleshooting in PKGDWJOB_PYTHON_IMPLEMENTATION.md |
+| Deployment issues | Check troubleshooting in PKGDMS_JOB_PYTHON_IMPLEMENTATION.md |
 
 ---
 
@@ -183,13 +183,13 @@ After deploying the hash-based system:
 
 ### Beginner Path (1 hour)
 1. IMPLEMENTATION_SUMMARY.md (15 min)
-2. PKGDWJOB_QUICK_START.md (15 min)
+2. PKGDMS_JOB_QUICK_START.md (15 min)
 3. Run migration script (10 min)
 4. Test sample mapping (20 min)
 
 ### Advanced Path (3 hours)
 1. IMPLEMENTATION_SUMMARY.md (15 min)
-2. PKGDWJOB_PYTHON_IMPLEMENTATION.md (60 min)
+2. PKGDMS_JOB_PYTHON_IMPLEMENTATION.md (60 min)
 3. HASH_BASED_CHANGE_DETECTION.md (45 min)
 4. Review Python code modules (60 min)
 

@@ -6,7 +6,7 @@ After fixing the CLOB comparison issue in `create_update_sql`, a comprehensive r
 ## Issues Found and Fixed
 
 ### 1. Issue in `create_update_mapping_detail` (Line 519)
-**Location:** `backend/modules/mapper/pkgdwmapr.py` - Method: `create_update_mapping_detail`
+**Location:** `backend/modules/mapper/pkgdms_mapr.py` - Method: `create_update_mapping_detail`
 
 **Problem:**
 ```python
@@ -36,11 +36,11 @@ if (... or
 ```
 
 ### 2. Issue in `validate_logic2` (Line 733)
-**Location:** `backend/modules/mapper/pkgdwmapr.py` - Method: `validate_logic2`
+**Location:** `backend/modules/mapper/pkgdms_mapr.py` - Method: `validate_logic2`
 
 **Problem:**
 ```python
-# Fetching SQL from dwmaprsql table
+# Fetching SQL from DMS_MAPRSQL table
 w_rec = cursor.fetchone()
 
 # Direct use without checking if it's a CLOB
@@ -69,7 +69,7 @@ else:
 ```
 
 ### 3. Issue in `validate_all_logic` (Line 803)
-**Location:** `backend/modules/mapper/pkgdwmapr.py` - Method: `validate_all_logic`
+**Location:** `backend/modules/mapper/pkgdms_mapr.py` - Method: `validate_all_logic`
 
 **Problem:**
 ```python
@@ -124,8 +124,8 @@ elif clob_value is not None:
 
 ## CLOB Columns in the Schema
 Based on the code review, the following columns are CLOBs and require this handling:
-- `dwmaprsql.dwmaprsql` - SQL query text
-- `dwmaprdtl.maplogic` - Mapping logic/SQL
+- `DMS_MAPRSQL.DMS_MAPRSQL` - SQL query text
+- `DMS_MAPRDTL.maplogic` - Mapping logic/SQL
 
 ## Testing Recommendations
 After these fixes, test the following scenarios:
@@ -145,7 +145,7 @@ After these fixes, test the following scenarios:
    - Update SQL with changes (already tested and working)
 
 ## Files Modified
-- `backend/modules/mapper/pkgdwmapr.py` - Fixed CLOB handling in 3 methods
+- `backend/modules/mapper/pkgdms_mapr.py` - Fixed CLOB handling in 3 methods
 
 ## Date
 November 12, 2025

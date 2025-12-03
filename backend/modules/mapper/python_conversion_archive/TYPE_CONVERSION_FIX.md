@@ -8,7 +8,7 @@
 **Log Evidence:**
 ```
 p_scdtyp: 2
-Error in PKGDWMAPR.CREATE_UPDATE_MAPPING_DETAIL [107]: Invalid values for SCD type.
+Error in PKGDMS_MAPR.CREATE_UPDATE_MAPPING_DETAIL [107]: Invalid values for SCD type.
 ```
 
 ## Root Cause
@@ -66,7 +66,7 @@ Added explicit type conversion at the beginning of functions to normalize string
 
 ### 1. Fixed `create_update_mapping_detail()` 
 
-**File:** `backend/modules/mapper/pkgdwmapr.py`  
+**File:** `backend/modules/mapper/pkgdms_mapr.py`  
 **Lines:** 470-494
 
 ```python
@@ -99,7 +99,7 @@ info(f"CREATE_UPDATE_MAPPING_DETAIL: p_scdtyp={p_scdtyp} (type: {type(p_scdtyp).
 
 ### 2. Fixed `create_update_mapping()`
 
-**File:** `backend/modules/mapper/pkgdwmapr.py`  
+**File:** `backend/modules/mapper/pkgdms_mapr.py`  
 **Lines:** 261-267
 
 ```python
@@ -253,7 +253,7 @@ This would automatically:
 **Impact:** All integer parameters now handle both string and integer inputs
 
 **Files Modified:**
-- `backend/modules/mapper/pkgdwmapr.py`
+- `backend/modules/mapper/pkgdms_mapr.py`
   - `create_update_mapping()` - Added `p_blkprcrows` conversion
   - `create_update_mapping_detail()` - Added `p_scdtyp`, `p_trgkeyseq`, `p_excseq` conversion
 

@@ -23,7 +23,7 @@ def test_schema_config():
     
     print(f"\n1. SCHEMA environment variable: {repr(schema)}")
     print(f"2. Schema prefix: {repr(schema_prefix)}")
-    print(f"3. Sequence reference: {schema_prefix}DWMAPRSEQ.nextval")
+    print(f"3. Sequence reference: {schema_prefix}DMS_MAPRSEQ.nextval")
     
     if not schema:
         print("\n⚠️  WARNING: SCHEMA environment variable is NOT set")
@@ -41,10 +41,10 @@ def test_sequence_access(conn, schema_prefix):
     print("="*80)
     
     sequences = [
-        f"{schema_prefix}DWMAPRSQLSEQ",
-        f"{schema_prefix}DWMAPRSEQ",
-        f"{schema_prefix}DWMAPRDTLSEQ",
-        f"{schema_prefix}DWMAPERRSEQ"
+        f"{schema_prefix}DMS_MAPRSQLSEQ",
+        f"{schema_prefix}DMS_MAPRSEQ",
+        f"{schema_prefix}DMS_MAPRDTLSEQ",
+        f"{schema_prefix}DMS_MAPERRSEQ"
     ]
     
     cursor = conn.cursor()
@@ -78,7 +78,7 @@ def test_table_access(conn):
     print("TABLE ACCESSIBILITY TEST")
     print("="*80)
     
-    tables = ['DWMAPRSQL', 'DWMAPR', 'DWMAPRDTL', 'DWMAPERR']
+    tables = ['MAPRSQL', 'DMS_MAPR', 'DMS_MAPRDTL', 'DMS_MAPERR']
     
     cursor = conn.cursor()
     
@@ -139,7 +139,7 @@ def check_sequence_ownership(conn, schema):
 def main():
     """Run all diagnostic tests"""
     print("\n" + "="*80)
-    print("PKGDWMAPR SEQUENCE DIAGNOSTIC TOOL")
+    print("PKGDMS_MAPR SEQUENCE DIAGNOSTIC TOOL")
     print("="*80)
     
     # Test 1: Schema configuration

@@ -1,27 +1,38 @@
 from flask import Blueprint, request, jsonify, send_file
-from database.dbconnect import create_oracle_connection
+from database.dbconnect import create_metadata_connection
 import os
 from modules.logger import info, error
 from modules.mapper import pkgdwmapr_python as pkgdwmapr
+import builtins
 
 
 # Get Oracle schema from environment
-ORACLE_SCHEMA = os.getenv("SCHEMA")
+ORACLE_SCHEMA = os.getenv("DMS_SCHEMA")
 
 # Create blueprint
 manage_sql_bp = Blueprint('manage-sql', __name__)
+
+def _detect_db_type(conn):
+    """Detect database type from connection"""
+    module_name = builtins.type(conn).__module__
+    if "psycopg" in module_name or "pg8000" in module_name:
+        return "POSTGRESQL"
+    elif "oracledb" in module_name or "cx_Oracle" in module_name:
+        return "ORACLE"
+    else:
+        return "ORACLE"  # Default fallback
 
 
 @manage_sql_bp.route('/fetch-all-sql-codes', methods=['GET'])
 def fetch_all_sql_codes():
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         
         try:
             cursor = conn.cursor()
             
             # Query to fetch all SQL codes
-            query = "SELECT DWMAPRSQLCD FROM DWMAPRSQL WHERE CURFLG = 'Y'"
+            query = "SELECT MAPRSQLCD FROM DMS_MAPRSQL WHERE CURFLG = 'Y'"
             cursor.execute(query)
             
             # Fetch all results
@@ -70,14 +81,19 @@ def fetch_sql_logic():
                 'message': 'SQL code parameter is required'
             }), 400
         
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
         
         try:
             cursor = conn.cursor()
             
             # Query to fetch SQL logic and connection ID for specific code
-            query = "SELECT DWMAPRSQL, SQLCONID FROM DWMAPRSQL WHERE DWMAPRSQLCD = :sql_code AND CURFLG = 'Y'"
-            cursor.execute(query, {'sql_code': sql_code})
+            if db_type == "POSTGRESQL":
+                query = "SELECT MAPRSQL, SQLCONID FROM DMS_MAPRSQL WHERE MAPRSQLCD = %s AND CURFLG = 'Y'"
+                cursor.execute(query, (sql_code,))
+            else:  # Oracle
+                query = "SELECT MAPRSQL, SQLCONID FROM DMS_MAPRSQL WHERE MAPRSQLCD = :sql_code AND CURFLG = 'Y'"
+                cursor.execute(query, {'sql_code': sql_code})
             
             # Fetch the result
             result = cursor.fetchone()
@@ -136,14 +152,19 @@ def fetch_sql_history():
                 'message': 'SQL code parameter is required'
             }), 400
         
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
         
         try:
             cursor = conn.cursor()
             
             # Query to fetch SQL logic for specific code
-            query = "SELECT RECCRDT,DWMAPRSQL FROM DWMAPRSQL WHERE DWMAPRSQLCD = :sql_code AND CURFLG = 'N'"
-            cursor.execute(query, {'sql_code': sql_code})
+            if db_type == "POSTGRESQL":
+                query = "SELECT RECCRDT,MAPRSQL FROM DMS_MAPRSQL WHERE MAPRSQLCD = %s AND CURFLG = 'N'"
+                cursor.execute(query, (sql_code,))
+            else:  # Oracle
+                query = "SELECT RECCRDT,MAPRSQL FROM DMS_MAPRSQL WHERE MAPRSQLCD = :sql_code AND CURFLG = 'N'"
+                cursor.execute(query, {'sql_code': sql_code})
             
             # Fetch all results - we want to get all historical versions
             results = cursor.fetchall()
@@ -231,18 +252,35 @@ def save_sql():
                 'message': 'Spaces are not allowed in SQL code'
             }), 400
         
-        # Create Oracle connection
-        conn = create_oracle_connection()
+        # Create metadata connection (PostgreSQL in current setup)
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
+        info(f"Saving SQL code: {sql_code}, connection_id: {connection_id}, db_type: {db_type}")
         
         try:
             # Call Python function with connection ID
+            info(f"Calling create_update_sql with code: {sql_code}")
             returned_sql_id = pkgdwmapr.create_update_sql(
                 conn, 
                 sql_code, 
                 sql_content,
                 connection_id  # Pass the source connection ID
             )
+            
+            info(f"create_update_sql returned ID: {returned_sql_id}")
+            
+            # Note: create_update_sql handles commits internally
+            # But we'll ensure commit here as well for safety
+            if db_type == "POSTGRESQL" and not getattr(conn, 'autocommit', False):
+                conn.commit()
+                info(f"Additional commit performed for PostgreSQL")
+            elif db_type == "ORACLE":
+                conn.commit()
+                info(f"Additional commit performed for Oracle")
+            else:
+                info(f"Autocommit enabled, no additional commit needed")
                         
+            info(f"SQL saved successfully - Code: {sql_code}, ID: {returned_sql_id}")
             return jsonify({
                 'success': True,
                 'message': 'SQL saved/updated successfully',
@@ -251,9 +289,20 @@ def save_sql():
             })
             
         except Exception as e:
-            conn.rollback()
+            # Rollback only if autocommit is disabled
+            if db_type == "POSTGRESQL" and not getattr(conn, 'autocommit', False):
+                try:
+                    conn.rollback()
+                except:
+                    pass
+            elif db_type == "ORACLE":
+                try:
+                    conn.rollback()
+                except:
+                    pass
+            
             error_message = str(e)
-            error(f"Database error in save_sql: {error_message}")
+            error(f"Database error in save_sql: {error_message}", exc_info=True)
             return jsonify({
                 'success': False,
                 'message': f'Database error: {error_message}'
@@ -300,7 +349,7 @@ def validate_sql():
                     'is_valid': False
                 }), 500
         else:
-            conn = create_oracle_connection()
+            conn = create_metadata_connection()
             connection_name = "metadata connection"
         
         try:
@@ -317,10 +366,12 @@ def validate_sql():
                     'validation_result': result
                 })
             else:
-                info(f"SQL validation failed on {connection_name}")
+                # result contains the error message if validation failed
+                error_msg = result if result != 'N' else 'SQL validation failed'
+                info(f"SQL validation failed on {connection_name}: {error_msg}")
                 return jsonify({
                     'success': False,
-                    'message': f'SQL validation failed on {connection_name}: {result}',
+                    'message': f'SQL validation failed on {connection_name}: {error_msg}',
                     'is_valid': False,
                     'validation_result': result
                 })
@@ -349,16 +400,16 @@ def validate_sql():
 @manage_sql_bp.route('/get-connections', methods=['GET'])
 def get_connections():
     """
-    Get list of active database connections from DWDBCONDTLS
+    Get list of active database connections from DMS_DBCONDTLS
     This allows manage_sql to query data from external/source databases
     """
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT conid, connm, dbhost, dbsrvnm
-                FROM DWDBCONDTLS
+                FROM DMS_DBCONDTLS
                 WHERE curflg = 'Y'
                 ORDER BY connm
             """)

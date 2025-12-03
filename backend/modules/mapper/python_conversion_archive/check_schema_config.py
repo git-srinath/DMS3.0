@@ -64,12 +64,12 @@ print("EXAMPLE SQL GENERATION")
 print("=" * 80)
 
 print(f"\nMetadata table reference:")
-print(f"  FROM {{DWT_SCHEMA_PREFIX}}dwmapr")
-print(f"  Becomes: FROM {DWT_SCHEMA_PREFIX}dwmapr")
+print(f"  FROM {{DWT_SCHEMA_PREFIX}}DMS_MAPR")
+print(f"  Becomes: FROM {DWT_SCHEMA_PREFIX}DMS_MAPR")
 
 print(f"\nSequence reference:")
-print(f"  {{DWT_SCHEMA_PREFIX}}DWMAPRSEQ.nextval")
-print(f"  Becomes: {DWT_SCHEMA_PREFIX}DWMAPRSEQ.nextval")
+print(f"  {{DWT_SCHEMA_PREFIX}}DMS_MAPRSEQ.nextval")
+print(f"  Becomes: {DWT_SCHEMA_PREFIX}DMS_MAPRSEQ.nextval")
 
 if not DWT_SCHEMA:
     print("\n" + "=" * 80)
@@ -103,9 +103,9 @@ try:
     # Test accessing DWT schema table
     cursor = conn.cursor()
     
-    print(f"\nTesting access to: {DWT_SCHEMA_PREFIX}dwmapr")
+    print(f"\nTesting access to: {DWT_SCHEMA_PREFIX}DMS_MAPR")
     try:
-        cursor.execute(f"SELECT COUNT(*) FROM {DWT_SCHEMA_PREFIX}dwmapr")
+        cursor.execute(f"SELECT COUNT(*) FROM {DWT_SCHEMA_PREFIX}DMS_MAPR")
         count = cursor.fetchone()[0]
         print(f"✓ Table accessible! Row count: {count}")
     except Exception as e:
@@ -118,9 +118,9 @@ try:
             print("  2. No permission to access the table")
             print("  3. Schema name is incorrect")
             print("\nVerify in Oracle:")
-            print(f"  SELECT * FROM all_tables WHERE table_name = 'DWMAPR';")
+            print(f"  SELECT * FROM all_tables WHERE table_name = 'DMS_MAPR';")
             if DWT_SCHEMA:
-                print(f"  GRANT SELECT ON {DWT_SCHEMA}.dwmapr TO <your_user>;")
+                print(f"  GRANT SELECT ON {DWT_SCHEMA}.DMS_MAPR TO <your_user>;")
     
     cursor.close()
     conn.close()

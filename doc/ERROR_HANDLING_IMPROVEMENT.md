@@ -2,10 +2,10 @@
 
 ## Issue
 
-The Python conversion of PKGDWMAPR was not showing actual database errors to users. When database errors occurred (like ORA-xxxxx errors), users only saw generic error messages like:
+The Python conversion of PKGDMS_MAPR was not showing actual database errors to users. When database errors occurred (like ORA-xxxxx errors), users only saw generic error messages like:
 
 ```
-Database error: PKGDWMAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123
+Database error: PKGDMS_MAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123
 ```
 
 **Problem:** The actual Oracle error message was being caught but not included in the error message displayed to the user.
@@ -26,7 +26,7 @@ def _raise_error(proc_name, error_code, param_info):
     """Raise an error with formatted message"""
     msg = f"{G_NAME}.{proc_name} - Error {error_code}: {param_info}"
     error(msg)
-    raise PKGDWMAPRError(msg)
+    raise PKGDMS_MAPRError(msg)
 ```
 
 **After:**
@@ -38,7 +38,7 @@ def _raise_error(proc_name, error_code, param_info, exception=None):
     else:
         msg = f"{G_NAME}.{proc_name} - Error {error_code}: {param_info}"
     error(msg)
-    raise PKGDWMAPRError(msg)
+    raise PKGDMS_MAPRError(msg)
 ```
 
 #### 2. Updated All Exception Handlers
@@ -69,12 +69,12 @@ Now when database errors occur, users will see the complete error message includ
 
 **Example Before:**
 ```
-Database error: PKGDWMAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123
+Database error: PKGDMS_MAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123
 ```
 
 **Example After:**
 ```
-Database error: PKGDWMAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123 - ORA-02289: sequence does not exist
+Database error: PKGDMS_MAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123 - ORA-02289: sequence does not exist
 ```
 
 ---
@@ -111,22 +111,22 @@ All error codes are preserved from the original PL/SQL package for consistency:
 
 ### Sequence Does Not Exist
 ```
-PKGDWMAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123 - ORA-02289: sequence does not exist
+PKGDMS_MAPR_PY.CREATE_UPDATE_SQL - Error 133: SqlCode=testsqlcd123 - ORA-02289: sequence does not exist
 ```
 
 ### Table or View Does Not Exist
 ```
-PKGDWMAPR_PY.CREATE_UPDATE_MAPPING - Error 102: Mapref=TEST_DIM-Test dimension table - ORA-00942: table or view does not exist
+PKGDMS_MAPR_PY.CREATE_UPDATE_MAPPING - Error 102: Mapref=TEST_DIM-Test dimension table - ORA-00942: table or view does not exist
 ```
 
 ### Invalid Host/Bind Variable
 ```
-PKGDWMAPR_PY.CREATE_UPDATE_MAPPING - Error 101: Mapref=TEST_DIM-Test dimension table mapid=42 - ORA-01745: invalid host/bind variable name
+PKGDMS_MAPR_PY.CREATE_UPDATE_MAPPING - Error 101: Mapref=TEST_DIM-Test dimension table mapid=42 - ORA-01745: invalid host/bind variable name
 ```
 
 ### Integrity Constraint Violation
 ```
-PKGDWMAPR_PY.DELETE_MAPPING - Error 121: Mapref=TEST_REF - ORA-02292: integrity constraint (SCHEMA.FK_NAME) violated - child record found
+PKGDMS_MAPR_PY.DELETE_MAPPING - Error 121: Mapref=TEST_REF - ORA-02292: integrity constraint (SCHEMA.FK_NAME) violated - child record found
 ```
 
 ---
@@ -151,7 +151,7 @@ To test the improved error handling:
 
 ## Files Modified
 
-- `backend/modules/mapper/pkgdwmapr_python.py` - All exception handlers updated
+- `backend/modules/mapper/pkgdms_mapr_python.py` - All exception handlers updated
 
 ---
 
@@ -159,5 +159,5 @@ To test the improved error handling:
 
 - The error format maintains backward compatibility with the PL/SQL error codes
 - All errors are still logged using the logger module
-- The PKGDWMAPRError exception is still raised, just with more detailed messages
+- The PKGDMS_MAPRError exception is still raised, just with more detailed messages
 

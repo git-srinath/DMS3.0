@@ -10,7 +10,7 @@
 │  Purpose: Define WHERE data should be WRITTEN              │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │ DWMAPR Table                                         │  │
+│  │ DMS_MAPR Table                                         │  │
 │  │                                                      │  │
 │  │  MAPREF: "MAP_001"                                  │  │
 │  │  MAPDESC: "Customer Mapping"                        │  │
@@ -22,7 +22,7 @@
 │                                │                            │
 │                                ▼                            │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │ DWDBCONDTLS Table                                  │    │
+│  │ DMS_DBCONDTLS Table                                  │    │
 │  │                                                    │    │
 │  │  CONID: 2                                         │    │
 │  │  CONNM: "PROD_DATABASE"                           │    │
@@ -42,17 +42,17 @@
 │  Purpose: Define WHERE data should be READ FROM            │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │ DWMAPRSQL Table                                      │  │
+│  │ DMS_MAPRSQL Table                                      │  │
 │  │                                                      │  │
-│  │  DWMAPRSQLCD: "SQL_001"                             │  │
-│  │  DWMAPRSQL: "SELECT * FROM source_table"            │  │
+│  │  DMS_MAPRSQLCD: "SQL_001"                             │  │
+│  │  DMS_MAPRSQL: "SELECT * FROM source_table"            │  │
 │  │  SQLCONID: 1  ────────────┐                         │  │
 │  │                            │                         │  │
 │  └────────────────────────────┼─────────────────────────┘  │
 │                                │                            │
 │                                ▼                            │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │ DWDBCONDTLS Table (Same table, shared!)           │    │
+│  │ DMS_DBCONDTLS Table (Same table, shared!)           │    │
 │  │                                                    │    │
 │  │  CONID: 1                                         │    │
 │  │  CONNM: "SOURCE_DATABASE"                         │    │
@@ -79,7 +79,7 @@ Step 1: SOURCE DATA (Manage SQL)
 ────────────────────────────────
    ┌──────────────────┐
    │  SOURCE DB       │
-   │  (Connection 1)  │ ◄────── SQLCONID in DWMAPRSQL
+   │  (Connection 1)  │ ◄────── SQLCONID in DMS_MAPRSQL
    │                  │         (Manage SQL Module)
    │  ┌────────────┐  │
    │  │ EMP Table  │  │
@@ -114,7 +114,7 @@ Step 3: TARGET DATA (Mapper)
 ────────────────────────────────
    ┌──────────────────┐
    │  TARGET DB       │
-   │  (Connection 2)  │ ◄────── TRGCONID in DWMAPR
+   │  (Connection 2)  │ ◄────── TRGCONID in DMS_MAPR
    │                  │         (Mapper Module)
    │  ┌────────────┐  │
    │  │ CUSTOMERS  │  │
@@ -130,12 +130,12 @@ Step 3: TARGET DATA (Mapper)
 | Aspect                    | Mapper Module           | Manage SQL Module       |
 |---------------------------|-------------------------|-------------------------|
 | **Column Name**           | `TRGCONID`             | `SQLCONID`              |
-| **Table**                 | `DWMAPR`               | `DWMAPRSQL`             |
+| **Table**                 | `DMS_MAPR`               | `DMS_MAPRSQL`             |
 | **Purpose**               | Target (WHERE to write)| Source (WHERE to read)  |
 | **Direction**             | ➡️ Output              | ⬅️ Input                |
-| **Connection Table**      | `DWDBCONDTLS`          | `DWDBCONDTLS` (shared!) |
+| **Connection Table**      | `DMS_DBCONDTLS`          | `DMS_DBCONDTLS` (shared!) |
 | **Nullable**              | YES (default metadata) | YES (default metadata)  |
-| **Foreign Key**           | ✅ FK_DWMAPR_TRGCONID  | ✅ FK_DWMAPRSQL_SQLCONID|
+| **Foreign Key**           | ✅ FK_DMS_MAPR_TRGCONID  | ✅ FK_DMS_MAPRSQL_SQLCONID|
 | **API Endpoint**          | `/mapper/get-connections` | `/manage-sql/get-connections` |
 | **Save Endpoint**         | `/mapper/save-to-db`   | `/manage-sql/save-sql`  |
 | **Fetch Endpoint**        | `/mapper/get-by-reference` | `/manage-sql/fetch-sql-logic` |
@@ -151,8 +151,8 @@ Step 3: TARGET DATA (Mapper)
 
 #### 1. Define Source Connection (Manage SQL)
 ```sql
--- In DWDBCONDTLS
-INSERT INTO DWDBCONDTLS VALUES (
+-- In DMS_DBCONDTLS
+INSERT INTO DMS_DBCONDTLS VALUES (
   1,                           -- CONID
   'ORACLE_SOURCE',             -- CONNM
   'oracle-server',             -- DBHOST
@@ -165,16 +165,16 @@ INSERT INTO DWDBCONDTLS VALUES (
 );
 
 -- Create SQL Query with source connection
--- DWMAPRSQL record:
-DWMAPRSQLCD: "GET_ORACLE_CUSTOMERS"
-DWMAPRSQL: "SELECT customer_id, customer_name, email FROM oracle_customers"
+-- DMS_MAPRSQL record:
+DMS_MAPRSQLCD: "GET_ORACLE_CUSTOMERS"
+DMS_MAPRSQL: "SELECT customer_id, customer_name, email FROM oracle_customers"
 SQLCONID: 1  ◄── Points to ORACLE_SOURCE
 ```
 
 #### 2. Define Target Connection (Mapper)
 ```sql
--- In DWDBCONDTLS (same table!)
-INSERT INTO DWDBCONDTLS VALUES (
+-- In DMS_DBCONDTLS (same table!)
+INSERT INTO DMS_DBCONDTLS VALUES (
   2,                           -- CONID
   'POSTGRES_TARGET',           -- CONNM
   'postgres-server',           -- DBHOST
@@ -187,7 +187,7 @@ INSERT INTO DWDBCONDTLS VALUES (
 );
 
 -- Create Mapping with target connection
--- DWMAPR record:
+-- DMS_MAPR record:
 MAPREF: "MAP_CUSTOMERS"
 TRGSCHM: "public"
 TRGTBNM: "customers"
@@ -212,9 +212,9 @@ TRGCONID: 2  ◄── Points to POSTGRES_TARGET
 
 ### Mapper Module
 ```python
-# 1. Get target connection ID from DWMAPR
+# 1. Get target connection ID from DMS_MAPR
 cursor.execute("""
-    SELECT trgconid FROM DWMAPR 
+    SELECT trgconid FROM DMS_MAPR 
     WHERE mapref = :1 AND curflg = 'Y'
 """, [mapref])
 
@@ -231,10 +231,10 @@ cursor.execute("INSERT INTO target_table VALUES (...)")
 
 ### Manage SQL Module
 ```python
-# 1. Get source connection ID from DWMAPRSQL
+# 1. Get source connection ID from DMS_MAPRSQL
 cursor.execute("""
-    SELECT dwmaprsql, sqlconid FROM DWMAPRSQL 
-    WHERE dwmaprsqlcd = :1 AND curflg = 'Y'
+    SELECT DMS_MAPRSQL, sqlconid FROM DMS_MAPRSQL 
+    WHERE dms_maprsqlcd = :1 AND curflg = 'Y'
 """, [sql_code])
 
 # 2. If connection ID exists, create source connection
@@ -251,7 +251,7 @@ data = cursor.fetchall()
 
 ---
 
-## Connection Registry (DWDBCONDTLS)
+## Connection Registry (DMS_DBCONDTLS)
 
 This single table serves **BOTH** modules:
 
@@ -262,9 +262,9 @@ SELECT
     DBHOST || ':' || DBPORT || '/' || DBSRVNM as DSN,
     CURFLG,
     -- Used by which modules?
-    (SELECT COUNT(*) FROM DWMAPR WHERE TRGCONID = CONID AND CURFLG='Y') as MAPPER_USAGE,
-    (SELECT COUNT(*) FROM DWMAPRSQL WHERE SQLCONID = CONID AND CURFLG='Y') as SQL_USAGE
-FROM DWDBCONDTLS
+    (SELECT COUNT(*) FROM DMS_MAPR WHERE TRGCONID = CONID AND CURFLG='Y') as MAPPER_USAGE,
+    (SELECT COUNT(*) FROM DMS_MAPRSQL WHERE SQLCONID = CONID AND CURFLG='Y') as SQL_USAGE
+FROM DMS_DBCONDTLS
 WHERE CURFLG = 'Y'
 ORDER BY CONNM;
 ```
@@ -287,7 +287,7 @@ CONID  CONNM              DSN                    CURFLG  MAPPER_USAGE  SQL_USAGE
 - **Mapper**: Deals with TARGET databases (output)
 
 ### 2. **Shared Infrastructure**
-- Both use same `DWDBCONDTLS` table
+- Both use same `DMS_DBCONDTLS` table
 - Both use same `create_target_connection()` function
 - Consistent API patterns
 
@@ -319,14 +319,14 @@ Scenario C: Multiple sources, one target
 ### Phase 1: Database (REQUIRED)
 ```sql
 -- Mapper already has this:
-ALTER TABLE DWMAPR ADD (TRGCONID NUMBER);
-ALTER TABLE DWMAPR ADD CONSTRAINT FK_DWMAPR_TRGCONID 
-    FOREIGN KEY (TRGCONID) REFERENCES DWDBCONDTLS(CONID);
+ALTER TABLE DMS_MAPR ADD (TRGCONID NUMBER);
+ALTER TABLE DMS_MAPR ADD CONSTRAINT FK_DMS_MAPR_TRGCONID 
+    FOREIGN KEY (TRGCONID) REFERENCES DMS_DBCONDTLS(CONID);
 
 -- Manage SQL needs this (NEW):
-ALTER TABLE DWMAPRSQL ADD (SQLCONID NUMBER);
-ALTER TABLE DWMAPRSQL ADD CONSTRAINT FK_DWMAPRSQL_SQLCONID 
-    FOREIGN KEY (SQLCONID) REFERENCES DWDBCONDTLS(CONID);
+ALTER TABLE DMS_MAPRSQL ADD (SQLCONID NUMBER);
+ALTER TABLE DMS_MAPRSQL ADD CONSTRAINT FK_DMS_MAPRSQL_SQLCONID 
+    FOREIGN KEY (SQLCONID) REFERENCES DMS_DBCONDTLS(CONID);
 ```
 
 ### Phase 2: Backend (COMPLETE) ✅
@@ -370,9 +370,9 @@ Manage SQL Module:
 
 ### Database Columns
 ```
-DWMAPR.TRGCONID      ───┐
-                        ├──► DWDBCONDTLS.CONID
-DWMAPRSQL.SQLCONID   ───┘
+DMS_MAPR.TRGCONID      ───┐
+                        ├──► DMS_DBCONDTLS.CONID
+DMS_MAPRSQL.SQLCONID   ───┘
 ```
 
 ---

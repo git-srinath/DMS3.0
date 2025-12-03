@@ -1,7 +1,7 @@
 """
-Example usage of PKGDWMAPR Python module
+Example usage of PKGDMS_MAPR Python module
 
-This file demonstrates how to use the PKGDWMAPR module to:
+This file demonstrates how to use the PKGDMS_MAPR module to:
 1. Create SQL mappings
 2. Create and manage mappings
 3. Add mapping details
@@ -16,9 +16,9 @@ import os
 import sys
 import oracledb
 from datetime import datetime
-from modules.mapper.pkgdwmapr import (
-    PKGDWMAPR,
-    PKGDWMAPRError,
+from modules.mapper.pkgdms_mapr import (
+    PKGDMS_MAPR,
+    PKGDMS_MAPRError,
     create_update_mapping_with_user,
     create_update_mapping_detail_with_user,
     validate_mapping_details_with_user,
@@ -40,8 +40,8 @@ def example_1_basic_usage():
     )
     
     try:
-        # Initialize PKGDWMAPR
-        pkg = PKGDWMAPR(connection, user='example_user')
+        # Initialize PKGDMS_MAPR
+        pkg = PKGDMS_MAPR(connection, user='example_user')
         
         # 1. Create a mapping
         print("\n1. Creating mapping...")
@@ -123,8 +123,8 @@ def example_1_basic_usage():
         connection.commit()
         print("\n✓ All changes committed successfully!")
         
-    except PKGDWMAPRError as e:
-        print(f"\n✗ PKGDWMAPR Error:")
+    except PKGDMS_MAPRError as e:
+        print(f"\n✗ PKGDMS_MAPR Error:")
         print(f"  Procedure: {e.proc_name}")
         print(f"  Error Code: {e.error_code}")
         print(f"  Parameters: {e.params}")
@@ -151,7 +151,7 @@ def example_2_sql_mapping():
     )
     
     try:
-        pkg = PKGDWMAPR(connection, user='example_user')
+        pkg = PKGDMS_MAPR(connection, user='example_user')
         
         # 1. Create reusable SQL query
         print("\n1. Creating reusable SQL query...")
@@ -210,7 +210,7 @@ def example_2_sql_mapping():
         connection.commit()
         print("\n✓ SQL mapping example completed successfully!")
         
-    except PKGDWMAPRError as e:
+    except PKGDMS_MAPRError as e:
         print(f"\n✗ Error: {e.message}")
         connection.rollback()
     except Exception as e:
@@ -233,7 +233,7 @@ def example_3_validation():
     )
     
     try:
-        pkg = PKGDWMAPR(connection, user='example_user')
+        pkg = PKGDMS_MAPR(connection, user='example_user')
         
         # 1. Validate SQL syntax
         print("\n1. Validating SQL syntax...")
@@ -273,7 +273,7 @@ def example_3_validation():
         
         connection.commit()
         
-    except PKGDWMAPRError as e:
+    except PKGDMS_MAPRError as e:
         print(f"\n✗ Error: {e.message}")
         connection.rollback()
     except Exception as e:
@@ -296,7 +296,7 @@ def example_4_activation():
     )
     
     try:
-        pkg = PKGDWMAPR(connection, user='example_user')
+        pkg = PKGDMS_MAPR(connection, user='example_user')
         
         # 1. Activate mapping (automatically validates first)
         print("\n1. Activating mapping...")
@@ -318,7 +318,7 @@ def example_4_activation():
         
         connection.commit()
         
-    except PKGDWMAPRError as e:
+    except PKGDMS_MAPRError as e:
         print(f"\n✗ Error: {e.message}")
         connection.rollback()
     except Exception as e:
@@ -341,7 +341,7 @@ def example_5_deletion():
     )
     
     try:
-        pkg = PKGDWMAPR(connection, user='example_user')
+        pkg = PKGDMS_MAPR(connection, user='example_user')
         
         # 1. Delete a specific mapping detail
         print("\n1. Deleting mapping detail...")
@@ -363,7 +363,7 @@ def example_5_deletion():
         
         connection.commit()
         
-    except PKGDWMAPRError as e:
+    except PKGDMS_MAPRError as e:
         print(f"\n✗ Error: {e.message}")
         connection.rollback()
     except Exception as e:
@@ -444,7 +444,7 @@ def example_6_convenience_functions():
     except ValueError as e:
         print(f"\n✗ Error: {str(e)}")
         connection.rollback()
-    except PKGDWMAPRError as e:
+    except PKGDMS_MAPRError as e:
         print(f"\n✗ Error: {e.message}")
         connection.rollback()
     except Exception as e:
@@ -457,7 +457,7 @@ def example_6_convenience_functions():
 def main():
     """Run all examples"""
     print("\n" + "=" * 80)
-    print("PKGDWMAPR Python Module - Usage Examples")
+    print("PKGDMS_MAPR Python Module - Usage Examples")
     print("=" * 80)
     print("\nNote: These examples require a valid Oracle database connection.")
     print("Set environment variables: DB_USER, DB_PASSWORD, DB_DSN")

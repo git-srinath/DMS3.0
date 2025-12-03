@@ -1,13 +1,13 @@
 ╔══════════════════════════════════════════════════════════════════════╗
-║           PKGDWJOB CONVERSION - OPTIONS SUMMARY                      ║
+║           PKGDMS_JOB CONVERSION - OPTIONS SUMMARY                      ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 CURRENT SITUATION:
 ──────────────────────────────────────────────────────────────────────
-PKGDWJOB.CREATE_JOB_FLOW generates dynamic PL/SQL blocks:
-  1. Reads DWMAPR + DWMAPRDTL tables
+PKGDMS_JOB.CREATE_JOB_FLOW generates dynamic PL/SQL blocks:
+  1. Reads DMS_MAPR + DMS_MAPRDTL tables
   2. Generates PL/SQL code dynamically
-  3. Stores in DWJOBFLW.DWLOGIC (CLOB)
+  3. Stores in DMS_JOBFLW.DWLOGIC (CLOB)
   4. Executes PL/SQL block for ETL
 
 ═══════════════════════════════════════════════════════════════════════
@@ -17,7 +17,7 @@ OPTION 1: PYTHON CODE IN CLOB ⭐ RECOMMENDED
 Store Python code as string in DWLOGIC, execute with exec()
 
 ┌─────────────────────────────────────────────────────────────────┐
-│ DWJOBFLW.DWLOGIC (CLOB)                                         │
+│ DMS_JOBFLW.DWLOGIC (CLOB)                                         │
 │ ┌─────────────────────────────────────────────────────────────┐ │
 │ │ def execute_job(connection, params):                        │ │
 │ │     cursor = connection.cursor()                            │ │
@@ -54,7 +54,7 @@ Generate Python files, store path in DWLOGIC
          │ Path stored in DWLOGIC
          │
 ┌─────────────────────────────────────────────────────────────────┐
-│ DWJOBFLW.DWLOGIC = "generated_jobs/MAP_001_job.py"             │
+│ DMS_JOBFLW.DWLOGIC = "generated_jobs/MAP_001_job.py"             │
 └─────────────────────────────────────────────────────────────────┘
 
 ✅ PROS:                          ❌ CONS:
@@ -72,7 +72,7 @@ OPTION 3: TEMPLATE-BASED (Store JSON config in CLOB)
 Store JSON configuration, execute with ETL engine
 
 ┌─────────────────────────────────────────────────────────────────┐
-│ DWJOBFLW.DWLOGIC (CLOB)                                         │
+│ DMS_JOBFLW.DWLOGIC (CLOB)                                         │
 │ ┌─────────────────────────────────────────────────────────────┐ │
 │ │ {                                                           │ │
 │ │   "mapref": "MAP_001",                                      │ │
@@ -110,7 +110,7 @@ Read mapping on-the-fly, execute directly
 ┌─────────────────────────────────────────────────────────────────┐
 │ class JobDefinition:                                            │
 │     def execute(self, connection, mapref):                      │
-│         # Read DWMAPR/DWMAPRDTL                                 │
+│         # Read DMS_MAPR/DMS_MAPRDTL                                 │
 │         mapping = get_mapping_details(connection, mapref)       │
 │         # Execute based on current mapping                      │
 │         for detail in mapping['details']:                       │
@@ -187,8 +187,8 @@ This allows:
 NEXT STEPS:
 ──────────────────────────────────────────────────────────────────────
 1. Choose your preferred option
-2. Share PKGDWJOB_bdy.sql (if available) for analysis
-3. Create pkgdwjob_python.py module
+2. Share PKGDMS_JOB_bdy.sql (if available) for analysis
+3. Create pkgdms_job_python.py module
 4. Implement code generator
 5. Test with existing mappings
 6. Update UI to show generated code
@@ -198,7 +198,7 @@ NEXT STEPS:
 QUESTIONS FOR YOU:
 ──────────────────────────────────────────────────────────────────────
 1. Which option do you prefer?
-2. Do you have the PL/SQL source (PKGDWJOB_bdy.sql)?
+2. Do you have the PL/SQL source (PKGDMS_JOB_bdy.sql)?
 3. Do you need backward compatibility with existing PL/SQL jobs?
 4. How complex are your transformations?
 5. What's your security policy on dynamic code execution?

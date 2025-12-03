@@ -60,7 +60,7 @@ const CHECKPOINT_STRATEGIES = [
 
 ### **Backend Changes**
 
-#### **1. Updated `pkgdwmapr_python.py` - `create_update_mapping()`**
+#### **1. Updated `pkgdms_mapr_python.py` - `create_update_mapping()`**
 
 **Function Signature:**
 ```python
@@ -102,7 +102,7 @@ query = """
     MAPID, MAPREF, MAPDESC, TRGSCHM, TRGTBTYP, 
     TRGTBNM, FRQCD, SRCSYSTM, STFLG, BLKPRCROWS, LGVRFYFLG, TRGCONID,
     CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD
-    FROM DWMAPR WHERE MAPREF = :1  AND  CURFLG = 'Y'
+    FROM DMS_MAPR WHERE MAPREF = :1  AND  CURFLG = 'Y'
 """
 ```
 
@@ -154,7 +154,7 @@ Row 2 (Checkpoint Configuration - Blue Background):
    ```
 3. Backend extracts checkpoint values
 4. Calls `create_update_mapping()` with checkpoint params
-5. Saves to `DWMAPR` table:
+5. Saves to `DMS_MAPR` table:
    - `CHKPNTSTRTGY` = 'KEY'
    - `CHKPNTCLNM` = 'TRANSACTION_ID'
    - `CHKPNTENBLD` = 'Y'
@@ -162,14 +162,14 @@ Row 2 (Checkpoint Configuration - Blue Background):
 ### **Load Flow:**
 1. User searches for mapping reference
 2. Frontend calls `/mapper/get-by-reference/{reference}`
-3. Backend fetches from `DWMAPR` including checkpoint columns
+3. Backend fetches from `DMS_MAPR` including checkpoint columns
 4. Returns checkpoint values in response
 5. Frontend populates checkpoint UI fields
 
 ### **Job Creation Flow:**
 1. User clicks "Create Job" button
-2. Checkpoint values from `DWMAPR` are copied to `DWJOB`
-3. `create_update_job()` (in `pkgdwjob_python.py`) reads checkpoint config
+2. Checkpoint values from `DMS_MAPR` are copied to `DMS_JOB`
+3. `create_update_job()` (in `pkgdms_job_python.py`) reads checkpoint config
 4. Generated Python code includes checkpoint logic
 5. Job is ready with checkpoint/restart capability
 
@@ -205,7 +205,7 @@ Row 2 (Checkpoint Configuration - Blue Background):
 5. **Verify in Database:**
    ```sql
    SELECT MAPREF, CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD
-   FROM DWMAPR
+   FROM DMS_MAPR
    WHERE MAPREF = 'TEST_CHECKPOINT_01'
      AND CURFLG = 'Y';
    ```
@@ -236,7 +236,7 @@ Row 2 (Checkpoint Configuration - Blue Background):
 5. **Verify in Database:**
    ```sql
    SELECT MAPREF, CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD
-   FROM DWMAPR
+   FROM DMS_MAPR
    WHERE MAPREF = 'TEST_CHECKPOINT_01'
      AND CURFLG = 'Y';
    ```
@@ -257,7 +257,7 @@ Row 2 (Checkpoint Configuration - Blue Background):
 5. **Verify:**
    ```sql
    SELECT CHKPNTSTRTGY, CHKPNTENBLD
-   FROM DWMAPR
+   FROM DMS_MAPR
    WHERE MAPREF = 'TEST_CHECKPOINT_01'
      AND CURFLG = 'Y';
    ```
@@ -283,7 +283,7 @@ Row 2 (Checkpoint Configuration - Blue Background):
 4. **Verify Job Has Checkpoint Config:**
    ```sql
    SELECT MAPREF, CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD
-   FROM DWJOB
+   FROM DMS_JOB
    WHERE MAPREF = 'TEST_CHECKPOINT_01'
      AND CURFLG = 'Y';
    ```
@@ -291,7 +291,7 @@ Row 2 (Checkpoint Configuration - Blue Background):
 5. **View Generated Python Code:**
    ```sql
    SELECT DWLOGIC
-   FROM DWJOBFLW
+   FROM DMS_JOBFLW
    WHERE MAPREF = 'TEST_CHECKPOINT_01'
      AND CURFLG = 'Y';
    ```
@@ -390,9 +390,9 @@ Enabled: ✅
 |-----------|--------|-------|
 | **Frontend UI** | ✅ Complete | Second row with 3 controls |
 | **Frontend State** | ✅ Complete | FormData includes checkpoint fields |
-| **Backend Save** | ✅ Complete | Saves to DWMAPR table |
+| **Backend Save** | ✅ Complete | Saves to DMS_MAPR table |
 | **Backend Fetch** | ✅ Complete | Returns checkpoint values |
-| **Job Creation** | ✅ Complete | Copies config to DWJOB |
+| **Job Creation** | ✅ Complete | Copies config to DMS_JOB |
 | **Data Flow** | ✅ Complete | End-to-end working |
 | **Validation** | ✅ Complete | Frontend + Backend |
 | **Documentation** | ✅ Complete | All guides created |

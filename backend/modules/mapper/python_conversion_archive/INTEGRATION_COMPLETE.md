@@ -1,8 +1,8 @@
-# PKGDWMAPR Python Integration - Complete ✅
+# PKGDMS_MAPR Python Integration - Complete ✅
 
 ## Integration Summary
 
-All PL/SQL PKGDWMAPR package calls have been successfully replaced with the Python `pkgdwmapr.py` module.
+All PL/SQL PKGDMS_MAPR package calls have been successfully replaced with the Python `pkgdms_mapr.py` module.
 
 **Date Completed:** November 12, 2025
 
@@ -13,8 +13,8 @@ All PL/SQL PKGDWMAPR package calls have been successfully replaced with the Pyth
 ### 1. `backend/modules/helper_functions.py`
 
 **Changes Made:**
-- ✅ Added import: `from modules.mapper.pkgdwmapr import PKGDWMAPR, PKGDWMAPRError`
-- ✅ Replaced 8 functions that called PL/SQL PKGDWMAPR
+- ✅ Added import: `from modules.mapper.pkgdms_mapr import PKGDMS_MAPR, PKGDMS_MAPRError`
+- ✅ Replaced 8 functions that called PL/SQL PKGDMS_MAPR
 
 | Function Name | Status | Line |
 |--------------|--------|------|
@@ -28,13 +28,13 @@ All PL/SQL PKGDWMAPR package calls have been successfully replaced with the Pyth
 | `call_delete_mapping_details()` | ✅ Replaced | 458-481 |
 
 **Before:** Functions used PL/SQL cursor.execute() with BEGIN...END blocks
-**After:** Functions use Python PKGDWMAPR class methods directly
+**After:** Functions use Python PKGDMS_MAPR class methods directly
 
 ### 2. `backend/modules/manage_sql/manage_sql.py`
 
 **Changes Made:**
-- ✅ Added import: `from modules.mapper.pkgdwmapr import PKGDWMAPR, PKGDWMAPRError`
-- ✅ Replaced 2 functions that called PL/SQL PKGDWMAPR
+- ✅ Added import: `from modules.mapper.pkgdms_mapr import PKGDMS_MAPR, PKGDMS_MAPRError`
+- ✅ Replaced 2 functions that called PL/SQL PKGDMS_MAPR
 
 | Function Name | Status | Line |
 |--------------|--------|------|
@@ -42,7 +42,7 @@ All PL/SQL PKGDWMAPR package calls have been successfully replaced with the Pyth
 | `validate_sql()` | ✅ Replaced | 288-337 |
 
 **Before:** Functions used PL/SQL cursor.execute() with BEGIN...END blocks
-**After:** Functions use Python PKGDWMAPR class methods directly
+**After:** Functions use Python PKGDMS_MAPR class methods directly
 
 ---
 
@@ -54,7 +54,7 @@ All PL/SQL PKGDWMAPR package calls have been successfully replaced with the Pyth
 - **Reduction:** ~60-70% less code per function
 
 ### 2. **Better Error Handling**
-- Custom `PKGDWMAPRError` exception class
+- Custom `PKGDMS_MAPRError` exception class
 - Detailed error messages with context
 - Proper exception propagation
 - Automatic logging
@@ -95,7 +95,7 @@ def create_update_mapping(connection, p_mapref, ...):
         
         sql = f"""
         BEGIN
-            :result := {ORACLE_SCHEMA}.PKGDWMAPR.CREATE_UPDATE_MAPPING(
+            :result := {ORACLE_SCHEMA}.PKGDMS_MAPR.CREATE_UPDATE_MAPPING(
                 p_mapref => :p_mapref,
                 p_mapdesc => :p_mapdesc,
                 ...
@@ -119,7 +119,7 @@ def create_update_mapping(connection, p_mapref, ...):
 ```python
 def create_update_mapping(connection, p_mapref, ...):
     try:
-        pkg = PKGDWMAPR(connection, user=user_id)
+        pkg = PKGDMS_MAPR(connection, user=user_id)
         
         mapid = pkg.create_update_mapping(
             p_mapref=p_mapref,
@@ -129,7 +129,7 @@ def create_update_mapping(connection, p_mapref, ...):
         
         return mapid
         
-    except PKGDWMAPRError as e:
+    except PKGDMS_MAPRError as e:
         error(f"Error: {e.message}")
         raise
 ```
@@ -170,16 +170,16 @@ Before deploying to production, please test:
 
 | Original PL/SQL Call | New Python Method |
 |---------------------|-------------------|
-| `PKGDWMAPR.CREATE_UPDATE_SQL(...)` | `pkg.create_update_sql(...)` |
-| `PKGDWMAPR.CREATE_UPDATE_MAPPING(...)` | `pkg.create_update_mapping(...)` |
-| `PKGDWMAPR.CREATE_UPDATE_MAPPING_DETAIL(...)` | `pkg.create_update_mapping_detail(...)` |
-| `PKGDWMAPR.VALIDATE_SQL(...)` | `pkg.validate_sql(...)` |
-| `PKGDWMAPR.VALIDATE_LOGIC(...)` | `pkg.validate_logic(...)` |
-| `PKGDWMAPR.VALIDATE_LOGIC2(...)` | `pkg.validate_logic2(...)` |
-| `PKGDWMAPR.VALIDATE_MAPPING_DETAILS(...)` | `pkg.validate_mapping_details(...)` |
-| `PKGDWMAPR.ACTIVATE_DEACTIVATE_MAPPING(...)` | `pkg.activate_deactivate_mapping(...)` |
-| `PKGDWMAPR.DELETE_MAPPING(...)` | `pkg.delete_mapping(...)` |
-| `PKGDWMAPR.DELETE_MAPPING_DETAILS(...)` | `pkg.delete_mapping_details(...)` |
+| `PKGDMS_MAPR.CREATE_UPDATE_SQL(...)` | `pkg.create_update_sql(...)` |
+| `PKGDMS_MAPR.CREATE_UPDATE_MAPPING(...)` | `pkg.create_update_mapping(...)` |
+| `PKGDMS_MAPR.CREATE_UPDATE_MAPPING_DETAIL(...)` | `pkg.create_update_mapping_detail(...)` |
+| `PKGDMS_MAPR.VALIDATE_SQL(...)` | `pkg.validate_sql(...)` |
+| `PKGDMS_MAPR.VALIDATE_LOGIC(...)` | `pkg.validate_logic(...)` |
+| `PKGDMS_MAPR.VALIDATE_LOGIC2(...)` | `pkg.validate_logic2(...)` |
+| `PKGDMS_MAPR.VALIDATE_MAPPING_DETAILS(...)` | `pkg.validate_mapping_details(...)` |
+| `PKGDMS_MAPR.ACTIVATE_DEACTIVATE_MAPPING(...)` | `pkg.activate_deactivate_mapping(...)` |
+| `PKGDMS_MAPR.DELETE_MAPPING(...)` | `pkg.delete_mapping(...)` |
+| `PKGDMS_MAPR.DELETE_MAPPING_DETAILS(...)` | `pkg.delete_mapping_details(...)` |
 
 ---
 
@@ -188,14 +188,14 @@ Before deploying to production, please test:
 ### 1. Check Imports
 ```bash
 # Verify imports are correct
-grep -n "from modules.mapper.pkgdwmapr import" backend/modules/helper_functions.py
-grep -n "from modules.mapper.pkgdwmapr import" backend/modules/manage_sql/manage_sql.py
+grep -n "from modules.mapper.pkgdms_mapr import" backend/modules/helper_functions.py
+grep -n "from modules.mapper.pkgdms_mapr import" backend/modules/manage_sql/manage_sql.py
 ```
 
 ### 2. Verify No PL/SQL Calls Remain
 ```bash
 # Should return no results
-grep -r "BEGIN.*PKGDWMAPR" backend/*.py
+grep -r "BEGIN.*PKGDMS_MAPR" backend/*.py
 ```
 
 ### 3. Check Linting
@@ -217,12 +217,12 @@ If issues are found, you can temporarily rollback by:
 
 Example flag-based approach:
 ```python
-USE_PYTHON_PKGDWMAPR = os.getenv('USE_PYTHON_PKGDWMAPR', 'true').lower() == 'true'
+USE_PYTHON_PKGDMS_MAPR = os.getenv('USE_PYTHON_PKGDMS_MAPR', 'true').lower() == 'true'
 
 def create_update_mapping(connection, ...):
-    if USE_PYTHON_PKGDWMAPR:
+    if USE_PYTHON_PKGDMS_MAPR:
         # Use Python implementation
-        pkg = PKGDWMAPR(connection, user=user_id)
+        pkg = PKGDMS_MAPR(connection, user=user_id)
         return pkg.create_update_mapping(...)
     else:
         # Use PL/SQL implementation (old code)
@@ -255,16 +255,16 @@ After deployment, monitor:
 ## Support
 
 For issues or questions:
-- **Documentation:** See `PKGDWMAPR_README.md`
-- **Examples:** See `pkgdwmapr_example.py`
+- **Documentation:** See `PKGDMS_MAPR_README.md`
+- **Examples:** See `pkgdms_mapr_example.py`
 - **Migration Guide:** See `PLSQL_TO_PYTHON_MAPPING.md`
-- **Source Code:** See `pkgdwmapr.py`
+- **Source Code:** See `pkgdms_mapr.py`
 
 ---
 
 ## Summary
 
-✅ **All PL/SQL PKGDWMAPR calls replaced with Python implementation**
+✅ **All PL/SQL PKGDMS_MAPR calls replaced with Python implementation**
 ✅ **10 functions updated across 2 files**
 ✅ **Zero linting errors**
 ✅ **Complete documentation provided**

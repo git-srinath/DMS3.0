@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import {
-  Box, Container, Typography, Grid, Card, CardContent, Button, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Alert, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, IconButton, Tooltip, CircularProgress
+  Box, Container, Typography, Grid, Card, CardContent, Button, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Alert, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, IconButton, Tooltip, CircularProgress, MenuItem, Select, FormControl, InputLabel
 } from "@mui/material";
 import { Add, Edit, Delete, Refresh } from "@mui/icons-material";
 
@@ -10,15 +10,28 @@ const apiUrl = process.env.NEXT_PUBLIC_API_URL + "/api/dbconnections";
 const initialForm = {
   connm: "",
   dbtyp: "",
+  constr: "",
   dbhost: "",
   dbport: "",
   dbsrvnm: "",
   usrnm: "",
   passwd: "",
-  constr: "",
   dbdescr: "",
   sslfg: "N",
 };
+
+const SUPPORTED_DB_TYPES = [
+  { value: "ORACLE", label: "Oracle" },
+  { value: "POSTGRESQL", label: "PostgreSQL" },
+  { value: "MSSQL", label: "Microsoft SQL Server (MSSQL)" },
+  { value: "SQL_SERVER", label: "SQL Server" },
+  { value: "MYSQL", label: "MySQL" },
+  { value: "SYBASE", label: "Sybase" },
+  { value: "REDSHIFT", label: "Amazon Redshift" },
+  { value: "HIVE", label: "Apache Hive" },
+  { value: "SNOWFLAKE", label: "Snowflake" },
+  { value: "DB2", label: "IBM DB2" },
+];
 
 const RegisterDBConnectionsPage = () => {
   const [connections, setConnections] = useState([]);
@@ -279,13 +292,39 @@ const RegisterDBConnectionsPage = () => {
             <form id="db-conn-form" onSubmit={handleFormSubmit}>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}><TextField label="Connection Name" name="connm" value={form.connm} onChange={handleInputChange} fullWidth required /></Grid>
-                <Grid item xs={12} sm={6}><TextField label="Database Type" name="dbtyp" value={form.dbtyp} onChange={handleInputChange} fullWidth required placeholder="Oracle, MySQL, ..." /></Grid>
-                <Grid item xs={12} sm={6}><TextField label="Host" name="dbhost" value={form.dbhost} onChange={handleInputChange} fullWidth required /></Grid>
-                <Grid item xs={12} sm={6}><TextField label="Port" name="dbport" value={form.dbport} type="number" onChange={handleInputChange} fullWidth required /></Grid>
-                <Grid item xs={12} sm={6}><TextField label="Service/Database Name" name="dbsrvnm" value={form.dbsrvnm} onChange={handleInputChange} fullWidth required /></Grid>
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth required>
+                    <InputLabel>Database Type</InputLabel>
+                    <Select
+                      label="Database Type"
+                      name="dbtyp"
+                      value={form.dbtyp}
+                      onChange={handleInputChange}
+                    >
+                      {SUPPORTED_DB_TYPES.map((db) => (
+                        <MenuItem key={db.value} value={db.value}>
+                          {db.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Connection String (preferred)"
+                    name="constr"
+                    value={form.constr}
+                    onChange={handleInputChange}
+                    fullWidth
+                    placeholder="e.g. postgres://user:pass@host:5432/dbname"
+                    helperText="Provide a full DSN/connection string. Use the fields below only if a connection string is unavailable."
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}><TextField label="Host / IP" name="dbhost" value={form.dbhost} onChange={handleInputChange} fullWidth /></Grid>
+                <Grid item xs={12} sm={6}><TextField label="Port" name="dbport" value={form.dbport} type="number" onChange={handleInputChange} fullWidth /></Grid>
+                <Grid item xs={12} sm={6}><TextField label="Service / Database Name" name="dbsrvnm" value={form.dbsrvnm} onChange={handleInputChange} fullWidth /></Grid>
                 <Grid item xs={12} sm={6}><TextField label="Username" name="usrnm" value={form.usrnm} onChange={handleInputChange} fullWidth required /></Grid>
                 <Grid item xs={12} sm={6}><TextField label="Password" name="passwd" value={form.passwd} onChange={handleInputChange} type="password" fullWidth required /></Grid>
-                <Grid item xs={12} sm={6}><TextField label="Connection String" name="constr" value={form.constr} onChange={handleInputChange} fullWidth /></Grid>
                 <Grid item xs={12} sm={6}><TextField label="SSL (Y/N)" name="sslfg" value={form.sslfg} onChange={handleInputChange} fullWidth /></Grid>
                 <Grid item xs={12}><TextField label="Description" name="dbdescr" value={form.dbdescr} onChange={handleInputChange} multiline minRows={2} fullWidth /></Grid>
               </Grid>

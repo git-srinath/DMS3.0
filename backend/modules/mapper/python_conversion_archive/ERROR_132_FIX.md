@@ -5,13 +5,13 @@ Error messages were incomplete - showing only parameter info but not the actual 
 
 **Before:**
 ```
-Error: Error in PKGDWMAPR.CREATE_UPDATE_SQL [132]: SqlCode=Query_RPT_1
+Error: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [132]: SqlCode=Query_RPT_1
 ```
 (No details about what went wrong)
 
 **After:**
 ```
-Error: Error in PKGDWMAPR.CREATE_UPDATE_SQL [132]: SqlCode=Query_RPT_1 - ORA-XXXXX: [actual error]
+Error: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [132]: SqlCode=Query_RPT_1 - ORA-XXXXX: [actual error]
 ```
 (Shows the real database error)
 
@@ -19,7 +19,7 @@ Error: Error in PKGDWMAPR.CREATE_UPDATE_SQL [132]: SqlCode=Query_RPT_1 - ORA-XXX
 
 ## Changes Made
 
-### File: `pkgdwmapr.py`
+### File: `pkgdms_mapr.py`
 
 **Enhanced 4 error messages in `create_update_sql()` method:**
 
@@ -46,7 +46,7 @@ The error message will now show the actual database problem, for example:
 ```
 Error: ... - ORA-00942: table or view does not exist
 ```
-**Fix:** Create the `DWMAPRSQL` table:
+**Fix:** Create the `DMS_MAPRSQL` table:
 ```sql
 -- Run from your DDL file
 @D:\Git-Srinath\DWTOOL\PLSQL\DWT_DDL_DWT.sql
@@ -64,46 +64,46 @@ Error: ... - ORA-01031: insufficient privileges
 ```
 **Fix:** Grant UPDATE permission:
 ```sql
-GRANT UPDATE ON dwmaprsql TO your_username;
+GRANT UPDATE ON DMS_MAPRSQL TO your_username;
 ```
 
 #### D. Trigger/Constraint Issue
 ```
 Error: ... - ORA-04088: error during execution of trigger
 ```
-**Fix:** Check if there are any triggers on DWMAPRSQL table that might be failing.
+**Fix:** Check if there are any triggers on DMS_MAPRSQL table that might be failing.
 
 ---
 
 ## How to Troubleshoot
 
-### Step 1: Check if DWMAPRSQL Table Exists
+### Step 1: Check if DMS_MAPRSQL Table Exists
 ```sql
 SELECT table_name 
 FROM user_tables 
-WHERE table_name = 'DWMAPRSQL';
+WHERE table_name = 'DMS_MAPRSQL';
 ```
 
 **If empty:** Create the table using your DDL file.
 
 ### Step 2: Check Table Structure
 ```sql
-DESC DWMAPRSQL;
+DESC DMS_MAPRSQL;
 ```
 
 **Expected columns:**
-- DWMAPRSQLID (NUMBER) - Primary key
-- DWMAPRSQLCD (VARCHAR2) - SQL code
-- DWMAPRSQL (CLOB) - SQL content
+- DMS_MAPRSQLID (NUMBER) - Primary key
+- DMS_MAPRSQLCD (VARCHAR2) - SQL code
+- DMS_MAPRSQL (CLOB) - SQL content
 - RECCRDT (DATE) - Created date
 - RECUPDT (DATE) - Updated date
 - CURFLG (VARCHAR2) - Current flag
 
 ### Step 3: Check Data
 ```sql
-SELECT dwmaprsqlcd, curflg 
-FROM dwmaprsql 
-WHERE dwmaprsqlcd = 'Query_RPT_1';
+SELECT dms_maprsqlcd, curflg 
+FROM DMS_MAPRSQL 
+WHERE dms_maprsqlcd = 'Query_RPT_1';
 ```
 
 This shows if a record with that code already exists.
@@ -113,7 +113,7 @@ This shows if a record with that code already exists.
 -- Check what privileges you have on the table
 SELECT privilege 
 FROM user_tab_privs 
-WHERE table_name = 'DWMAPRSQL';
+WHERE table_name = 'DMS_MAPRSQL';
 ```
 
 **Should have:** SELECT, INSERT, UPDATE, DELETE
@@ -169,35 +169,35 @@ WHERE status = 'ACTIVE'
 
 ## Common Solutions
 
-### Solution 1: Missing DWMAPRSQL Table
+### Solution 1: Missing DMS_MAPRSQL Table
 
 **Run the DDL:**
 ```sql
 -- From DWT_DDL_DWT.sql (around line 390-405)
-CREATE TABLE dwmaprsql (
-    dwmaprsqlid NUMBER NOT NULL,
-    dwmaprsqlcd VARCHAR2(100) NOT NULL,
-    dwmaprsql CLOB,
+CREATE TABLE DMS_MAPRSQL (
+    dms_maprsqlid NUMBER NOT NULL,
+    dms_maprsqlcd VARCHAR2(100) NOT NULL,
+    DMS_MAPRSQL CLOB,
     reccrdt DATE,
     recupdt DATE,
     curflg VARCHAR2(1) DEFAULT 'Y'
 );
 
-ALTER TABLE dwmaprsql ADD CONSTRAINT dwmaprsql_pk PRIMARY KEY (dwmaprsqlid);
-CREATE SEQUENCE dwmaprsqlseq START WITH 1 INCREMENT BY 1;
+ALTER TABLE DMS_MAPRSQL ADD CONSTRAINT dms_maprsql_pk PRIMARY KEY (dms_maprsqlid);
+CREATE SEQUENCE DMS_MAPRSQLSEQ START WITH 1 INCREMENT BY 1;
 ```
 
 ### Solution 2: CURFLG Column Missing
 
 ```sql
-ALTER TABLE dwmaprsql ADD (curflg VARCHAR2(1) DEFAULT 'Y');
+ALTER TABLE DMS_MAPRSQL ADD (curflg VARCHAR2(1) DEFAULT 'Y');
 ```
 
 ### Solution 3: Need to Clean Up Test Data
 
 ```sql
 -- Delete test records
-DELETE FROM dwmaprsql WHERE dwmaprsqlcd = 'Query_RPT_1';
+DELETE FROM DMS_MAPRSQL WHERE dms_maprsqlcd = 'Query_RPT_1';
 COMMIT;
 ```
 
@@ -212,6 +212,6 @@ COMMIT;
 ---
 
 *Fix applied: November 12, 2025*  
-*File updated: pkgdwmapr.py*  
+*File updated: pkgdms_mapr.py*  
 *Lines changed: 117, 136, 160, 170*
 

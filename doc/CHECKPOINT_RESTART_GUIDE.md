@@ -53,7 +53,7 @@ Uses a sequential column from the source to track progress.
 **Example:**
 ```sql
 -- Configure
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'ORDER_ID',
     CHKPNTENABLED = 'Y'
@@ -94,7 +94,7 @@ Tracks row count and skips rows in Python after fetching.
 **Example:**
 ```python
 # Configure
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'PYTHON',
     CHKPNTCOLUMN = NULL,
     CHKPNTENABLED = 'Y'
@@ -146,7 +146,7 @@ Always processes all data from the beginning.
 sqlplus your_username/your_password@your_database @doc/database_migration_add_checkpoint.sql
 ```
 
-This adds three columns to DWMAPR:
+This adds three columns to DMS_MAPR:
 - `CHKPNTSTRATEGY` - Strategy type ('AUTO', 'KEY', 'PYTHON', 'NONE')
 - `CHKPNTCOLUMN` - Column name for KEY strategy
 - `CHKPNTENABLED` - Enable/disable ('Y'/'N')
@@ -158,7 +158,7 @@ This adds three columns to DWMAPR:
 #### Example 1: Fact Table with Transaction ID
 
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'TRANSACTION_ID',  -- Sequential column
     CHKPNTENABLED = 'Y'
@@ -168,7 +168,7 @@ WHERE MAPREF = 'SALES_FACT_DAILY';
 #### Example 2: Dimension with Timestamp
 
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'LAST_MODIFIED_DATE',  -- Timestamp column
     CHKPNTENABLED = 'Y'
@@ -178,7 +178,7 @@ WHERE MAPREF = 'CUSTOMER_DIM';
 #### Example 3: Complex Query (No Unique Key)
 
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'PYTHON',
     CHKPNTCOLUMN = NULL,
     CHKPNTENABLED = 'Y'
@@ -188,7 +188,7 @@ WHERE MAPREF = 'SALES_SUMMARY_VIEW';
 #### Example 4: Small Lookup Table (Disable)
 
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'NONE',
     CHKPNTENABLED = 'N'
 WHERE MAPREF = 'COUNTRY_LOOKUP';
@@ -200,15 +200,15 @@ WHERE MAPREF = 'COUNTRY_LOOKUP';
 
 ```python
 from database.dbconnect import create_oracle_connection
-from modules.jobs import pkgdwjob_python as pkgdwjob
+from modules.jobs import pkgdms_job_python as pkgdms_job
 
 connection = create_oracle_connection()
 
 # For specific mapping
-job_id = pkgdwjob.create_update_job(connection, 'YOUR_MAPREF')
+job_id = pkgdms_job.create_update_job(connection, 'YOUR_MAPREF')
 
 # Or for all mappings
-pkgdwjob.create_all_jobs(connection)
+pkgdms_job.create_all_jobs(connection)
 
 connection.close()
 ```
@@ -267,7 +267,7 @@ Job SALES_FACT_DAILY completed successfully
 
 ```sql
 SELECT sessionid, prcid, mapref, status, param1 as checkpoint
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE mapref = 'YOUR_MAPREF'
   AND status = 'IP'  -- In Progress
 ORDER BY reccrdt DESC;
@@ -277,7 +277,7 @@ ORDER BY reccrdt DESC;
 
 ```sql
 SELECT reccrdt, mapref, status, param1 as checkpoint, strtdt, enddt
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE mapref = 'YOUR_MAPREF'
 ORDER BY reccrdt DESC
 FETCH FIRST 10 ROWS ONLY;
@@ -293,7 +293,7 @@ To ignore checkpoint and force full reload:
 
 **Option 1: Clear checkpoint before run**
 ```sql
-UPDATE DWPRCLOG
+UPDATE DMS_PRCLOG
 SET PARAM1 = NULL
 WHERE mapref = 'YOUR_MAPREF'
   AND sessionid = :current_session;
@@ -301,14 +301,14 @@ WHERE mapref = 'YOUR_MAPREF'
 
 **Option 2: Temporarily disable**
 ```sql
-UPDATE DWMAPR
+UPDATE DMS_MAPR
 SET CHKPNTENABLED = 'N'
 WHERE MAPREF = 'YOUR_MAPREF';
 
 -- Regenerate job
 -- Run job
 -- Re-enable
-UPDATE DWMAPR SET CHKPNTENABLED = 'Y' WHERE MAPREF = 'YOUR_MAPREF';
+UPDATE DMS_MAPR SET CHKPNTENABLED = 'Y' WHERE MAPREF = 'YOUR_MAPREF';
 ```
 
 ---
@@ -354,10 +354,10 @@ If source data changes between runs (rows added/removed before checkpoint):
 **Solution:**
 ```sql
 -- Check if checkpoint enabled
-SELECT CHKPNTENABLED FROM DWMAPR WHERE MAPREF = 'YOUR_MAPREF';
+SELECT CHKPNTENABLED FROM DMS_MAPR WHERE MAPREF = 'YOUR_MAPREF';
 
 -- Check if checkpoint being written
-SELECT param1 FROM DWPRCLOG 
+SELECT param1 FROM DMS_PRCLOG 
 WHERE mapref = 'YOUR_MAPREF' 
 ORDER BY reccrdt DESC 
 FETCH FIRST 1 ROW ONLY;
@@ -411,7 +411,7 @@ FETCH FIRST 1 ROW ONLY;
 - Recommended: 1,000 - 10,000 rows per batch
 
 ### 3. **Monitor Checkpoint Progress**
-- Check DWPRCLOG.PARAM1 during long-running jobs
+- Check DMS_PRCLOG.PARAM1 during long-running jobs
 - Alert on jobs stuck at same checkpoint
 - Clean up old checkpoints periodically
 
@@ -427,7 +427,7 @@ FETCH FIRST 1 ROW ONLY;
 ### 5. **Document Checkpoint Configuration**
 ```sql
 -- Add comments to your mappings
-COMMENT ON COLUMN DWMAPR.CHKPNTCOLUMN IS 
+COMMENT ON COLUMN DMS_MAPR.CHKPNTCOLUMN IS 
 'TRANSACTION_ID is sequential and indexed for efficient checkpoint filtering';
 ```
 
@@ -455,7 +455,7 @@ COMMENT ON COLUMN DWMAPR.CHKPNTCOLUMN IS
 ## 🎓 FAQ
 
 **Q: Can I change strategy after job is created?**  
-A: Yes, but you must regenerate the job flow. Update DWMAPR and call `create_update_job`.
+A: Yes, but you must regenerate the job flow. Update DMS_MAPR and call `create_update_job`.
 
 **Q: What happens if checkpoint column is not in source query?**  
 A: Job will fail with error. Ensure your source query includes the checkpoint column.
@@ -467,14 +467,14 @@ A: No. Use single sequential column only. For composite keys, create a surrogate
 A: Yes! Both KEY and PYTHON strategies are database-agnostic.
 
 **Q: How do I clear all checkpoints?**  
-A: `UPDATE DWPRCLOG SET PARAM1 = NULL WHERE mapref = 'YOUR_MAPREF';`
+A: `UPDATE DMS_PRCLOG SET PARAM1 = NULL WHERE mapref = 'YOUR_MAPREF';`
 
 ---
 
 ## 📚 Related Documentation
 
 - **IMPLEMENTATION_SUMMARY.md** - Overall implementation details
-- **PKGDWJOB_PYTHON_IMPLEMENTATION.md** - Technical documentation
+- **PKGDMS_JOB_PYTHON_IMPLEMENTATION.md** - Technical documentation
 - **CORRECTIONS_LOG.md** - Bug fixes and improvements
 
 ---

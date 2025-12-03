@@ -71,8 +71,8 @@ BEGIN
     
     IF v_tables_modified > 0 THEN
         DBMS_OUTPUT.PUT_LINE('IMPORTANT: Please regenerate job flows for all mappings:');
-        DBMS_OUTPUT.PUT_LINE('  - Call PKGDWJOB.CREATE_ALL_JOBS or');
-        DBMS_OUTPUT.PUT_LINE('  - Call PKGDWJOB.CREATE_UPDATE_JOB for each mapping');
+        DBMS_OUTPUT.PUT_LINE('  - Call PKGDMS_JOB.CREATE_ALL_JOBS or');
+        DBMS_OUTPUT.PUT_LINE('  - Call PKGDMS_JOB.CREATE_UPDATE_JOB for each mapping');
         DBMS_OUTPUT.PUT_LINE('');
     END IF;
     

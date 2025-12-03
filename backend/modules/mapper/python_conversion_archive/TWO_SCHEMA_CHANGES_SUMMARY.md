@@ -20,7 +20,7 @@ CDR_SCHEMA=CDR  # Data schema
 
 ### 2. Code Changes (5 Files)
 
-#### `modules/mapper/pkgdwmapr.py`
+#### `modules/mapper/pkgdms_mapr.py`
 ```python
 # Before
 ORACLE_SCHEMA = os.getenv("SCHEMA", "")
@@ -32,7 +32,7 @@ CDR_SCHEMA = os.getenv("CDR_SCHEMA", "")
 DWT_SCHEMA_PREFIX = f"{DWT_SCHEMA}." if DWT_SCHEMA else ""
 CDR_SCHEMA_PREFIX = f"{CDR_SCHEMA}." if CDR_SCHEMA else ""
 
-# All metadata tables now use: {DWT_SCHEMA_PREFIX}dwmapr
+# All metadata tables now use: {DWT_SCHEMA_PREFIX}DMS_MAPR
 # Future data operations will use: {CDR_SCHEMA_PREFIX}target_table
 ```
 
@@ -87,7 +87,7 @@ SCHEMA = DWT_SCHEMA  # Backward compatibility
 
 **Problems:**
 ```
-❌ Required creating synonyms: CREATE SYNONYM dwmapr FOR DWT.dwmapr
+❌ Required creating synonyms: CREATE SYNONYM DMS_MAPR FOR DWT.DMS_MAPR
 ❌ ORA-00942 errors if synonyms missing
 ❌ Maintenance overhead for synonym management
 ❌ Mixed metadata and data concerns
@@ -97,11 +97,11 @@ SCHEMA = DWT_SCHEMA  # Backward compatibility
 **Architecture:**
 ```
 CDR Schema (Connected User):
-├── synonym dwmapr → DWT.dwmapr
-├── synonym dwmaprdtl → DWT.dwmaprdtl
-├── synonym dwmaprsql → DWT.dwmaprsql
+├── synonym DMS_MAPR → DWT.DMS_MAPR
+├── synonym DMS_MAPRDTL → DWT.DMS_MAPRDTL
+├── synonym DMS_MAPRSQL → DWT.DMS_MAPRSQL
 ├── ... many more synonyms
-└── Application queries: SELECT * FROM dwmapr
+└── Application queries: SELECT * FROM DMS_MAPR
 ```
 
 ### After Two-Schema Implementation
@@ -119,9 +119,9 @@ CDR Schema (Connected User):
 **Architecture:**
 ```
 DWT Schema (Metadata):
-├── dwmapr, dwmaprdtl, dwmaprsql
-├── dwparams, dwjob, dwjobdtl, dwmaperr
-└── Application queries: SELECT * FROM DWT.dwmapr
+├── DMS_MAPR, DMS_MAPRDTL, DMS_MAPRSQL
+├── DMS_PARAMS, DMS_JOB, DMS_JOBDTL, DMS_MAPERR
+└── Application queries: SELECT * FROM DWT.DMS_MAPR
 
 CDR Schema (Data):
 ├── DIM_CUSTOMER, FACT_SALES, etc.
@@ -135,12 +135,12 @@ CDR Schema (Data):
 **Creating a mapping:**
 ```python
 # Before
-cursor.execute("INSERT INTO dwmapr VALUES (...)")
-# Required synonym: CREATE SYNONYM dwmapr FOR DWT.dwmapr
+cursor.execute("INSERT INTO DMS_MAPR VALUES (...)")
+# Required synonym: CREATE SYNONYM DMS_MAPR FOR DWT.DMS_MAPR
 
 # After
-cursor.execute(f"INSERT INTO {DWT_SCHEMA_PREFIX}dwmapr VALUES (...)")
-# Generates: INSERT INTO DWT.dwmapr VALUES (...)
+cursor.execute(f"INSERT INTO {DWT_SCHEMA_PREFIX}DMS_MAPR VALUES (...)")
+# Generates: INSERT INTO DWT.DMS_MAPR VALUES (...)
 # No synonyms needed!
 ```
 

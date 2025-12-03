@@ -1,7 +1,7 @@
 # Target Connection Implementation Plan
 
 ## Overview
-Separate metadata schema (where DWMAPR, DWMAPRDTL, etc. reside) from target data schema (where created tables and data will reside).
+Separate metadata schema (where DMS_MAPR, DMS_MAPRDTL, etc. reside) from target data schema (where created tables and data will reside).
 
 **Current Architecture:**
 ```
@@ -9,7 +9,7 @@ Separate metadata schema (where DWMAPR, DWMAPRDTL, etc. reside) from target data
 │  Single Oracle Connection   │
 │  (from .env file)           │
 ├─────────────────────────────┤
-│  • Metadata Tables (DWMAPR) │
+│  • Metadata Tables (DMS_MAPR) │
 │  • Target Tables            │
 │  • Data Loading             │
 └─────────────────────────────┘
@@ -21,10 +21,10 @@ Separate metadata schema (where DWMAPR, DWMAPRDTL, etc. reside) from target data
 │  Metadata Connection         │     │  Target Data Connection     │
 │  (from .env - default)       │     │  (user selectable)          │
 ├──────────────────────────────┤     ├─────────────────────────────┤
-│  • DWMAPR                    │     │  • Created Tables           │
-│  • DWMAPRDTL                 │     │  • DIM_*, FCT_*, MRT_*      │
-│  • DWJOB                     │     │  • Data Loading Operations  │
-│  • DWDBCONDTLS (connections) │     │                             │
+│  • DMS_MAPR                    │     │  • Created Tables           │
+│  • DMS_MAPRDTL                 │     │  • DIM_*, FCT_*, MRT_*      │
+│  • DMS_JOB                     │     │  • Data Loading Operations  │
+│  • DMS_DBCONDTLS (connections) │     │                             │
 └──────────────────────────────┘     └─────────────────────────────┘
 ```
 
@@ -34,55 +34,55 @@ Separate metadata schema (where DWMAPR, DWMAPRDTL, etc. reside) from target data
 
 ### STEP 1: Database Schema Changes
 
-#### 1.1 Add Target Connection Column to DWMAPR Table
+#### 1.1 Add Target Connection Column to DMS_MAPR Table
 
 **SQL Script:**
 ```sql
 -- Add new column for target database connection ID
-ALTER TABLE DWMAPR ADD (
-    trgconid NUMBER(12)  -- Foreign key to DWDBCONDTLS.CONID
+ALTER TABLE DMS_MAPR ADD (
+    trgconid NUMBER(12)  -- Foreign key to DMS_DBCONDTLS.CONID
 );
 
 -- Add comment
-COMMENT ON COLUMN DWMAPR.TRGCONID IS 'Target database connection ID for creating objects and loading data';
+COMMENT ON COLUMN DMS_MAPR.TRGCONID IS 'Target database connection ID for creating objects and loading data';
 
 -- Optional: Add foreign key constraint
-ALTER TABLE DWMAPR ADD CONSTRAINT DWMAPR_TRGCON_FK 
-    FOREIGN KEY (TRGCONID) REFERENCES DWDBCONDTLS(CONID);
+ALTER TABLE DMS_MAPR ADD CONSTRAINT DMS_MAPR_TRGCON_FK 
+    FOREIGN KEY (TRGCONID) REFERENCES DMS_DBCONDTLS(CONID);
 
 -- Optional: Add index for performance
-CREATE INDEX DWMAPR_TRGCONID_IDX ON DWMAPR(TRGCONID);
+CREATE INDEX DMS_MAPR_TRGCONID_IDX ON DMS_MAPR(TRGCONID);
 ```
 
 #### 1.2 Update Existing Records (if needed)
 ```sql
 -- Set default connection for existing mappings
 -- Option 1: Set to NULL (metadata connection will be used as default)
-UPDATE DWMAPR SET TRGCONID = NULL WHERE TRGCONID IS NULL;
+UPDATE DMS_MAPR SET TRGCONID = NULL WHERE TRGCONID IS NULL;
 
 -- Option 2: Set to a specific connection ID
--- UPDATE DWMAPR SET TRGCONID = <default_connection_id> WHERE TRGCONID IS NULL;
+-- UPDATE DMS_MAPR SET TRGCONID = <default_connection_id> WHERE TRGCONID IS NULL;
 
 COMMIT;
 ```
 
-#### 1.3 Update DWJOB Table (for consistency)
+#### 1.3 Update DMS_JOB Table (for consistency)
 ```sql
 -- Add target connection to job table as well
-ALTER TABLE DWJOB ADD (
+ALTER TABLE DMS_JOB ADD (
     trgconid NUMBER(12)
 );
 
-COMMENT ON COLUMN DWJOB.TRGCONID IS 'Target database connection ID for job execution';
+COMMENT ON COLUMN DMS_JOB.TRGCONID IS 'Target database connection ID for job execution';
 ```
 
 ---
 
 ### STEP 2: Backend Python Changes
 
-#### 2.1 Update `pkgdwmapr_python.py`
+#### 2.1 Update `pkgdms_mapr_python.py`
 
-**Location:** `backend/modules/mapper/pkgdwmapr_python.py`
+**Location:** `backend/modules/mapper/pkgdms_mapr_python.py`
 
 **Changes in `create_update_mapping()` function:**
 
@@ -99,7 +99,7 @@ if p_trgconid is not None:
     try:
         # Validate connection exists
         cursor.execute("""
-            SELECT conid FROM DWDBCONDTLS 
+            SELECT conid FROM DMS_DBCONDTLS 
             WHERE conid = :1 AND curflg = 'Y'
         """, [p_trgconid])
         if not cursor.fetchone():
@@ -113,7 +113,7 @@ if p_trgconid is not None:
 query = """
     SELECT mapid, mapref, mapdesc, trgschm, trgtbtyp, trgtbnm, frqcd,
            srcsystm, lgvrfyflg, lgvrfydt, stflg, blkprcrows, trgconid  -- ADD trgconid
-    FROM dwmapr
+    FROM DMS_MAPR
     WHERE mapref = :1
     AND curflg = 'Y'
 """
@@ -129,12 +129,12 @@ if (w_mapr_rec['mapdesc'] == p_mapdesc and
 **Update INSERT statement:**
 ```python
 cursor.execute("""
-    INSERT INTO dwmapr 
+    INSERT INTO DMS_MAPR 
     (mapid, mapref, mapdesc, trgschm, trgtbtyp, trgtbnm, frqcd, srcsystm,
      lgvrfyflg, lgvrfydt, stflg, reccrdt, recupdt, curflg, blkprcrows, 
      trgconid, crtdby, uptdby)  -- ADD trgconid
     VALUES 
-    (dwmaprseq.nextval, :1, :2, :3, :4, :5, :6, :7,
+    (DMS_MAPRSEQ.nextval, :1, :2, :3, :4, :5, :6, :7,
      :8, :9, :10, sysdate, sysdate, 'Y', :11, 
      :12, :13, :14)  -- ADD parameter
     RETURNING mapid INTO :15
@@ -150,7 +150,7 @@ cursor.execute("""
 **Update `get_mapping_ref()` function:**
 ```python
 def get_mapping_ref(conn, reference):
-    """Fetch reference data from DWMAPR table"""
+    """Fetch reference data from DMS_MAPR table"""
     try:
         cursor = conn.cursor()
         query = """
@@ -158,7 +158,7 @@ def get_mapping_ref(conn, reference):
             MAPID, MAPREF, MAPDESC, TRGSCHM, TRGTBTYP, 
             TRGTBNM, FRQCD, SRCSYSTM, STFLG, BLKPRCROWS, LGVRFYFLG,
             TRGCONID  -- ADD THIS
-            FROM DWMAPR WHERE MAPREF = :1 AND CURFLG = 'Y'
+            FROM DMS_MAPR WHERE MAPREF = :1 AND CURFLG = 'Y'
         """
         # ... rest of function
 ```
@@ -169,7 +169,7 @@ def create_update_mapping(connection, p_mapref, p_mapdesc, p_trgschm, p_trgtbtyp
                          p_trgtbnm, p_frqcd, p_srcsystm, p_lgvrfyflg, p_lgvrfydt, 
                          p_stflg, p_blkprcrows, p_trgconid, user_id):  # ADD p_trgconid
     try:
-        mapid = pkgdwmapr.create_update_mapping(
+        mapid = pkgdms_mapr.create_update_mapping(
             connection, p_mapref, p_mapdesc, p_trgschm, p_trgtbtyp,
             p_trgtbnm, p_frqcd, p_srcsystm, p_lgvrfyflg, p_lgvrfydt,
             p_stflg, p_blkprcrows, p_trgconid, user_id)  # ADD p_trgconid
@@ -183,10 +183,10 @@ def create_update_mapping(connection, p_mapref, p_mapdesc, p_trgschm, p_trgtbtyp
 def create_target_connection(connection_id):
     """
     Create a database connection for target data operations
-    based on connection ID from DWDBCONDTLS
+    based on connection ID from DMS_DBCONDTLS
     
     Args:
-        connection_id: CONID from DWDBCONDTLS table
+        connection_id: CONID from DMS_DBCONDTLS table
     
     Returns:
         Oracle connection object
@@ -198,10 +198,10 @@ def create_target_connection(connection_id):
         metadata_conn = create_oracle_connection()
         cursor = metadata_conn.cursor()
         
-        # Fetch connection details from DWDBCONDTLS
+        # Fetch connection details from DMS_DBCONDTLS
         cursor.execute("""
             SELECT connm, dbhost, dbport, dbsrvnm, usrnm, passwd, constr
-            FROM DWDBCONDTLS
+            FROM DMS_DBCONDTLS
             WHERE conid = :1 AND curflg = 'Y'
         """, [connection_id])
         
@@ -254,7 +254,7 @@ def get_connection_for_mapping(mapref):
         # Check if mapping has a target connection
         cursor.execute("""
             SELECT trgconid
-            FROM DWMAPR
+            FROM DMS_MAPR
             WHERE mapref = :1 AND curflg = 'Y'
         """, [mapref])
         
@@ -462,11 +462,11 @@ def load_data_to_target(mapref):
 ### Files to Modify:
 
 1. **Database:**
-   - Add `TRGCONID` column to `DWMAPR` table
-   - Add `TRGCONID` column to `DWJOB` table (optional but recommended)
+   - Add `TRGCONID` column to `DMS_MAPR` table
+   - Add `TRGCONID` column to `DMS_JOB` table (optional but recommended)
 
 2. **Backend Python:**
-   - `backend/modules/mapper/pkgdwmapr_python.py` - Add trgconid parameter to create_update_mapping
+   - `backend/modules/mapper/pkgdms_mapr_python.py` - Add trgconid parameter to create_update_mapping
    - `backend/modules/helper_functions.py` - Update function signatures and queries
    - `backend/database/dbconnect.py` - Add target connection functions
    - `backend/modules/mapper/mapper.py` - Update API endpoints

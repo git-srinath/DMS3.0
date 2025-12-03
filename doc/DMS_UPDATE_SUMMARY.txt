@@ -1,0 +1,522 @@
+DMS Update Summary
+================================================================================
+
+Files updated: 86
+Total replacements: 343
+
+Files changed:
+
+QUICK_START_GUIDE.txt:
+  - DWMAPR -> DMS_MAPR
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+test_id_provider_oracle.py:
+  - DWJOB -> DMS_JOB
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+update_to_dms.py:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWIDPOOL -> DMS_IDPOOL
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+doc\CHECKPOINT_IMPLEMENTATION_SUMMARY.md:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPR -> DMS_MAPR
+
+doc\CHECKPOINT_QUICK_REFERENCE.md:
+  - dwjob -> dms_job
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPR -> DMS_MAPR
+
+doc\CHECKPOINT_RESTART_GUIDE.md:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPR -> DMS_MAPR
+
+doc\CHECKPOINT_UI_INTEGRATION.md:
+  - dwmapr -> dms_mapr
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWMAPR -> DMS_MAPR
+
+doc\COLUMN_NAME_REFERENCE.md:
+  - dwjob -> dms_job
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPR -> DMS_MAPR
+
+doc\CORRECTIONS_LOG.md:
+  - DWJOB -> DMS_JOB
+  - dwjob -> dms_job
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+doc\database_migration_add_checkpoint.sql:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWMAPR -> DMS_MAPR
+
+doc\database_migration_add_rwhkey.sql:
+  - DWJOB -> DMS_JOB
+
+doc\database_migration_add_scheduler_queue.sql:
+  - DWPRCREQ -> DMS_PRCREQ
+  - dwprcreq -> dms_prcreq
+
+doc\database_migration_id_provider.sql:
+  - DWJOB -> DMS_JOB
+  - DWIDPOOL -> DMS_IDPOOL
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPR -> DMS_MAPR
+
+doc\database_migration_manage_sql_connection.sql:
+  - DWMAPR -> DMS_MAPR
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\ERROR_HANDLING_IMPROVEMENT.md:
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+doc\F_STRING_FORMAT_FIX.md:
+  - dwjob -> dms_job
+
+doc\ID_PROVIDER_MIGRATION_GUIDE.md:
+  - DWPRCLOGSEQ -> DMS_PRCLOGSEQ
+  - DWJOB -> DMS_JOB
+  - DWIDPOOL -> DMS_IDPOOL
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPERR -> DMS_MAPERR
+  - DWJOBLOGSEQ -> DMS_JOBLOGSEQ
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+doc\ID_PROVIDER_NEXT_STEPS.md:
+  - DWJOB -> DMS_JOB
+  - dwjob -> dms_job
+  - DWIDPOOL -> DMS_IDPOOL
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPERR -> DMS_MAPERR
+  - dwmapr -> dms_mapr
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+doc\IMPLEMENTATION_COMPLETE.md:
+  - DWMAPR -> DMS_MAPR
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\IMPLEMENTATION_SUMMARY.md:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPR -> DMS_MAPR
+
+doc\MANAGE_SQL_CONNECTION_FIXED.md:
+  - DWMAPR -> DMS_MAPR
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\MANAGE_SQL_CONNECTION_IMPLEMENTATION.md:
+  - DWMAPR -> DMS_MAPR
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\MANAGE_SQL_CONNECTION_SUMMARY.md:
+  - DWMAPR -> DMS_MAPR
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\MANAGE_SQL_VS_MAPPER_COMPARISON.md:
+  - DWMAPR -> DMS_MAPR
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\ORACLE_VERIFICATION_CHECKLIST.md:
+  - DWJOB -> DMS_JOB
+  - DWIDPOOL -> DMS_IDPOOL
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+doc\PKGDWJOB_CONVERSION_OPTIONS.md:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWMAPR -> DMS_MAPR
+
+doc\PKGDWJOB_OPTIONS_SUMMARY.txt:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWMAPR -> DMS_MAPR
+
+doc\PKGDWJOB_PYTHON_IMPLEMENTATION.md:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWMAPR -> DMS_MAPR
+
+doc\PKGDWJOB_QUICK_START.md:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+
+doc\PLSQL_CONVERSION_STATUS.md:
+  - dwmapr -> dms_mapr
+  - DWJOB -> DMS_JOB
+  - DWMAPR -> DMS_MAPR
+
+doc\PLSQL_TO_PYTHON_CONVERSION.md:
+  - DWJOB -> DMS_JOB
+  - DWMAPERR -> DMS_MAPERR
+  - dwmapr -> dms_mapr
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+doc\README.md:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+
+doc\README_MANAGE_SQL_CONNECTION.md:
+  - DWMAPR -> DMS_MAPR
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\REVERSION_TO_PLSQL.md:
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+doc\SCHEDULER_IMPLEMENTATION_STATUS.md:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWPRCLOG -> DMS_PRCLOG
+
+doc\SCHEDULER_QUICK_START.md:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+
+doc\SCHEDULER_SERVICE_DESIGN.md:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWPRCLOG -> DMS_PRCLOG
+
+doc\SCHEDULER_STARTUP_GUIDE.md:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWPRCLOG -> DMS_PRCLOG
+
+doc\SCHEDULER_TROUBLESHOOTING.md:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWPRCLOG -> DMS_PRCLOG
+
+doc\TARGET_CONNECTION_IMPLEMENTATION_COMPLETE.md:
+  - DWMAPR -> DMS_MAPR
+  - dwmapr -> dms_mapr
+  - DWJOB -> DMS_JOB
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\TARGET_CONNECTION_IMPLEMENTATION_PLAN.md:
+  - DWJOB -> DMS_JOB
+  - DWMAPRSEQ -> DMS_MAPRSEQ
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+doc\TARGET_CONNECTION_PROGRESS.md:
+  - DWMAPR -> DMS_MAPR
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\TESTING_GUIDE.md:
+  - DWMAPR -> DMS_MAPR
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+doc\TYPE_CASTING_FIX.md:
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\database\dbconnect.py:
+  - DWMAPR -> DMS_MAPR
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+backend\modules\helper_functions.py:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWMAPERR -> DMS_MAPERR
+  - dwmapr -> dms_mapr
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\common\id_provider.py:
+  - DWIDPOOL -> DMS_IDPOOL
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWPARAMS -> DMS_PARAMS
+
+backend\modules\dashboard\dashboard.py:
+  - DWJOB -> DMS_JOB
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWJOBFLW -> DMS_JOBFLW
+  - DWJOBLOG -> DMS_JOBLOG
+  - DWJOBSCH -> DMS_JOBSCH
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\db_connections\crud_dbconnections.py:
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+  - DWDBCONDTLSSEQ -> DMS_DBCONDTLSSEQ
+
+backend\modules\jobs\execution_engine.py:
+  - dwjob -> dms_job
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWPRCLOG -> DMS_PRCLOG
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\jobs\jobs.py:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWJOBERR -> DMS_JOBERR
+  - DWJOBLOG -> DMS_JOBLOG
+
+backend\modules\jobs\pkgdwjob_create_job_flow.py:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - dwjob -> dms_job
+  - DWPRCLOG -> DMS_PRCLOG
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWJOBDTL -> DMS_JOBDTL
+
+backend\modules\jobs\pkgdwjob_python.py:
+  - DWJOB -> DMS_JOB
+  - dwjob -> dms_job
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+  - DWJOBFLW -> DMS_JOBFLW
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWJOBDTL -> DMS_JOBDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\jobs\pkgdwprc_python.py:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+
+backend\modules\jobs\scheduler_service.py:
+  - DWJOB -> DMS_JOB
+  - DWPRCREQ -> DMS_PRCREQ
+  - DWPRCLOG -> DMS_PRCLOG
+
+backend\modules\manage_sql\manage_sql.py:
+  - DWMAPR -> DMS_MAPR
+  - dwmapr -> dms_mapr
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+backend\modules\mapper\mapper.py:
+  - DWMAPR -> DMS_MAPR
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+
+backend\modules\mapper\pkgdwmapr_python.py:
+  - DWJOB -> DMS_JOB
+  - DWDBCONDTLS -> DMS_DBCONDTLS
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWJOBDTL -> DMS_JOBDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\BUGFIX_SUMMARY.md:
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\check_schema_config.py:
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\CLOB_COMPARISON_FIX.md:
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+
+backend\modules\mapper\python_conversion_archive\CREATE_SEQUENCES.sql:
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\DATETIME_AND_TABLE_CASE_FIX.md:
+  - DWJOB -> DMS_JOB
+  - DWJOBDTL -> DMS_JOBDTL
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\DEBUGGING_GUIDE.md:
+  - dwmapr -> dms_mapr
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\DUPLICATE_RECORDS_FIX.md:
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+
+backend\modules\mapper\python_conversion_archive\ERROR_101_105_FIX.md:
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\ERROR_132_FIX.md:
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRSQLSEQ -> DMS_MAPRSQLSEQ
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\INTEGRATION_COMPLETE.md:
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\MODULE_LOADING_ORDER_FIX.md:
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\ORA_00942_SCHEMA_PREFIX_FIX.md:
+  - DWMAPRDTLSEQ -> DMS_MAPRDTLSEQ
+  - DWMAPRSEQ -> DMS_MAPRSEQ
+  - DWMAPERRSEQ -> DMS_MAPERRSEQ
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\ORA_01745_FIX.md:
+  - DWMAPRDTLSEQ -> DMS_MAPRDTLSEQ
+  - DWMAPRSEQ -> DMS_MAPRSEQ
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\pkgdwmapr.py:
+  - DWJOB -> DMS_JOB
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\pkgdwmapr_example.py:
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\PKGDWMAPR_INDEX.md:
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\PKGDWMAPR_README.md:
+  - DWJOB -> DMS_JOB
+  - DWMAPERR -> DMS_MAPERR
+  - dwmapr -> dms_mapr
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\PKGDWMAPR_SUMMARY.md:
+  - DWJOB -> DMS_JOB
+  - DWMAPERR -> DMS_MAPERR
+  - dwmapr -> dms_mapr
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\PLSQL_TO_PYTHON_MAPPING.md:
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\SEQUENCE_FIX_QUICK_GUIDE.md:
+  - DWMAPRDTLSEQ -> DMS_MAPRDTLSEQ
+  - DWMAPRSEQ -> DMS_MAPRSEQ
+  - DWMAPERRSEQ -> DMS_MAPERRSEQ
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPRSQLSEQ -> DMS_MAPRSQLSEQ
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\SEQUENCE_ISSUE_FIX.md:
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\SESSION_FIXES_SUMMARY.md:
+  - DWMAPRSEQ -> DMS_MAPRSEQ
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\TABLE_SCHEMA_PREFIX_FIX.md:
+  - DWJOB -> DMS_JOB
+  - DWJOBDTL -> DMS_JOBDTL
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\test_schema_sequences.py:
+  - DWMAPERR -> DMS_MAPERR
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\TWO_SCHEMA_ARCHITECTURE.md:
+  - DWJOB -> DMS_JOB
+  - DWJOBDTL -> DMS_JOBDTL
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\TWO_SCHEMA_CHANGES_SUMMARY.md:
+  - DWJOB -> DMS_JOB
+  - DWJOBDTL -> DMS_JOBDTL
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\TWO_SCHEMA_SETUP_GUIDE.md:
+  - DWJOB -> DMS_JOB
+  - DWJOBDTL -> DMS_JOBDTL
+  - DWMAPERR -> DMS_MAPERR
+  - DWPARAMS -> DMS_PARAMS
+  - DWMAPRSQL -> DMS_MAPRSQL
+  - dwmapr -> dms_mapr
+  - DWMAPRDTL -> DMS_MAPRDTL
+  - DWMAPR -> DMS_MAPR
+
+backend\modules\mapper\python_conversion_archive\TYPE_CONVERSION_FIX.md:
+  - dwmapr -> dms_mapr
+  - DWMAPR -> DMS_MAPR

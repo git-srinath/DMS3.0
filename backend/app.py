@@ -30,6 +30,7 @@ from modules.admin.access_control import access_control_bp
 from modules.manage_sql.manage_sql import manage_sql_bp
 from modules.db_connections.crud_dbconnections import crud_dbconnections_bp
 from modules.security import security_bp
+from modules.reports import reports_bp
 
 app = Flask(__name__)
 # CORS(app, resources={
@@ -76,6 +77,7 @@ app.register_blueprint(access_control_bp, url_prefix='/access-control')
 app.register_blueprint(manage_sql_bp, url_prefix='/manage-sql')
 app.register_blueprint(crud_dbconnections_bp, url_prefix='/api')
 app.register_blueprint(security_bp, url_prefix='/security')
+app.register_blueprint(reports_bp, url_prefix='/api')
 
 # Create directories if they don't exist
 os.makedirs('data/drafts', exist_ok=True)

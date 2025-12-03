@@ -2,12 +2,18 @@
 CREATE_JOB_FLOW implementation - Dynamic Python code generator with hash-based change detection.
 This module handles the complex logic of generating ETL Python code.
 
-This is extracted from pkgdwjob_python.py for better maintainability.
+This is extracted from pkgdms_job_python.py for better maintainability.
 """
 
 import os
 from typing import Dict, List, Tuple
 from datetime import datetime
+from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
+
+
+def _get_postgresql_table_name(cursor, schema_name: str, table_name: str) -> str:
+    """Wrapper for backward compatibility - delegates to common utility"""
+    return get_postgresql_table_name(cursor, schema_name, table_name)
 
 
 def build_job_flow_code(
@@ -46,20 +52,120 @@ def build_job_flow_code(
         Complete Python code as string
     """
     cursor = connection.cursor()
-    schema = os.getenv('SCHEMA', 'TRG')
+    
+    # Detect database type
+    db_type = _detect_db_type(connection)
+    
+    # Determine bind variable syntax and timestamp function based on database type
+    if db_type == "POSTGRESQL":
+        bind_var_prefix = "%s"
+        timestamp_func = "CURRENT_TIMESTAMP"
+        # For PostgreSQL, we'll use positional parameters in execute()
+        checkpoint_update_query = """
+                                UPDATE {table_prefix}DMS_PRCLOG
+                                SET PARAM1 = %s
+                                WHERE sessionid = %s
+                                  AND prcid = %s
+                            """
+        progress_update_query = """
+                                UPDATE {table_prefix}DMS_PRCLOG
+                                SET SRCROWS = %s,
+                                    TRGROWS = %s,
+                                    RECUPDT = CURRENT_TIMESTAMP
+                                WHERE sessionid = %s
+                                  AND prcid = %s
+                            """
+        checkpoint_complete_query = """
+                                UPDATE {table_prefix}DMS_PRCLOG
+                                SET PARAM1 = 'COMPLETED'
+                                WHERE sessionid = %s
+                                  AND prcid = %s
+                            """
+    else:  # Oracle
+        bind_var_prefix = ":param"
+        timestamp_func = "SYSTIMESTAMP"
+        checkpoint_update_query = """
+                                UPDATE {table_prefix}DMS_PRCLOG
+                                SET PARAM1 = :checkpoint_value
+                                WHERE sessionid = :sessionid
+                                  AND prcid = :prcid
+                            """
+        progress_update_query = """
+                                UPDATE {table_prefix}DMS_PRCLOG
+                                SET SRCROWS = :srcrows,
+                                    TRGROWS = :trgrows,
+                                    RECUPDT = SYSTIMESTAMP
+                                WHERE sessionid = :sessionid
+                                  AND prcid = :prcid
+                            """
+        checkpoint_complete_query = """
+                                UPDATE {table_prefix}DMS_PRCLOG
+                                SET PARAM1 = 'COMPLETED'
+                                WHERE sessionid = :sessionid
+                                  AND prcid = :prcid
+                            """
+    
+    # Get metadata schema name from environment (for DMS_JOB, DMS_JOBDTL, DMS_PARAMS)
+    # The target schema will come from job configuration (trgschm)
+    schema = os.getenv('DMS_SCHEMA', 'TRG')
+    
+    # For PostgreSQL, detect actual table name format (could be lowercase or uppercase)
+    # For Oracle, keep as-is (case-insensitive)
+    if db_type == "POSTGRESQL":
+        schema_quoted = schema.lower()
+        # Detect actual table names as stored in PostgreSQL (handles both quoted and unquoted)
+        # Try to detect table names, but handle errors gracefully
+        try:
+            dms_job_table = _get_postgresql_table_name(cursor, schema_quoted, 'DMS_JOB')
+            dms_jobdtl_table = _get_postgresql_table_name(cursor, schema_quoted, 'DMS_JOBDTL')
+            dms_maprsql_table = _get_postgresql_table_name(cursor, schema_quoted, 'DMS_MAPRSQL')
+            dms_params_table = _get_postgresql_table_name(cursor, schema_quoted, 'DMS_PARAMS')
+            # Quote table names if they contain uppercase letters (were created with quotes)
+            dms_job_ref = f'"{dms_job_table}"' if dms_job_table != dms_job_table.lower() else dms_job_table
+            dms_jobdtl_ref = f'"{dms_jobdtl_table}"' if dms_jobdtl_table != dms_jobdtl_table.lower() else dms_jobdtl_table
+            dms_maprsql_ref = f'"{dms_maprsql_table}"' if dms_maprsql_table != dms_maprsql_table.lower() else dms_maprsql_table
+            dms_params_ref = f'"{dms_params_table}"' if dms_params_table != dms_params_table.lower() else dms_params_table
+        except Exception:
+            # If detection fails, fall back to lowercase (most common case)
+            dms_job_ref = 'dms_job'
+            dms_jobdtl_ref = 'dms_jobdtl'
+            dms_maprsql_ref = 'dms_maprsql'
+            dms_params_ref = 'dms_params'
+        # Build table prefix/suffix for dynamic queries
+        table_prefix = f'{schema_quoted}.'
+        table_suffix = ''
+    else:
+        schema_quoted = schema
+        table_prefix = f'{schema}.'
+        table_suffix = ''
+        # For Oracle, use uppercase table names (case-insensitive, but convention is uppercase)
+        dms_job_ref = 'DMS_JOB'
+        dms_jobdtl_ref = 'DMS_JOBDTL'
+        dms_maprsql_ref = 'DMS_MAPRSQL'
+        dms_params_ref = 'DMS_PARAMS'
     
     # Get primary key columns
     # Get primary key columns with their source column mappings
     # trgclnm = target column name (e.g., ACNT_NO)
     # keyclnm = source column name (e.g., COD_ACCT_NO) that maps to the target PK
-    cursor.execute(f"""
-        SELECT jd.trgclnm, jd.keyclnm
-        FROM {schema}.dwjobdtl jd
-        WHERE jd.mapref = :mapref
-          AND jd.curflg = 'Y'
-          AND jd.trgkeyflg = 'Y'
-        ORDER BY jd.trgkeyseq
-    """, {'mapref': mapref})
+    if db_type == "POSTGRESQL":
+        cursor.execute(f"""
+            SELECT jd.trgclnm, jd.keyclnm
+            FROM {table_prefix}{dms_jobdtl_ref}{table_suffix} jd
+            WHERE jd.mapref = %s
+              AND jd.curflg = 'Y'
+              AND jd.trgkeyflg = 'Y'
+            ORDER BY jd.trgkeyseq
+        """, (mapref,))
+    else:  # Oracle
+        cursor.execute(f"""
+            SELECT jd.trgclnm, jd.keyclnm
+            FROM {schema}.{dms_jobdtl_ref} jd
+            WHERE jd.mapref = :mapref
+              AND jd.curflg = 'Y'
+              AND jd.trgkeyflg = 'Y'
+            ORDER BY jd.trgkeyseq
+        """, {'mapref': mapref})
     
     pk_mappings = cursor.fetchall()
     pk_columns = [row[0] for row in pk_mappings]  # Target column names
@@ -68,31 +174,50 @@ def build_job_flow_code(
     # If keyclnm is None/empty, use trgclnm as fallback (assumes same name)
     
     # Get all target columns in execution order
-    cursor.execute(f"""
-        SELECT j.jobid, j.mapref, j.trgschm, j.trgtbnm, j.trgtbtyp, jd.trgclnm
-        FROM {schema}.dwjob j
-        JOIN {schema}.dwjobdtl jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
-        WHERE j.mapref = :mapref
-          AND j.stflg = 'A'
-          AND j.curflg = 'Y'
-        ORDER BY jd.excseq
-    """, {'mapref': mapref})
+    if db_type == "POSTGRESQL":
+        cursor.execute(f"""
+            SELECT j.jobid, j.mapref, j.trgschm, j.trgtbnm, j.trgtbtyp, jd.trgclnm
+            FROM {table_prefix}{dms_job_ref}{table_suffix} j
+            JOIN {table_prefix}{dms_jobdtl_ref}{table_suffix} jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
+            WHERE j.mapref = %s
+              AND j.stflg = 'A'
+              AND j.curflg = 'Y'
+            ORDER BY jd.excseq
+        """, (mapref,))
+    else:  # Oracle
+        cursor.execute(f"""
+            SELECT j.jobid, j.mapref, j.trgschm, j.trgtbnm, j.trgtbtyp, jd.trgclnm
+            FROM {schema}.{dms_job_ref} j
+            JOIN {schema}.{dms_jobdtl_ref} jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
+            WHERE j.mapref = :mapref
+              AND j.stflg = 'A'
+              AND j.curflg = 'Y'
+            ORDER BY jd.excseq
+        """, {'mapref': mapref})
     
     all_columns = [row[5] for row in cursor.fetchall()]
     
     # Build mapping from target columns to source columns (VALCLNM holds source column names)
-    cursor.execute(f"""
-        SELECT jd.trgclnm, jd.valclnm
-        FROM {schema}.dwjobdtl jd
-        WHERE jd.mapref = :mapref
-          AND jd.curflg = 'Y'
-    """, {'mapref': mapref})
+    if db_type == "POSTGRESQL":
+        cursor.execute(f"""
+            SELECT jd.trgclnm, jd.valclnm
+            FROM {table_prefix}{dms_jobdtl_ref}{table_suffix} jd
+            WHERE jd.mapref = %s
+              AND jd.curflg = 'Y'
+        """, (mapref,))
+    else:  # Oracle
+        cursor.execute(f"""
+            SELECT jd.trgclnm, jd.valclnm
+            FROM {schema}.{dms_jobdtl_ref} jd
+            WHERE jd.mapref = :mapref
+              AND jd.curflg = 'Y'
+        """, {'mapref': mapref})
     column_source_mapping = {}
     for target_col, source_col in cursor.fetchall():
         column_source_mapping[target_col] = source_col if source_col else target_col
     
     # Ensure mandatory columns (hash + dimension audit columns) are present even
-    # if they are not listed in DWJOBDTL metadata
+    # if they are not listed in DMS_JOBDTL metadata
     mandatory_columns = ['RWHKEY']
     if trgtbtyp.upper() == 'DIM':
         mandatory_columns.extend(['CURFLG', 'FROMDT', 'TODT'])
@@ -102,20 +227,36 @@ def build_job_flow_code(
         column_source_mapping.setdefault(mandatory, mandatory)
     
     # Get combination codes (mapping logic groups)
-    cursor.execute(f"""
-        SELECT jd.mapcmbcd, 
-               MIN(NVL(jd.trgkeyseq, 9999)) as kseq,
-               NVL(jd.scdtyp, 1) as scdtyp,
-               MAX(jd.excseq) as maxexcseq
-        FROM {schema}.dwjobdtl jd
-        WHERE jd.mapref = :mapref
-          AND jd.curflg = 'Y'
-          AND jd.mapcmbcd IS NOT NULL
-        GROUP BY jd.mapcmbcd, NVL(jd.scdtyp, 1)
-        ORDER BY MIN(CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END),
-                 MAX(jd.excseq),
-                 NVL(jd.scdtyp, 1) DESC
-    """, {'mapref': mapref})
+    if db_type == "POSTGRESQL":
+        cursor.execute(f"""
+            SELECT jd.mapcmbcd, 
+                   MIN(COALESCE(jd.trgkeyseq, 9999)) as kseq,
+                   COALESCE(jd.scdtyp, 1) as scdtyp,
+                   MAX(jd.excseq) as maxexcseq
+            FROM {table_prefix}{dms_jobdtl_ref}{table_suffix} jd
+            WHERE jd.mapref = %s
+              AND jd.curflg = 'Y'
+              AND jd.mapcmbcd IS NOT NULL
+            GROUP BY jd.mapcmbcd, COALESCE(jd.scdtyp, 1)
+            ORDER BY MIN(CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END),
+                     MAX(jd.excseq),
+                     COALESCE(jd.scdtyp, 1) DESC
+        """, (mapref,))
+    else:  # Oracle
+        cursor.execute(f"""
+            SELECT jd.mapcmbcd, 
+                   MIN(NVL(jd.trgkeyseq, 9999)) as kseq,
+                   NVL(jd.scdtyp, 1) as scdtyp,
+                   MAX(jd.excseq) as maxexcseq
+            FROM {schema}.{dms_jobdtl_ref} jd
+            WHERE jd.mapref = :mapref
+              AND jd.curflg = 'Y'
+              AND jd.mapcmbcd IS NOT NULL
+            GROUP BY jd.mapcmbcd, NVL(jd.scdtyp, 1)
+            ORDER BY MIN(CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END),
+                     MAX(jd.excseq),
+                     NVL(jd.scdtyp, 1) DESC
+        """, {'mapref': mapref})
     
     combinations = cursor.fetchall()
     
@@ -137,7 +278,6 @@ def build_job_flow_code(
     # Header
     code_parts.append(f'''"""
 Auto-generated ETL Job for {mapref}
-Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 Target: {full_table_name}
 Type: {trgtbtyp}
 Hash Algorithm: MD5 with pipe (|) delimiter
@@ -254,10 +394,10 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
     Execute ETL job for {mapref}.
     
     Args:
-        metadata_connection: Oracle database connection for metadata tables (DWJOBLOG, DWPRCLOG, DWJOBERR)
+        metadata_connection: Oracle database connection for metadata tables (DMS_JOBLOG, DMS_PRCLOG, DMS_JOBERR)
         source_connection: Oracle database connection for source tables (SELECT queries)
         target_connection: Oracle database connection for target tables (INSERT/UPDATE operations)
-        session_params: Session parameters from DWPRCLOG
+        session_params: Session parameters from DMS_PRCLOG
         
     Returns:
         Dictionary with execution results
@@ -323,13 +463,13 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
         
         def log_batch_progress(batch_number: int, batch_source_rows: int, batch_target_rows: int, batch_error_rows: int):
             """
-            Insert batch-level statistics into DWJOBLOG so the UI can display accurate
+            Insert batch-level statistics into DMS_JOBLOG so the UI can display accurate
             progress information. Each call records a single batch.
             """
             try:
-                joblog_id = get_next_id(metadata_cursor, "DWJOBLOGSEQ")
+                joblog_id = get_next_id(metadata_cursor, "DMS_JOBLOGSEQ")
                 metadata_cursor.execute("""
-                    INSERT INTO DWJOBLOG (
+                    INSERT INTO DMS_JOBLOG (
                         joblogid, prcdt, mapref, jobid,
                         srcrows, trgrows, errrows,
                         reccrdt, prcid, sessionid
@@ -349,12 +489,12 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                     'sessionid': sessionid
                 }})
             except Exception as log_err:
-                print(f"WARNING: Could not log batch {{batch_number}} to DWJOBLOG: {{log_err}}")
+                print(f"WARNING: Could not log batch {{batch_number}} to DMS_JOBLOG: {{log_err}}")
         
         # Check for stop request immediately at start
         try:
             metadata_cursor.execute("""
-                SELECT COUNT(*) FROM DWPRCREQ
+                SELECT COUNT(*) FROM DMS_PRCREQ
                 WHERE mapref = :mapref
                   AND request_type = 'STOP'
                   AND status IN ('NEW', 'CLAIMED')
@@ -444,22 +584,40 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
     # Generate code for each combination
     for idx, (mapcmbcd, kseq, scdtyp, maxexcseq) in enumerate(combinations, 1):
         # Get details for this combination
-        cursor.execute(f"""
-            SELECT j.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
-                   jd.trgclnm, jd.trgcldtyp, jd.maplogic, jd.trgkeyflg,
-                   jd.keyclnm, jd.valclnm, jd.mapcmbcd, jd.excseq,
-                   p.prval, jd.maprsqlcd, s.dwmaprsql, s.sqlconid
-            FROM {schema}.dwjob j
-            JOIN {schema}.dwjobdtl jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
-            LEFT JOIN {schema}.dwmaprsql s ON s.dwmaprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
-            JOIN {schema}.dwparams p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
-            WHERE j.jobid = :jobid
-              AND j.stflg = 'A'
-              AND j.curflg = 'Y'
-              AND NVL(jd.scdtyp, 1) = :scdtyp
-              AND NVL(jd.mapcmbcd, '#') = NVL(:mapcmbcd, '#')
-            ORDER BY CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END, jd.excseq
-        """, {'jobid': jobid, 'scdtyp': scdtyp, 'mapcmbcd': mapcmbcd})
+        if db_type == "POSTGRESQL":
+            cursor.execute(f"""
+                SELECT j.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
+                       jd.trgclnm, jd.trgcldtyp, jd.maplogic, jd.trgkeyflg,
+                       jd.keyclnm, jd.valclnm, jd.mapcmbcd, jd.excseq,
+                       p.prval, jd.maprsqlcd, s.MAPRSQL, s.sqlconid
+                FROM {table_prefix}{dms_job_ref}{table_suffix} j
+                JOIN {table_prefix}{dms_jobdtl_ref}{table_suffix} jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
+                LEFT JOIN {table_prefix}{dms_maprsql_ref}{table_suffix} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
+                JOIN {table_prefix}{dms_params_ref}{table_suffix} p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                WHERE j.jobid = %s
+                  AND j.stflg = 'A'
+                  AND j.curflg = 'Y'
+                  AND COALESCE(jd.scdtyp, 1) = %s
+                  AND COALESCE(jd.mapcmbcd, '#') = COALESCE(%s, '#')
+                ORDER BY CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END, jd.excseq
+            """, (jobid, scdtyp, mapcmbcd))
+        else:  # Oracle
+            cursor.execute(f"""
+                SELECT j.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
+                       jd.trgclnm, jd.trgcldtyp, jd.maplogic, jd.trgkeyflg,
+                       jd.keyclnm, jd.valclnm, jd.mapcmbcd, jd.excseq,
+                       p.prval, jd.maprsqlcd, s.MAPRSQL, s.sqlconid
+                FROM {schema}.DMS_JOB j
+                JOIN {schema}.DMS_JOBDTL jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
+                LEFT JOIN {schema}.DMS_MAPRSQL s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
+                JOIN {schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                WHERE j.jobid = :jobid
+                  AND j.stflg = 'A'
+                  AND j.curflg = 'Y'
+                  AND NVL(jd.scdtyp, 1) = :scdtyp
+                  AND NVL(jd.mapcmbcd, '#') = NVL(:mapcmbcd, '#')
+                ORDER BY CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END, jd.excseq
+            """, {'jobid': jobid, 'scdtyp': scdtyp, 'mapcmbcd': mapcmbcd})
         
         combo_details = cursor.fetchall()
         
@@ -478,33 +636,33 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
             else:
                 maplogic_value = str(maplogic_lob) if maplogic_lob else ''
         
-        # Read dwmaprsql (index 14) - this contains the actual SQL query
+        # Read MAPRSQL (index 14) - this contains the actual SQL query
         # Read sqlconid (index 15) - this is the source connection ID
-        # Note: index 13 is jd.maprsqlcd (the code), index 14 is s.dwmaprsql (the actual SQL), index 15 is s.sqlconid (source connection ID)
-        dwmaprsql_lob = combo_details[0][14] if len(combo_details[0]) > 14 else None
+        # Note: index 13 is jd.maprsqlcd (the code), index 14 is s.MAPRSQL (the actual SQL), index 15 is s.sqlconid (source connection ID)
+        dms_maprsql_lob = combo_details[0][14] if len(combo_details[0]) > 14 else None
         sqlconid = combo_details[0][15] if len(combo_details[0]) > 15 else None
-        dwmaprsql_value = ''
-        if dwmaprsql_lob:
+        dms_maprsql_value = ''
+        if dms_maprsql_lob:
             # Handle LOB reading
-            if hasattr(dwmaprsql_lob, 'read'):
-                dwmaprsql_value = dwmaprsql_lob.read()
-                if isinstance(dwmaprsql_value, bytes):
-                    dwmaprsql_value = dwmaprsql_value.decode('utf-8')
+            if hasattr(dms_maprsql_lob, 'read'):
+                dms_maprsql_value = dms_maprsql_lob.read()
+                if isinstance(dms_maprsql_value, bytes):
+                    dms_maprsql_value = dms_maprsql_value.decode('utf-8')
             else:
-                dwmaprsql_value = str(dwmaprsql_lob) if dwmaprsql_lob else ''
+                dms_maprsql_value = str(dms_maprsql_lob) if dms_maprsql_lob else ''
         
         # Determine which SQL to use:
         # - If maplogic looks like actual SQL (contains SELECT, FROM, etc.), use it
-        # - Otherwise, maplogic is likely a code reference, so use dwmaprsql
+        # - Otherwise, maplogic is likely a code reference, so use MAPRSQL
         maplogic_upper = maplogic_value.upper().strip() if maplogic_value else ''
         is_actual_sql = any(keyword in maplogic_upper for keyword in ['SELECT', 'WITH', 'INSERT', 'UPDATE', 'DELETE', 'MERGE'])
         
         if is_actual_sql:
             # maplogic contains actual SQL
             maplogic_sql = maplogic_value.strip()
-        elif dwmaprsql_value and dwmaprsql_value.strip():
-            # maplogic is a code reference, use dwmaprsql
-            maplogic_sql = dwmaprsql_value.strip()
+        elif dms_maprsql_value and dms_maprsql_value.strip():
+            # maplogic is a code reference, use MAPRSQL
+            maplogic_sql = dms_maprsql_value.strip()
         elif maplogic_value and maplogic_value.strip():
             # Fallback: use maplogic even if it doesn't look like SQL (might be valid)
             maplogic_sql = maplogic_value.strip()
@@ -512,7 +670,7 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
             raise ValueError(
                 f"No SQL query found for combination {mapcmbcd} (mapref={mapref}). "
                 f"maplogic='{maplogic_value[:50] if maplogic_value else 'None'}', "
-                f"dwmaprsql={'present' if dwmaprsql_lob else 'None'}"
+                f"MAPRSQL={'present' if dms_maprsql_lob else 'None'}"
             )
         
         # Escape triple quotes in SQL if present (to avoid breaking Python string)
@@ -647,11 +805,11 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
         
         # Helper function to check if stop has been requested for this job
         def check_stop_request():
-            \"\"\"Check if a stop request exists for this job in DWPRCREQ\"\"\"
+            \"\"\"Check if a stop request exists for this job in DMS_PRCREQ\"\"\"
             try:
                 metadata_cursor.execute("""
                     SELECT COUNT(*) 
-                    FROM DWPRCREQ 
+                    FROM DMS_PRCREQ 
                     WHERE mapref = :mapref 
                       AND request_type = 'STOP' 
                       AND status IN ('NEW', 'CLAIMED')
@@ -975,27 +1133,49 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                     rows_to_insert.clear()
                     rows_to_insert.clear()
                 
-            # Update DWPRCLOG progress before checkpoint handling
+            # Update DMS_PRCLOG progress before checkpoint handling
             try:
-                metadata_cursor.execute("""
-                    UPDATE DWPRCLOG
-                    SET SRCROWS = :srcrows,
-                        TRGROWS = :trgrows,
-                        RECUPDT = SYSTIMESTAMP
-                    WHERE sessionid = :sessionid
-                      AND prcid = :prcid
-                """, {{
-                    'srcrows': source_count,
-                    'trgrows': target_count,
-                    'sessionid': sessionid,
-                    'prcid': prcid
-                }})
+                # Detect database type for query syntax
+                from modules.common.db_table_utils import _detect_db_type
+                import os
+                metadata_db_type = _detect_db_type(metadata_connection)
+                schema = (os.getenv("DMS_SCHEMA", "")).strip()
+                schema_prefix = f"{{schema}}." if schema else ""
+                
+                if metadata_db_type == "POSTGRESQL":
+                    metadata_cursor.execute(f"""
+                        UPDATE {{schema_prefix}}DMS_PRCLOG
+                        SET SRCROWS = %s,
+                            TRGROWS = %s,
+                            RECUPDT = CURRENT_TIMESTAMP
+                        WHERE sessionid = %s
+                          AND prcid = %s
+                    """, (
+                        source_count,
+                        target_count,
+                        sessionid,
+                        prcid
+                    ))
+                else:  # Oracle
+                    metadata_cursor.execute(f"""
+                        UPDATE {{schema_prefix}}DMS_PRCLOG
+                        SET SRCROWS = :srcrows,
+                            TRGROWS = :trgrows,
+                            RECUPDT = SYSTIMESTAMP
+                        WHERE sessionid = :sessionid
+                          AND prcid = :prcid
+                    """, {{
+                        'srcrows': source_count,
+                        'trgrows': target_count,
+                        'sessionid': sessionid,
+                        'prcid': prcid
+                    }})
                 batch_error_rows = error_count - batch_error_start
                 log_batch_progress(batch_num, batch_source_rows, batch_target_rows, batch_error_rows)
                 metadata_connection.commit()
-                print(f"DWPRCLOG progress updated (source_rows={{source_count}}, target_rows={{target_count}})")
+                print(f"DMS_PRCLOG progress updated (source_rows={{source_count}}, target_rows={{target_count}})")
             except Exception as progress_err:
-                print(f"WARNING: Could not update DWPRCLOG progress: {{progress_err}}")
+                print(f"WARNING: Could not update DMS_PRCLOG progress: {{progress_err}}")
             
             # Check for stop request before updating checkpoint
             if stop_requested:
@@ -1025,31 +1205,69 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                             checkpoint_display = f"{{CHECKPOINT_COLUMNS[0]}} = {{checkpoint_value}}"
                         
                         if checkpoint_value:
-                            metadata_cursor.execute("""
-                                UPDATE DWPRCLOG
-                                SET PARAM1 = :checkpoint_value
-                                WHERE sessionid = :sessionid
-                                  AND prcid = :prcid
-                            """, {{
-                                'checkpoint_value': str(checkpoint_value),
-                                'sessionid': sessionid,
-                                'prcid': prcid
-                            }})
+                            # Detect database type for query syntax
+                            from modules.common.db_table_utils import _detect_db_type
+                            import os
+                            metadata_db_type = _detect_db_type(metadata_connection)
+                            schema = (os.getenv("DMS_SCHEMA", "")).strip()
+                            schema_prefix = f"{{schema}}." if schema else ""
+                            
+                            if metadata_db_type == "POSTGRESQL":
+                                metadata_cursor.execute(f"""
+                                    UPDATE {{schema_prefix}}DMS_PRCLOG
+                                    SET PARAM1 = %s
+                                    WHERE sessionid = %s
+                                      AND prcid = %s
+                                """, (
+                                    str(checkpoint_value),
+                                    sessionid,
+                                    prcid
+                                ))
+                            else:  # Oracle
+                                metadata_cursor.execute(f"""
+                                    UPDATE {{schema_prefix}}DMS_PRCLOG
+                                    SET PARAM1 = :checkpoint_value
+                                    WHERE sessionid = :sessionid
+                                      AND prcid = :prcid
+                                """, {{
+                                    'checkpoint_value': str(checkpoint_value),
+                                    'sessionid': sessionid,
+                                    'prcid': prcid
+                                }})
                             metadata_connection.commit()
                             print(f"Checkpoint updated: {{checkpoint_display}}")
                     elif CHECKPOINT_STRATEGY == 'PYTHON':
                         # Update checkpoint to row count
                         total_processed = total_fetched
-                        metadata_cursor.execute("""
-                            UPDATE DWPRCLOG
-                            SET PARAM1 = :checkpoint_value
-                            WHERE sessionid = :sessionid
-                              AND prcid = :prcid
-                        """, {{
-                            'checkpoint_value': str(total_processed),
-                            'sessionid': sessionid,
-                            'prcid': prcid
-                        }})
+                        # Detect database type for query syntax
+                        from modules.common.db_table_utils import _detect_db_type
+                        import os
+                        metadata_db_type = _detect_db_type(metadata_connection)
+                        schema = (os.getenv("DMS_SCHEMA", "")).strip()
+                        schema_prefix = f"{{schema}}." if schema else ""
+                        
+                        if metadata_db_type == "POSTGRESQL":
+                            metadata_cursor.execute(f"""
+                                UPDATE {{schema_prefix}}DMS_PRCLOG
+                                SET PARAM1 = %s
+                                WHERE sessionid = %s
+                                  AND prcid = %s
+                            """, (
+                                str(total_processed),
+                                sessionid,
+                                prcid
+                            ))
+                        else:  # Oracle
+                            metadata_cursor.execute(f"""
+                                UPDATE {{schema_prefix}}DMS_PRCLOG
+                                SET PARAM1 = :checkpoint_value
+                                WHERE sessionid = :sessionid
+                                  AND prcid = :prcid
+                            """, {{
+                                'checkpoint_value': str(total_processed),
+                                'sessionid': sessionid,
+                                'prcid': prcid
+                            }})
                         print(f"Checkpoint updated: {{total_processed}} rows processed")
                 
             # Commit strategy: 
@@ -1098,7 +1316,7 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
             # Mark stop request as processed
             try:
                 metadata_cursor.execute("""
-                    UPDATE DWPRCREQ 
+                    UPDATE DMS_PRCREQ 
                     SET status = 'DONE', 
                         result_payload = '{{"status": "STOPPED", "rows_processed": ' + str(total_fetched) + '}}',
                         completed_at = SYSTIMESTAMP
@@ -1129,15 +1347,33 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
     code_parts.append(f'''
         # Mark checkpoint as COMPLETED on successful finish (using metadata connection)
         if CHECKPOINT_ENABLED:
-            metadata_cursor.execute("""
-                UPDATE DWPRCLOG
-                SET PARAM1 = 'COMPLETED'
-                WHERE sessionid = :sessionid
-                  AND prcid = :prcid
-            """, {{
-                'sessionid': sessionid,
-                'prcid': prcid
-            }})
+            # Detect database type for query syntax
+            from modules.common.db_table_utils import _detect_db_type
+            import os
+            metadata_db_type = _detect_db_type(metadata_connection)
+            schema = (os.getenv("DMS_SCHEMA", "")).strip()
+            schema_prefix = f"{{schema}}." if schema else ""
+            
+            if metadata_db_type == "POSTGRESQL":
+                metadata_cursor.execute(f"""
+                    UPDATE {{schema_prefix}}DMS_PRCLOG
+                    SET PARAM1 = 'COMPLETED'
+                    WHERE sessionid = %s
+                      AND prcid = %s
+                """, (
+                    sessionid,
+                    prcid
+                ))
+            else:  # Oracle
+                metadata_cursor.execute(f"""
+                    UPDATE {{schema_prefix}}DMS_PRCLOG
+                    SET PARAM1 = 'COMPLETED'
+                    WHERE sessionid = :sessionid
+                      AND prcid = :prcid
+                """, {{
+                    'sessionid': sessionid,
+                    'prcid': prcid
+                }})
             print("Checkpoint marked as COMPLETED")
         
         # Final commit: commit any remaining uncommitted work
@@ -1196,9 +1432,9 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
         
         # Log error (using metadata connection)
         try:
-            error_id = get_next_id(metadata_cursor, "DWJOBERRSEQ")
+            error_id = get_next_id(metadata_cursor, "DMS_JOBERRSEQ")
             metadata_cursor.execute("""
-                INSERT INTO DWJOBERR (
+                INSERT INTO DMS_JOBERR (
                     errid, prcid, sessionid, jobid, mapref, prcdt,
                     errtyp, errmsg, dberrmsg
                 )
@@ -1250,7 +1486,7 @@ if __name__ == '__main__':
     # This allows testing the generated job independently
     print("This is an auto-generated ETL job for {mapref}")
     print("To execute, call: execute_job(metadata_connection, source_connection, target_connection, session_params)")
-    print("  - metadata_connection: For DWJOBLOG, DWPRCLOG, DWJOBERR operations")
+    print("  - metadata_connection: For DMS_JOBLOG, DMS_PRCLOG, DMS_JOBERR operations")
     print("  - source_connection: For source table operations (SELECT queries)")
     print("  - target_connection: For target table operations (INSERT/UPDATE operations)")
 ''')

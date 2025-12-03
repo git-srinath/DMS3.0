@@ -5,7 +5,7 @@
 The application was failing with the error:
 ```
 Operation failed: An error occurred while saving the mapping data 
-PKGDWMAPR_PY.CREATE_UPDATE_MAPPING_DETAIL - Error 107: 
+PKGDMS_MAPR_PY.CREATE_UPDATE_MAPPING_DETAIL - Error 107: 
 Mapref=TEST_DIM-ACT_ID User=srinath::Invalid values for SCD type.
 ```
 
@@ -90,7 +90,7 @@ excseq_val = int(p_excseq) if p_excseq is not None else None
 scdtyp_val = int(_nvl(p_scdtyp, 1))
 
 cursor.execute("""
-    INSERT INTO dwmaprdtl (...)
+    INSERT INTO DMS_MAPRDTL (...)
     VALUES (...)
 """, [p_mapref, p_trgclnm, p_trgcldtyp, p_trgkeyflg, trgkeyseq_val, ...,
       ..., excseq_val, scdtyp_val, ...])
@@ -143,7 +143,7 @@ if (w_mapr_rec['mapdesc'] == p_mapdesc and
 blkprcrows_val = int(p_blkprcrows) if p_blkprcrows is not None else None
 
 cursor.execute("""
-    INSERT INTO dwmapr (...)
+    INSERT INTO DMS_MAPR (...)
     VALUES (...)
 """, [p_mapref, p_mapdesc, ..., blkprcrows_val, ...])
 ```
@@ -235,7 +235,7 @@ p_trgkeyseq = 'xyz'  # Error: Invalid key sequence value "xyz" - must be numeric
 
 ## Files Modified
 
-- `backend/modules/mapper/pkgdwmapr_python.py`
+- `backend/modules/mapper/pkgdms_mapr_python.py`
   - Lines 179-186: Added blkprcrows validation
   - Lines 206-215: Added blkprcrows comparison conversion
   - Lines 234-247: Added blkprcrows insertion conversion

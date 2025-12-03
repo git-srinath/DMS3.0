@@ -7,7 +7,7 @@ Fixed missing exception details in error codes [101] and [105] which occur when 
 **User Error Message:**
 ```
 Operation failed: An error occurred while saving the mapping data 
-Error in PKGDWMAPR.CREATE_UPDATE_MAPPING [101]: Mapref=TEST_DIM-Test dimension table mapid=42
+Error in PKGDMS_MAPR.CREATE_UPDATE_MAPPING [101]: Mapref=TEST_DIM-Test dimension table mapid=42
 ```
 
 **Context:** User was trying to update column description in the Mapper Module.
@@ -19,14 +19,14 @@ When updating existing mapping or mapping detail records (setting `curflg = 'N'`
 **Before:**
 ```python
 except Exception as e:
-    raise PKGDWMAPRError(self.G_NAME, w_procnm, '101', 
+    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '101', 
                        f"{w_parm} mapid={w_mapr_dict['MAPID']}")
 ```
 
 **After:**
 ```python
 except Exception as e:
-    raise PKGDWMAPRError(self.G_NAME, w_procnm, '101', 
+    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '101', 
                        f"{w_parm} mapid={w_mapr_dict['MAPID']} - {str(e)}")
 ```
 
@@ -34,7 +34,7 @@ except Exception as e:
 **Before:**
 ```python
 except Exception as e:
-    raise PKGDWMAPRError(self.G_NAME, w_procnm, '105',
+    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '105',
                        f"{w_parm} Mapref={w_maprdtl_dict['MAPREF']} "
                        f"Trgclnm={w_maprdtl_dict['TRGCLNM']}")
 ```
@@ -42,29 +42,29 @@ except Exception as e:
 **After:**
 ```python
 except Exception as e:
-    raise PKGDWMAPRError(self.G_NAME, w_procnm, '105',
+    raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '105',
                        f"{w_parm} Mapref={w_maprdtl_dict['MAPREF']} "
                        f"Trgclnm={w_maprdtl_dict['TRGCLNM']} - {str(e)}")
 ```
 
 ## What These Errors Mean
 
-### Error [101] - UPDATE dwmapr Failed
+### Error [101] - UPDATE DMS_MAPR Failed
 This error occurs when trying to update an existing mapping record to set `curflg = 'N'` (marking it as not current) before inserting a new version.
 
 **Possible causes:**
 1. **Database constraint violation** - Foreign key, check constraint, or trigger failure
 2. **Lock contention** - Another session is updating the same record
-3. **Permission issues** - User lacks UPDATE privilege on `dwmapr` table
+3. **Permission issues** - User lacks UPDATE privilege on `DMS_MAPR` table
 4. **Missing columns** - The table structure doesn't match expectations
 
-### Error [105] - UPDATE dwmaprdtl Failed
+### Error [105] - UPDATE DMS_MAPRDTL Failed
 This error occurs when trying to update an existing mapping detail record to set `curflg = 'N'` (marking it as not current) before inserting a new version.
 
 **Possible causes:**
 1. **Database constraint violation** - Foreign key, check constraint, or trigger failure
 2. **Lock contention** - Another session is updating the same record
-3. **Permission issues** - User lacks UPDATE privilege on `dwmaprdtl` table
+3. **Permission issues** - User lacks UPDATE privilege on `DMS_MAPRDTL` table
 4. **Missing columns** - The table structure doesn't match expectations
 
 ## Next Steps for Debugging
@@ -72,7 +72,7 @@ This error occurs when trying to update an existing mapping detail record to set
 With this fix in place, when the user encounters the error again, the error message will now include the actual Oracle error. For example:
 
 ```
-Error in PKGDWMAPR.CREATE_UPDATE_MAPPING [101]: Mapref=TEST_DIM-Test dimension table mapid=42 - ORA-02292: integrity constraint violated - child record found
+Error in PKGDMS_MAPR.CREATE_UPDATE_MAPPING [101]: Mapref=TEST_DIM-Test dimension table mapid=42 - ORA-02292: integrity constraint violated - child record found
 ```
 
 ## Common Oracle Errors to Look For
@@ -102,7 +102,7 @@ Error in PKGDWMAPR.CREATE_UPDATE_MAPPING [101]: Mapref=TEST_DIM-Test dimension t
 3. **Share the complete error message** - This will help identify the actual root cause
 
 ## Related Files
-- `backend/modules/mapper/pkgdwmapr.py` - Fixed error handling in `create_update_mapping` and `create_update_mapping_detail`
+- `backend/modules/mapper/pkgdms_mapr.py` - Fixed error handling in `create_update_mapping` and `create_update_mapping_detail`
 
 ## Related Fixes
 - `ERROR_132_FIX.md` - Similar fix for error code [132] in `create_update_sql`

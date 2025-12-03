@@ -7,7 +7,7 @@ Fixed **ORA-01745: invalid host/bind variable name** error caused by using `:use
 **User Error Message:**
 ```
 Operation failed: An error occurred while saving the mapping data 
-Error in PKGDWMAPR.CREATE_UPDATE_MAPPING [101]: Mapref=TEST_DIM-Test dimension table mapid=42 - ORA-01745: invalid host/bind variable name
+Error in PKGDMS_MAPR.CREATE_UPDATE_MAPPING [101]: Mapref=TEST_DIM-Test dimension table mapid=42 - ORA-01745: invalid host/bind variable name
 Help: https://docs.oracle.com/error-help/db/ora-01745/
 ```
 
@@ -32,7 +32,7 @@ All bind variables named `:user` were renamed to `:p_user` in the following loca
 **Before:**
 ```python
 cursor.execute("""
-    UPDATE dwmapr
+    UPDATE DMS_MAPR
     SET curflg = 'N',
         recupdt = SYSDATE,
         uptdby = :user
@@ -46,7 +46,7 @@ cursor.execute("""
 **After:**
 ```python
 cursor.execute("""
-    UPDATE dwmapr
+    UPDATE DMS_MAPR
     SET curflg = 'N',
         recupdt = SYSDATE,
         uptdby = :p_user
@@ -60,14 +60,14 @@ cursor.execute("""
 ### 2. `create_update_mapping` - INSERT Statement (Line 336)
 **Before:**
 ```python
-VALUES (dwmaprseq.nextval, :mapref, :mapdesc, :trgschm, :trgtbtyp, :trgtbnm, 
+VALUES (DMS_MAPRSEQ.nextval, :mapref, :mapdesc, :trgschm, :trgtbtyp, :trgtbnm, 
        :frqcd, :srcsystm, :lgvrfyflg, :lgvrfydt, :stflg, SYSDATE, SYSDATE, 'Y', 
        :blkprcrows, :user, :user)
 ```
 
 **After:**
 ```python
-VALUES (dwmaprseq.nextval, :mapref, :mapdesc, :trgschm, :trgtbtyp, :trgtbnm, 
+VALUES (DMS_MAPRSEQ.nextval, :mapref, :mapdesc, :trgschm, :trgtbtyp, :trgtbnm, 
        :frqcd, :srcsystm, :lgvrfyflg, :lgvrfydt, :stflg, SYSDATE, SYSDATE, 'Y', 
        :blkprcrows, :p_user, :p_user)
 ```
@@ -76,7 +76,7 @@ VALUES (dwmaprseq.nextval, :mapref, :mapdesc, :trgschm, :trgtbtyp, :trgtbnm,
 **Before:**
 ```python
 cursor.execute("""
-    UPDATE dwmaprdtl
+    UPDATE DMS_MAPRDTL
     SET curflg = 'N',
         recupdt = SYSDATE,
         uptdby = :user
@@ -93,7 +93,7 @@ cursor.execute("""
 **After:**
 ```python
 cursor.execute("""
-    UPDATE dwmaprdtl
+    UPDATE DMS_MAPRDTL
     SET curflg = 'N',
         recupdt = SYSDATE,
         uptdby = :p_user
@@ -110,7 +110,7 @@ cursor.execute("""
 ### 4. `create_update_mapping_detail` - INSERT Statement (Line 579)
 **Before:**
 ```python
-VALUES (dwmaprdtlseq.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg, 
+VALUES (DMS_MAPRDTLSEQ.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg, 
        :trgkeyseq, :trgcldesc, :maplogic, :maprsqlcd, :keyclnm, :valclnm, 
        :mapcmbcd, :excseq, :scdtyp, :lgvrfyflg, :lgvrfydt, SYSDATE, SYSDATE, 
        'Y', :user, :user)
@@ -118,7 +118,7 @@ VALUES (dwmaprdtlseq.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg,
 
 **After:**
 ```python
-VALUES (dwmaprdtlseq.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg, 
+VALUES (DMS_MAPRDTLSEQ.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg, 
        :trgkeyseq, :trgcldesc, :maplogic, :maprsqlcd, :keyclnm, :valclnm, 
        :mapcmbcd, :excseq, :scdtyp, :lgvrfyflg, :lgvrfydt, SYSDATE, SYSDATE, 
        'Y', :p_user, :p_user)
@@ -128,7 +128,7 @@ VALUES (dwmaprdtlseq.nextval, :mapref, :trgclnm, :trgcldtyp, :trgkeyflg,
 **Before:**
 ```python
 cursor.execute("""
-    UPDATE dwmapr
+    UPDATE DMS_MAPR
     SET lgvrfydt = SYSDATE,
         lgvrfyflg = :lgvrfyflg,
         lgvrfby = :user
@@ -144,7 +144,7 @@ cursor.execute("""
 **After:**
 ```python
 cursor.execute("""
-    UPDATE dwmapr
+    UPDATE DMS_MAPR
     SET lgvrfydt = SYSDATE,
         lgvrfyflg = :lgvrfyflg,
         lgvrfby = :p_user
@@ -161,7 +161,7 @@ cursor.execute("""
 **Before:**
 ```python
 cursor.execute("""
-    UPDATE dwmapr
+    UPDATE DMS_MAPR
     SET stflg = :stflg,
         actby = :user,
         actdt = SYSDATE
@@ -177,7 +177,7 @@ cursor.execute("""
 **After:**
 ```python
 cursor.execute("""
-    UPDATE dwmapr
+    UPDATE DMS_MAPR
     SET stflg = :stflg,
         actby = :p_user,
         actdt = SYSDATE
@@ -214,7 +214,7 @@ cursor.execute("""
 All operations should now work without ORA-01745 errors.
 
 ## Related Files
-- `backend/modules/mapper/pkgdwmapr.py` - Fixed all bind variable names
+- `backend/modules/mapper/pkgdms_mapr.py` - Fixed all bind variable names
 
 ## Related Documentation
 - `ERROR_101_105_FIX.md` - Enhanced error messages for [101] and [105]

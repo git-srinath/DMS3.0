@@ -6,22 +6,22 @@
 
 **Full Error Message:**
 ```
-Error: Error in PKGDWMAPR.CREATE_UPDATE_SQL [133]: SqlCode=testsqlcd123 - 
+Error: Error in PKGDMS_MAPR.CREATE_UPDATE_SQL [133]: SqlCode=testsqlcd123 - 
 ORA-02289: sequence does not exist
 ```
 
 ## Root Cause
 
-The Python PKGDWMAPR module requires **4 Oracle sequences** to generate unique IDs for database records. These sequences don't exist in your database yet.
+The Python PKGDMS_MAPR module requires **4 Oracle sequences** to generate unique IDs for database records. These sequences don't exist in your database yet.
 
 ### Required Sequences:
 
 | Sequence Name | Purpose | Used In |
 |--------------|---------|---------|
-| `DWMAPRSQLSEQ` | Generate SQL mapping IDs | CREATE_UPDATE_SQL |
-| `DWMAPRSEQ` | Generate mapping IDs | CREATE_UPDATE_MAPPING |
-| `DWMAPRDTLSEQ` | Generate mapping detail IDs | CREATE_UPDATE_MAPPING_DETAIL |
-| `DWMAPERRSEQ` | Generate error log IDs | VALIDATE_LOGIC (error logging) |
+| `DMS_MAPRSQLSEQ` | Generate SQL mapping IDs | CREATE_UPDATE_SQL |
+| `DMS_MAPRSEQ` | Generate mapping IDs | CREATE_UPDATE_MAPPING |
+| `DMS_MAPRDTLSEQ` | Generate mapping detail IDs | CREATE_UPDATE_MAPPING_DETAIL |
+| `DMS_MAPERRSEQ` | Generate error log IDs | VALIDATE_LOGIC (error logging) |
 
 ## Solution
 
@@ -45,17 +45,17 @@ The Python PKGDWMAPR module requires **4 Oracle sequences** to generate unique I
    ```sql
    SELECT sequence_name, last_number 
    FROM user_sequences 
-   WHERE sequence_name IN ('DWMAPRSQLSEQ', 'DWMAPRSEQ', 'DWMAPRDTLSEQ', 'DWMAPERRSEQ');
+   WHERE sequence_name IN ('DMS_MAPRSQLSEQ', 'DMS_MAPRSEQ', 'DMS_MAPRDTLSEQ', 'DMS_MAPERRSEQ');
    ```
 
    **Expected Output:**
    ```
    SEQUENCE_NAME      LAST_NUMBER
    ------------------ -----------
-   DWMAPRSQLSEQ                 1
-   DWMAPRSEQ                    1
-   DWMAPRDTLSEQ                 1
-   DWMAPERRSEQ                  1
+   DMS_MAPRSQLSEQ                 1
+   DMS_MAPRSEQ                    1
+   DMS_MAPRDTLSEQ                 1
+   DMS_MAPERRSEQ                  1
    ```
 
 ### Option 2: Create Sequences Manually
@@ -64,29 +64,29 @@ If you prefer to create them one by one:
 
 ```sql
 -- SQL Mapping sequence
-CREATE SEQUENCE DWMAPRSQLSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPRSQLSEQ START WITH 1 INCREMENT BY 1;
 
 -- Mapping sequence
-CREATE SEQUENCE DWMAPRSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPRSEQ START WITH 1 INCREMENT BY 1;
 
 -- Mapping Detail sequence
-CREATE SEQUENCE DWMAPRDTLSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPRDTLSEQ START WITH 1 INCREMENT BY 1;
 
 -- Mapping Error sequence
-CREATE SEQUENCE DWMAPERRSEQ START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE DMS_MAPERRSEQ START WITH 1 INCREMENT BY 1;
 
 COMMIT;
 ```
 
 ### Option 3: Check if PL/SQL Package Created Them
 
-If you previously had the PL/SQL PKGDWMAPR package installed, the sequences might exist but in a different schema. Check:
+If you previously had the PL/SQL PKGDMS_MAPR package installed, the sequences might exist but in a different schema. Check:
 
 ```sql
 -- Check all schemas
 SELECT owner, sequence_name 
 FROM all_sequences 
-WHERE sequence_name IN ('DWMAPRSQLSEQ', 'DWMAPRSEQ', 'DWMAPRDTLSEQ', 'DWMAPERRSEQ');
+WHERE sequence_name IN ('DMS_MAPRSQLSEQ', 'DMS_MAPRSEQ', 'DMS_MAPRDTLSEQ', 'DMS_MAPERRSEQ');
 ```
 
 If they exist in another schema, you have two options:
@@ -98,10 +98,10 @@ If they exist in another schema, you have two options:
 ### Test 1: Verify Sequence Access
 ```sql
 -- Test all sequences
-SELECT DWMAPRSQLSEQ.NEXTVAL FROM DUAL;
-SELECT DWMAPRSEQ.NEXTVAL FROM DUAL;
-SELECT DWMAPRDTLSEQ.NEXTVAL FROM DUAL;
-SELECT DWMAPERRSEQ.NEXTVAL FROM DUAL;
+SELECT DMS_MAPRSQLSEQ.NEXTVAL FROM DUAL;
+SELECT DMS_MAPRSEQ.NEXTVAL FROM DUAL;
+SELECT DMS_MAPRDTLSEQ.NEXTVAL FROM DUAL;
+SELECT DMS_MAPERRSEQ.NEXTVAL FROM DUAL;
 ```
 
 Each should return a number (starting from 1 if just created).
@@ -135,16 +135,16 @@ GRANT CREATE SEQUENCE TO your_username;
 **Solution:** Create public synonyms or grant access:
 ```sql
 -- Option A: Grant to specific user
-GRANT SELECT ON schema_owner.DWMAPRSQLSEQ TO your_username;
-GRANT SELECT ON schema_owner.DWMAPRSEQ TO your_username;
-GRANT SELECT ON schema_owner.DWMAPRDTLSEQ TO your_username;
-GRANT SELECT ON schema_owner.DWMAPERRSEQ TO your_username;
+GRANT SELECT ON schema_owner.DMS_MAPRSQLSEQ TO your_username;
+GRANT SELECT ON schema_owner.DMS_MAPRSEQ TO your_username;
+GRANT SELECT ON schema_owner.DMS_MAPRDTLSEQ TO your_username;
+GRANT SELECT ON schema_owner.DMS_MAPERRSEQ TO your_username;
 
 -- Option B: Create synonyms
-CREATE SYNONYM DWMAPRSQLSEQ FOR schema_owner.DWMAPRSQLSEQ;
-CREATE SYNONYM DWMAPRSEQ FOR schema_owner.DWMAPRSEQ;
-CREATE SYNONYM DWMAPRDTLSEQ FOR schema_owner.DWMAPRDTLSEQ;
-CREATE SYNONYM DWMAPERRSEQ FOR schema_owner.DWMAPERRSEQ;
+CREATE SYNONYM DMS_MAPRSQLSEQ FOR schema_owner.DMS_MAPRSQLSEQ;
+CREATE SYNONYM DMS_MAPRSEQ FOR schema_owner.DMS_MAPRSEQ;
+CREATE SYNONYM DMS_MAPRDTLSEQ FOR schema_owner.DMS_MAPRDTLSEQ;
+CREATE SYNONYM DMS_MAPERRSEQ FOR schema_owner.DMS_MAPERRSEQ;
 ```
 
 ### Issue 3: Want to Start from a Specific Number
@@ -153,11 +153,11 @@ If you have existing data and need sequences to start from a higher number:
 
 ```sql
 -- Find the maximum ID from existing data
-SELECT MAX(dwmaprsqlid) FROM dwmaprsql;  -- Example: returns 1500
+SELECT MAX(dms_maprsqlid) FROM DMS_MAPRSQL;  -- Example: returns 1500
 
 -- Drop and recreate sequence starting from 1501
-DROP SEQUENCE DWMAPRSQLSEQ;
-CREATE SEQUENCE DWMAPRSQLSEQ START WITH 1501 INCREMENT BY 1;
+DROP SEQUENCE DMS_MAPRSQLSEQ;
+CREATE SEQUENCE DMS_MAPRSQLSEQ START WITH 1501 INCREMENT BY 1;
 ```
 
 Repeat for other sequences based on your existing data.

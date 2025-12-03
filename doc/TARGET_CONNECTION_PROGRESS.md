@@ -8,17 +8,17 @@
 ## ✅ COMPLETED: All Implementation Steps
 
 ### Step 1: Database Schema Changes ✅ DONE (by User)
-- [x] Added `TRGCONID` column to `DWMAPR` table
+- [x] Added `TRGCONID` column to `DMS_MAPR` table
 - [x] Existing records have NULL values (backward compatible)
 - [x] Ready to proceed with backend changes
 
 ### Step 2: Backend Python Changes ✅ DONE
 
-#### 2.1 ✅ Updated `backend/modules/mapper/pkgdwmapr_python.py`
+#### 2.1 ✅ Updated `backend/modules/mapper/pkgdms_mapr_python.py`
 
 **Changes Made:**
 1. ✅ Added `p_trgconid=None` parameter to `create_update_mapping()` function
-2. ✅ Added validation for target connection ID (checks if connection exists in DWDBCONDTLS)
+2. ✅ Added validation for target connection ID (checks if connection exists in DMS_DBCONDTLS)
 3. ✅ Updated SELECT query to include `trgconid` column
 4. ✅ Updated change detection to compare `trgconid` values
 5. ✅ Updated INSERT statement to include `trgconid` column
@@ -46,7 +46,7 @@
 **New Functions Added:**
 
 1. **`create_target_connection(connection_id)`** (Lines 59-112)
-   - Creates database connection from DWDBCONDTLS record
+   - Creates database connection from DMS_DBCONDTLS record
    - Fetches connection details (host, port, user, password, etc.)
    - Supports both connection string and component-based connections
    - Returns Oracle connection object
@@ -62,7 +62,7 @@
 #### 2.4 ✅ Updated `backend/modules/mapper/mapper.py`
 
 **Changes Made:**
-1. ✅ Added `/get-connections` API endpoint to fetch active connections from DWDBCONDTLS
+1. ✅ Added `/get-connections` API endpoint to fetch active connections from DMS_DBCONDTLS
 2. ✅ Updated `save_to_db()` to extract and pass `targetConnectionId`
 3. ✅ Updated `get_by_reference()` to include `targetConnectionId` in response
 
@@ -70,7 +70,7 @@
 ```python
 @mapper_bp.route('/get-connections', methods=['GET'])
 def get_connections():
-    """Returns list of active connections from DWDBCONDTLS"""
+    """Returns list of active connections from DMS_DBCONDTLS"""
 ```
 
 **Response Format:**
@@ -173,16 +173,16 @@ All implementation steps are finished:
 
 ```sql
 -- Check if column was added
-DESC DWMAPR;
+DESC DMS_MAPR;
 
 -- Check existing mappings
 SELECT MAPREF, MAPDESC, TRGCONID 
-FROM DWMAPR 
+FROM DMS_MAPR 
 WHERE CURFLG = 'Y';
 
 -- Check available connections
 SELECT CONID, CONNM, DBHOST, CURFLG 
-FROM DWDBCONDTLS 
+FROM DMS_DBCONDTLS 
 WHERE CURFLG = 'Y';
 
 -- Test query: mappings with their target connections
@@ -192,8 +192,8 @@ SELECT
     m.TRGCONID,
     c.CONNM as TARGET_CONNECTION_NAME,
     c.DBHOST as TARGET_HOST
-FROM DWMAPR m
-LEFT JOIN DWDBCONDTLS c ON m.TRGCONID = c.CONID AND c.CURFLG = 'Y'
+FROM DMS_MAPR m
+LEFT JOIN DMS_DBCONDTLS c ON m.TRGCONID = c.CONID AND c.CURFLG = 'Y'
 WHERE m.CURFLG = 'Y';
 ```
 
@@ -229,7 +229,7 @@ npm run dev
 3. Select a connection from "Target Connection" dropdown
 4. Add mapping details
 5. Save
-6. Verify in database: `SELECT MAPREF, TRGCONID FROM DWMAPR WHERE MAPREF = 'your_ref'`
+6. Verify in database: `SELECT MAPREF, TRGCONID FROM DMS_MAPR WHERE MAPREF = 'your_ref'`
 
 **Scenario 2: Create Mapping without Target Connection**
 1. Click "New Mapping"
@@ -257,7 +257,7 @@ npm run dev
 
 ### 🔒 Validation & Security
 - Connection ID validation (numeric check)
-- Existence check in DWDBCONDTLS
+- Existence check in DMS_DBCONDTLS
 - Active status check (CURFLG = 'Y')
 - Proper error messages
 
@@ -281,7 +281,7 @@ npm run dev
 - `TARGET_CONNECTION_PROGRESS.md` - This file (progress tracking)
 
 **Modified Files:**
-- `backend/modules/mapper/pkgdwmapr_python.py`
+- `backend/modules/mapper/pkgdms_mapr_python.py`
 - `backend/modules/helper_functions.py`
 - `backend/database/dbconnect.py`
 - `backend/modules/mapper/mapper.py`

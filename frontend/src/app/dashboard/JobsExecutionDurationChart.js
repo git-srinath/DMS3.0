@@ -148,7 +148,8 @@ const JobsExecutionDurationChart = ({ selectedJob }) => {
   const periodOptions = [
     { value: '1', label: 'Last Day' },
     { value: '7', label: 'Last 7 Days' },
-    { value: '30', label: 'Last 30 Days' }
+    { value: '30', label: 'Last 30 Days' },
+    { value: 'ALL', label: 'All' }
   ];
 
   return (
@@ -179,27 +180,23 @@ const JobsExecutionDurationChart = ({ selectedJob }) => {
           
           {/* Period Selector */}
           <div className="mt-4 sm:mt-0">
-            <div className={`flex space-x-1 p-1 rounded-lg ${
-              darkMode ? 'bg-gray-700' : 'bg-gray-100'
-            }`}>
+            <select
+              value={period}
+              onChange={(e) => setPeriod(e.target.value)}
+              className={`
+                w-full sm:w-48 px-3 py-2 rounded-lg border text-sm
+                ${darkMode 
+                  ? 'bg-gray-700 border-gray-600 text-white' 
+                  : 'bg-gray-50 border-gray-300 text-gray-900'}
+                focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all
+              `}
+            >
               {periodOptions.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => setPeriod(option.value)}
-                  className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                    period === option.value
-                      ? darkMode 
-                        ? 'bg-gray-600 text-purple-400 shadow-sm'
-                        : 'bg-white text-purple-600 shadow-sm'
-                      : darkMode
-                        ? 'text-gray-300 hover:text-white'
-                        : 'text-gray-600 hover:text-gray-900'
-                  }`}
-                >
+                <option key={option.value} value={option.value}>
                   {option.label}
-                </button>
+                </option>
               ))}
-            </div>
+            </select>
           </div>
         </div>
       </div>

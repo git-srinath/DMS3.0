@@ -16,7 +16,7 @@ The checkpoint feature uses **shortened column names** as implemented in your da
 
 ### Example 1: Fact Table with Transaction ID (KEY Strategy)
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRTGY = 'KEY',
     CHKPNTCLNM = 'TRANSACTION_ID',
     CHKPNTENBLD = 'Y'
@@ -25,7 +25,7 @@ WHERE MAPREF = 'SALES_FACT_LOAD';
 
 ### Example 2: Dimension with Timestamp (KEY Strategy)
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRTGY = 'KEY',
     CHKPNTCLNM = 'MODIFIED_DATE',
     CHKPNTENBLD = 'Y'
@@ -34,7 +34,7 @@ WHERE MAPREF = 'CUSTOMER_DIM';
 
 ### Example 3: Complex Query without Unique Key (PYTHON Strategy)
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRTGY = 'PYTHON',
     CHKPNTCLNM = NULL,
     CHKPNTENBLD = 'Y'
@@ -43,7 +43,7 @@ WHERE MAPREF = 'AGGREGATED_VIEW_LOAD';
 
 ### Example 4: Small Lookup Table (Disable Checkpoint)
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRTGY = 'NONE',
     CHKPNTENBLD = 'N'
 WHERE MAPREF = 'COUNTRY_LOOKUP';
@@ -51,7 +51,7 @@ WHERE MAPREF = 'COUNTRY_LOOKUP';
 
 ### Example 5: AUTO Strategy (Let System Decide)
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRTGY = 'AUTO',
     CHKPNTCLNM = 'ORDER_ID',  -- Will use KEY since column specified
     CHKPNTENBLD = 'Y'
@@ -65,14 +65,14 @@ WHERE MAPREF = 'ORDER_PROCESSING';
 ### View Checkpoint Configuration
 ```sql
 SELECT MAPREF, CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD
-FROM DWMAPR
+FROM DMS_MAPR
 WHERE MAPREF = 'YOUR_MAPPING';
 ```
 
 ### View All Configured Checkpoints
 ```sql
 SELECT MAPREF, CHKPNTSTRTGY, CHKPNTCLNM, CHKPNTENBLD, CURFLG
-FROM DWMAPR
+FROM DMS_MAPR
 WHERE CHKPNTENBLD = 'Y'
   AND CURFLG = 'Y'
 ORDER BY MAPREF;
@@ -81,7 +81,7 @@ ORDER BY MAPREF;
 ### View Current Checkpoint Value
 ```sql
 SELECT PARAM1 as checkpoint_value, STATUS
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE MAPREF = 'YOUR_MAPPING'
   AND STATUS = 'IP'
 ORDER BY RECCRDT DESC
@@ -90,7 +90,7 @@ FETCH FIRST 1 ROW ONLY;
 
 ### Clear Checkpoint (Force Full Reload)
 ```sql
-UPDATE DWPRCLOG
+UPDATE DMS_PRCLOG
 SET PARAM1 = NULL
 WHERE MAPREF = 'YOUR_MAPPING'
   AND SESSIONID = :current_session;
@@ -164,11 +164,11 @@ WHERE MAPREF = 'YOUR_MAPPING'
 ✅ **All code has been updated to use your column names:**
 
 ### Python Files Updated:
-- ✅ `backend/modules/jobs/pkgdwjob_python.py`
+- ✅ `backend/modules/jobs/pkgdms_job_python.py`
   - `create_update_job()` - INSERT and parameter mapping
   - `create_job_flow()` - SELECT and parameter passing
 
-- ✅ `backend/modules/jobs/pkgdwjob_create_job_flow.py`
+- ✅ `backend/modules/jobs/pkgdms_job_create_job_flow.py`
   - Function signature parameters
   - Strategy determination logic
   - Generated code constants
@@ -190,7 +190,7 @@ WHERE MAPREF = 'YOUR_MAPPING'
    ```sql
    SELECT column_name, data_type, data_length, data_default
    FROM user_tab_columns
-   WHERE table_name = 'DWMAPR'
+   WHERE table_name = 'DMS_MAPR'
      AND column_name IN ('CHKPNTSTRTGY', 'CHKPNTCLNM', 'CHKPNTENBLD')
    ORDER BY column_name;
    ```
@@ -201,14 +201,14 @@ WHERE MAPREF = 'YOUR_MAPPING'
 
 3. **Regenerate Job Flows:**
    ```python
-   from modules.jobs import pkgdwjob_python as pkgdwjob
-   job_id = pkgdwjob.create_update_job(connection, 'YOUR_MAPPING')
+   from modules.jobs import pkgdms_job_python as pkgdms_job
+   job_id = pkgdms_job.create_update_job(connection, 'YOUR_MAPPING')
    ```
 
 4. **Test Checkpoint:**
    - Run job
    - Cancel midway
-   - Check `DWPRCLOG.PARAM1` for checkpoint value
+   - Check `DMS_PRCLOG.PARAM1` for checkpoint value
    - Restart job - should resume from checkpoint
 
 ---
@@ -233,13 +233,13 @@ WHERE MAPREF = 'YOUR_MAPPING'
 ## 📞 Quick Help
 
 **Problem:** Configuration not taking effect  
-**Solution:** Make sure to regenerate job flow after updating DWMAPR
+**Solution:** Make sure to regenerate job flow after updating DMS_MAPR
 
 **Problem:** "Column not found" error  
 **Solution:** Ensure CHKPNTCLNM column exists in source query result
 
 **Problem:** Job always starts from beginning  
-**Solution:** Check CHKPNTENBLD = 'Y' in DWMAPR
+**Solution:** Check CHKPNTENBLD = 'Y' in DMS_MAPR
 
 **For more help, see:** `doc/CHECKPOINT_RESTART_GUIDE.md`
 

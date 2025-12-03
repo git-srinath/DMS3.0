@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, send_file
-from database.dbconnect import create_oracle_connection
+from database.dbconnect import create_metadata_connection
 import pandas as pd
 import uuid
 import os
@@ -432,7 +432,7 @@ def upload_file():
 @mapper_bp.route('/get-by-reference/<reference>', methods=['GET'])
 def get_by_reference(reference):
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             # Get reference data
             main_result = get_mapping_ref(conn, reference)
@@ -539,7 +539,7 @@ def save_to_db():
         rows = data['rows']
         modified_rows = data.get('modifiedRows', [])  # Track modified rows
 
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             # Oracle connections auto-commit unless explicitly started a transaction
             # No need to explicitly begin a transaction
@@ -662,7 +662,7 @@ def validate_logic():
        
         connection = None
         try:
-            connection = create_oracle_connection()
+            connection = create_metadata_connection()
            
             is_valid, error = validate_logic2(connection, p_logic, p_keyclnm, p_valclnm)
            
@@ -695,11 +695,47 @@ def validate_batch_logic():
         p_mapref = data.get('mapref')
         rows = data.get('rows', [])
        
-        connection = create_oracle_connection()
+        metadata_connection = create_metadata_connection()
+        target_connection = None
         try:
+            # Get the target connection ID from the mapping
+            from modules.helper_functions import get_mapping_ref
+            mapping_data = get_mapping_ref(metadata_connection, p_mapref)
+            
+            info(f"Mapping data retrieved: {mapping_data}")
+            if mapping_data:
+                trgconid = mapping_data.get('TRGCONID') or mapping_data.get('trgconid')
+                info(f"Target connection ID from mapping: {trgconid}")
+            else:
+                trgconid = None
+                info("No mapping data found")
+            
+            if trgconid:
+                from database.dbconnect import create_target_connection
+                try:
+                    target_connection = create_target_connection(trgconid)
+                    # Verify the connection type
+                    module_name = type(target_connection).__module__
+                    if "psycopg" in module_name or "pg8000" in module_name:
+                        target_db_type = "POSTGRESQL"
+                    elif "oracledb" in module_name or "cx_Oracle" in module_name:
+                        target_db_type = "ORACLE"
+                    else:
+                        target_db_type = "UNKNOWN"
+                    info(f"Created target connection {trgconid} (Type: {target_db_type}) for SQL validation")
+                except Exception as e:
+                    error(f"Failed to create target connection {trgconid}: {str(e)}")
+                    target_connection = metadata_connection
+                    info("Falling back to metadata connection")
+            else:
+                # No target connection specified, use metadata connection
+                target_connection = metadata_connection
+                info("No target connection specified, using metadata connection for SQL validation")
+            
             results = []
             # First validate all logic together
-            bulk_result, bulk_error = validate_all_mapping_details(connection, p_mapref)
+            # Pass both connections: metadata for metadata queries, target for SQL validation
+            bulk_result, bulk_error = validate_all_mapping_details(metadata_connection, p_mapref, target_connection)
             print(bulk_error)
             print(bulk_result)
            
@@ -756,7 +792,10 @@ def validate_batch_logic():
             })
            
         finally:
-            connection.close()
+            if metadata_connection:
+                metadata_connection.close()
+            if target_connection and target_connection != metadata_connection:
+                target_connection.close()
            
     except Exception as e:
         error(f"Error in validate_batch: {str(e)}")
@@ -768,7 +807,7 @@ def validate_batch_logic():
 @mapper_bp.route('/get-parameter-mapping-datatype', methods=['GET'])
 def get_parameter_mapping_datatype_api():
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         return jsonify(get_parameter_mapping_datatype(conn))
     except Exception as e:
         error(f"Error in get_parameter_mapping_datatype: {str(e)}")
@@ -777,7 +816,7 @@ def get_parameter_mapping_datatype_api():
 @mapper_bp.route('/parameter_scd_type', methods=["GET"])
 def parameter_scd_type():
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             parameter_data = get_parameter_mapping_scd_type(conn)
             return jsonify(parameter_data)
@@ -789,15 +828,15 @@ def parameter_scd_type():
 @mapper_bp.route('/get-connections', methods=['GET'])
 def get_connections():
     """
-    Get list of active database connections from DWDBCONDTLS
+    Get list of active database connections from DMS_DBCONDTLS
     """
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT conid, connm, dbhost, dbsrvnm
-                FROM DWDBCONDTLS
+                FROM DMS_DBCONDTLS
                 WHERE curflg = 'Y'
                 ORDER BY connm
             """)
@@ -838,7 +877,7 @@ def activate_deactivate_mapping():
                 'message': 'Invalid status flag. Must be either "A" (activate) or "N" (deactivate).'
             }), 400
             
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             success, message = call_activate_deactivate_mapping(conn, p_mapref, p_stflg)
             return jsonify({
@@ -863,10 +902,10 @@ def activate_deactivate_mapping():
 @mapper_bp.route('/get-all-mapper-reference', methods=['GET'])
 def get_all_mapper_reference():
     try:
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         query="""
         SELECT MAPREF, MAPDESC,TRGSCHM,TRGTBTYP,FRQCD,SRCSYSTM,LGVRFYFLG,STFLG,CRTDBY,UPTDBY
-        FROM DWMAPR
+        FROM DMS_MAPR
         WHERE CURFLG = 'Y'
         """
         cursor = conn.cursor()
@@ -887,7 +926,7 @@ def delete_mapper_reference():
     try:
         data = request.json
         p_mapref = data.get('mapref')
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         
         try:
             # Call the Oracle procedure instead of executing the query directly
@@ -923,7 +962,7 @@ def delete_mapping_detail():
                 'message': 'Missing required parameters. Please provide mapref and trgclnm.'
             }), 400
             
-        conn = create_oracle_connection()
+        conn = create_metadata_connection()
         try:
             # Call the Oracle procedure through our helper function
             success, message = call_delete_mapping_details(conn, p_mapref, p_trgclnm)

@@ -1,14 +1,14 @@
 # PL/SQL to Python Conversion Summary
 
 ## Overview
-The Oracle PL/SQL package `PKGDWMAPR` has been successfully converted to Python equivalents. All function calls in `helper_functions.py` that previously called Oracle stored procedures now call Python functions instead.
+The Oracle PL/SQL package `PKGDMS_MAPR` has been successfully converted to Python equivalents. All function calls in `helper_functions.py` that previously called Oracle stored procedures now call Python functions instead.
 
 ## Files Created/Modified
 
 ### 1. New Python Module Created
-**File:** `backend/modules/mapper/pkgdwmapr_python.py`
+**File:** `backend/modules/mapper/pkgdms_mapr_python.py`
 
-This new module contains Python equivalents of all PL/SQL package functions from `PKGDWMAPR`. It includes:
+This new module contains Python equivalents of all PL/SQL package functions from `PKGDMS_MAPR`. It includes:
 
 #### Functions Converted:
 1. **create_update_sql** - Records SQL queries with versioning
@@ -25,7 +25,7 @@ This new module contains Python equivalents of all PL/SQL package functions from
 
 #### Key Features:
 - **Connection Management:** All functions accept a database connection object as a parameter
-- **Error Handling:** Comprehensive error handling with custom `PKGDWMAPRError` exception
+- **Error Handling:** Comprehensive error handling with custom `PKGDMS_MAPRError` exception
 - **Validation:** All input validations from PL/SQL have been preserved
 - **History Tracking:** Maintains the same history tracking behavior as PL/SQL (CURFLG pattern)
 - **User Tracking:** Supports user tracking for audit purposes (crtdby, uptdby fields)
@@ -37,18 +37,18 @@ This new module contains Python equivalents of all PL/SQL package functions from
 #### Changes Made:
 1. **Import Added:** Added import for the new Python module:
    ```python
-   from modules.mapper import pkgdwmapr_python as pkgdwmapr
+   from modules.mapper import pkgdms_mapr_python as pkgdms_mapr
    ```
 
 2. **Functions Updated:** All 8 functions that previously called Oracle PL/SQL procedures now call Python equivalents:
-   - `call_activate_deactivate_mapping` - Now calls `pkgdwmapr.activate_deactivate_mapping`
-   - `create_update_mapping` - Now calls `pkgdwmapr.create_update_mapping`
-   - `create_update_mapping_detail` - Now calls `pkgdwmapr.create_update_mapping_detail`
-   - `validate_logic_in_db` - Now calls `pkgdwmapr.validate_logic`
-   - `validate_logic2` - Now calls `pkgdwmapr.validate_logic2`
-   - `validate_all_mapping_details` - Now calls `pkgdwmapr.validate_mapping_details`
-   - `call_delete_mapping` - Now calls `pkgdwmapr.delete_mapping`
-   - `call_delete_mapping_details` - Now calls `pkgdwmapr.delete_mapping_details`
+   - `call_activate_deactivate_mapping` - Now calls `pkgdms_mapr.activate_deactivate_mapping`
+   - `create_update_mapping` - Now calls `pkgdms_mapr.create_update_mapping`
+   - `create_update_mapping_detail` - Now calls `pkgdms_mapr.create_update_mapping_detail`
+   - `validate_logic_in_db` - Now calls `pkgdms_mapr.validate_logic`
+   - `validate_logic2` - Now calls `pkgdms_mapr.validate_logic2`
+   - `validate_all_mapping_details` - Now calls `pkgdms_mapr.validate_mapping_details`
+   - `call_delete_mapping` - Now calls `pkgdms_mapr.delete_mapping`
+   - `call_delete_mapping_details` - Now calls `pkgdms_mapr.delete_mapping_details`
 
 #### Benefits:
 - **Simplified Code:** No more complex Oracle variable declarations and PL/SQL anonymous blocks
@@ -66,7 +66,7 @@ This new module contains Python equivalents of all PL/SQL package functions from
 All validation rules from PL/SQL have been preserved:
 - Mapping reference format validation
 - Schema/table/column name validation (no spaces, special chars, numeric start)
-- Data type validation against DWPARAMS table
+- Data type validation against DMS_PARAMS table
 - Primary key requirements
 - Duplicate column name checks
 - Frequency code and status flag validation
@@ -84,7 +84,7 @@ The SQL validation logic has been converted to use:
 - Same wrapping logic for SELECT validation
 
 ### 5. Error Recording
-Error messages are still recorded in the `DWMAPERR` table when validation fails, maintaining full compatibility with existing error tracking.
+Error messages are still recorded in the `DMS_MAPERR` table when validation fails, maintaining full compatibility with existing error tracking.
 
 ## Testing Recommendations
 
@@ -92,10 +92,10 @@ Error messages are still recorded in the `DWMAPERR` table when validation fails,
 Test each converted function individually:
 ```python
 # Example test
-from modules.mapper import pkgdwmapr_python as pkgdwmapr
+from modules.mapper import pkgdms_mapr_python as pkgdms_mapr
 
 # Test create_update_mapping
-mapid = pkgdwmapr.create_update_mapping(
+mapid = pkgdms_mapr.create_update_mapping(
     connection, 
     'TEST_REF', 
     'Test Description',
@@ -130,7 +130,7 @@ If issues are encountered, you can easily rollback by:
 
 1. Comment out the new import:
    ```python
-   # from modules.mapper import pkgdwmapr_python as pkgdwmapr
+   # from modules.mapper import pkgdms_mapr_python as pkgdms_mapr
    ```
 
 2. Revert each function in `helper_functions.py` to use the PL/SQL package calls (the old code is visible in git history)
@@ -150,7 +150,7 @@ Monitor performance initially and consider batch operations if needed.
 
 ## Future Enhancements
 
-1. **Add Caching:** Cache DWPARAMS lookups for data type validation
+1. **Add Caching:** Cache DMS_PARAMS lookups for data type validation
 2. **Batch Operations:** Create batch versions of create/update functions
 3. **Async Support:** Consider async/await for better concurrency
 4. **Type Hints:** Add comprehensive Python type hints for better IDE support
@@ -167,19 +167,19 @@ The conversion maintains the same dependencies:
 ## Schema Requirements
 
 The Python functions work with the same Oracle database schema:
-- DWMAPR - Main mapping table
-- DWMAPRDTL - Mapping details table
-- DWMAPRSQL - SQL query storage table
-- DWMAPERR - Error tracking table
-- DWPARAMS - Parameters/lookup table
-- DWJOB - Job table (for dependency checks)
-- DWJOBDTL - Job details table (for dependency checks)
+- DMS_MAPR - Main mapping table
+- DMS_MAPRDTL - Mapping details table
+- DMS_MAPRSQL - SQL query storage table
+- DMS_MAPERR - Error tracking table
+- DMS_PARAMS - Parameters/lookup table
+- DMS_JOB - Job table (for dependency checks)
+- DMS_JOBDTL - Job details table (for dependency checks)
 
 Sequences required:
-- DWMAPRSEQ
-- DWMAPRDTLSEQ
-- DWMAPRSQLSEQ
-- DWMAPERRSEQ
+- DMS_MAPRSEQ
+- DMS_MAPRDTLSEQ
+- DMS_MAPRSQLSEQ
+- DMS_MAPERRSEQ
 
 ## Additional Files Updated
 
@@ -187,13 +187,13 @@ Sequences required:
 
 #### Functions Updated:
 1. **save_sql()** - Line 236-240
-   - **Before:** Called `PKGDWMAPR.CREATE_UPDATE_SQL` via PL/SQL
-   - **After:** Calls `pkgdwmapr.create_update_sql()` Python function
-   - **Purpose:** Saves or updates SQL queries in DWMAPRSQL table
+   - **Before:** Called `PKGDMS_MAPR.CREATE_UPDATE_SQL` via PL/SQL
+   - **After:** Calls `pkgdms_mapr.create_update_sql()` Python function
+   - **Purpose:** Saves or updates SQL queries in DMS_MAPRSQL table
 
 2. **validate_sql()** - Line 287
-   - **Before:** Called `PKGDWMAPR.VALIDATE_SQL` via PL/SQL
-   - **After:** Calls `pkgdwmapr.validate_sql()` Python function
+   - **Before:** Called `PKGDMS_MAPR.VALIDATE_SQL` via PL/SQL
+   - **After:** Calls `pkgdms_mapr.validate_sql()` Python function
    - **Purpose:** Validates SQL syntax
 
 **Total Functions Updated:** 2
@@ -219,9 +219,9 @@ Sequences required:
 
 ## Conclusion
 
-The conversion is complete and **all PKGDWMAPR functions** have been successfully replaced. The application now operates entirely using Python functions instead of Oracle PL/SQL package procedures for all mapping-related operations, while maintaining full backward compatibility with the existing database schema and business logic.
+The conversion is complete and **all PKGDMS_MAPR functions** have been successfully replaced. The application now operates entirely using Python functions instead of Oracle PL/SQL package procedures for all mapping-related operations, while maintaining full backward compatibility with the existing database schema and business logic.
 
 **Status:** ✅ Conversion Complete - Ready for Testing
 
-**Note:** Other PL/SQL packages (PKGDWJOB, PKGDWPRC) are still in use for job management and processing. See `PLSQL_CONVERSION_STATUS.md` for details.
+**Note:** Other PL/SQL packages (PKGDMS_JOB, PKGDWPRC) are still in use for job management and processing. See `PLSQL_CONVERSION_STATUS.md` for details.
 

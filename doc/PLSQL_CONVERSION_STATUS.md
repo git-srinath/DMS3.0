@@ -1,35 +1,35 @@
 # PL/SQL Package Conversion Status
 
-## ✅ Completed: PKGDWMAPR Package
+## ✅ Completed: PKGDMS_MAPR Package
 
-All calls to the **PKGDWMAPR** PL/SQL package have been successfully converted to Python functions.
+All calls to the **PKGDMS_MAPR** PL/SQL package have been successfully converted to Python functions.
 
 ### Files Updated:
 
 #### 1. `backend/modules/helper_functions.py`
 **Functions Converted:**
-- ✅ `call_activate_deactivate_mapping()` - Now calls `pkgdwmapr.activate_deactivate_mapping()`
-- ✅ `create_update_mapping()` - Now calls `pkgdwmapr.create_update_mapping()`
-- ✅ `create_update_mapping_detail()` - Now calls `pkgdwmapr.create_update_mapping_detail()`
-- ✅ `validate_logic_in_db()` - Now calls `pkgdwmapr.validate_logic()`
-- ✅ `validate_logic2()` - Now calls `pkgdwmapr.validate_logic2()`
-- ✅ `validate_all_mapping_details()` - Now calls `pkgdwmapr.validate_mapping_details()`
-- ✅ `call_delete_mapping()` - Now calls `pkgdwmapr.delete_mapping()`
-- ✅ `call_delete_mapping_details()` - Now calls `pkgdwmapr.delete_mapping_details()`
+- ✅ `call_activate_deactivate_mapping()` - Now calls `pkgdms_mapr.activate_deactivate_mapping()`
+- ✅ `create_update_mapping()` - Now calls `pkgdms_mapr.create_update_mapping()`
+- ✅ `create_update_mapping_detail()` - Now calls `pkgdms_mapr.create_update_mapping_detail()`
+- ✅ `validate_logic_in_db()` - Now calls `pkgdms_mapr.validate_logic()`
+- ✅ `validate_logic2()` - Now calls `pkgdms_mapr.validate_logic2()`
+- ✅ `validate_all_mapping_details()` - Now calls `pkgdms_mapr.validate_mapping_details()`
+- ✅ `call_delete_mapping()` - Now calls `pkgdms_mapr.delete_mapping()`
+- ✅ `call_delete_mapping_details()` - Now calls `pkgdms_mapr.delete_mapping_details()`
 
 **Total:** 8 functions converted
 
 #### 2. `backend/modules/manage_sql/manage_sql.py`
 **Functions Converted:**
-- ✅ `save_sql()` - Line 236-240: Now calls `pkgdwmapr.create_update_sql()`
-- ✅ `validate_sql()` - Line 287: Now calls `pkgdwmapr.validate_sql()`
+- ✅ `save_sql()` - Line 236-240: Now calls `pkgdms_mapr.create_update_sql()`
+- ✅ `validate_sql()` - Line 287: Now calls `pkgdms_mapr.validate_sql()`
 
 **Total:** 2 functions converted
 
-### Summary of PKGDWMAPR Conversion:
+### Summary of PKGDMS_MAPR Conversion:
 - **Total Functions Converted:** 10
 - **Files Modified:** 2
-- **New Python Module Created:** `backend/modules/mapper/pkgdwmapr_python.py`
+- **New Python Module Created:** `backend/modules/mapper/pkgdms_mapr_python.py`
 - **Status:** ✅ **100% Complete**
 
 ---
@@ -38,12 +38,12 @@ All calls to the **PKGDWMAPR** PL/SQL package have been successfully converted t
 
 Your application still uses **two other PL/SQL packages** that have not been converted:
 
-### 1. PKGDWJOB Package (Job Management)
+### 1. PKGDMS_JOB Package (Job Management)
 
 **Location:** `backend/modules/helper_functions.py`
 
 **Function:** `call_create_update_job()`
-- **Line 341:** `PKGDWJOB.CREATE_UPDATE_JOB()`
+- **Line 341:** `PKGDMS_JOB.CREATE_UPDATE_JOB()`
 - **Purpose:** Creates or updates job records
 - **Used by:** Job creation functionality
 
@@ -78,8 +78,8 @@ Your application still uses **two other PL/SQL packages** that have not been con
 
 | Package | Status | Functions Converted | Functions Remaining | Files Affected |
 |---------|--------|---------------------|---------------------|----------------|
-| **PKGDWMAPR** | ✅ Complete | 10 | 0 | 2 |
-| **PKGDWJOB** | ❌ Not Started | 0 | 1 | 1 |
+| **PKGDMS_MAPR** | ✅ Complete | 10 | 0 | 2 |
+| **PKGDMS_JOB** | ❌ Not Started | 0 | 1 | 1 |
 | **PKGDWPRC** | ❌ Not Started | 0 | 6 | 1 |
 | **TOTAL** | 🟡 Partial | 10 | 7 | 4 |
 
@@ -89,8 +89,8 @@ Your application still uses **two other PL/SQL packages** that have not been con
 
 If you want to **completely eliminate PL/SQL dependencies**, you would need to convert:
 
-### Option 1: Convert PKGDWJOB
-- Read the PL/SQL source: `D:\CursorTesting\PLSQL\PKGDWJOB_bdy.sql`
+### Option 1: Convert PKGDMS_JOB
+- Read the PL/SQL source: `D:\CursorTesting\PLSQL\PKGDMS_JOB_bdy.sql`
 - Convert to Python equivalent
 - Update `helper_functions.py`
 - **Estimated Complexity:** Low (only 1 function call)
@@ -102,8 +102,8 @@ If you want to **completely eliminate PL/SQL dependencies**, you would need to c
 - **Estimated Complexity:** Medium-High (6 function calls, scheduling logic)
 
 ### Option 3: Keep Existing Architecture
-- PKGDWMAPR is converted (your mapping logic is now in Python)
-- PKGDWJOB and PKGDWPRC remain in PL/SQL
+- PKGDMS_MAPR is converted (your mapping logic is now in Python)
+- PKGDMS_JOB and PKGDWPRC remain in PL/SQL
 - **Pros:** Mapping logic is maintainable in Python, job/scheduling logic stays in database
 - **Cons:** Mixed architecture (some Python, some PL/SQL)
 
@@ -111,23 +111,23 @@ If you want to **completely eliminate PL/SQL dependencies**, you would need to c
 
 ## 🔍 Verification
 
-To verify the PKGDWMAPR conversion is complete, run:
+To verify the PKGDMS_MAPR conversion is complete, run:
 
 ```bash
-# Search for any remaining PKGDWMAPR calls in Python files
-grep -r "PKGDWMAPR" backend/*.py --exclude-dir=python_conversion_archive
+# Search for any remaining PKGDMS_MAPR calls in Python files
+grep -r "PKGDMS_MAPR" backend/*.py --exclude-dir=python_conversion_archive
 ```
 
 **Expected Result:** Should only find references in:
-- `pkgdwmapr_python.py` (the new Python module itself)
+- `pkgdms_mapr_python.py` (the new Python module itself)
 - Archive/documentation files
 - No references in application code
 
 ---
 
-## ✅ PKGDWMAPR Conversion: Complete!
+## ✅ PKGDMS_MAPR Conversion: Complete!
 
-All **PKGDWMAPR** package calls have been successfully replaced with Python equivalents. Your mapping functionality now runs entirely in Python without requiring Oracle PL/SQL package execution.
+All **PKGDMS_MAPR** package calls have been successfully replaced with Python equivalents. Your mapping functionality now runs entirely in Python without requiring Oracle PL/SQL package execution.
 
 **Benefits Achieved:**
 - ✅ Simplified code maintenance
@@ -136,5 +136,5 @@ All **PKGDWMAPR** package calls have been successfully replaced with Python equi
 - ✅ Easier to unit test
 - ✅ More portable codebase
 
-**Would you like me to convert PKGDWJOB or PKGDWPRC packages as well?**
+**Would you like me to convert PKGDMS_JOB or PKGDWPRC packages as well?**
 

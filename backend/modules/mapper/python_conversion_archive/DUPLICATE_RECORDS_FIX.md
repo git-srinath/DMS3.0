@@ -16,7 +16,7 @@ When comparing an existing SQL query (stored as a CLOB in Oracle) with a new sub
 
 ```python
 # BEFORE (BROKEN)
-if w_rec[2] == p_dwmaprsql:  # ❌ Comparing CLOB object with string
+if w_rec[2] == p_dms_maprsql:  # ❌ Comparing CLOB object with string
     w_res = 0  # Same
 else:
     w_res = 1  # Different
@@ -39,7 +39,7 @@ elif existing_sql is not None:
 
 # Remove trailing semicolons from both for comparison
 existing_sql_clean = re.sub(r';$', '', existing_sql.strip())
-new_sql_clean = re.sub(r';$', '', p_dwmaprsql.strip())
+new_sql_clean = re.sub(r';$', '', p_dms_maprsql.strip())
 
 # Compare the cleaned SQL
 if existing_sql_clean == new_sql_clean:
@@ -96,9 +96,9 @@ New record: curflg = 'Y', SQL ID: 2
 ### Before Fix
 ```sql
 -- Every save created a new record
-SELECT dwmaprsqlid, dwmaprsqlcd, curflg 
-FROM dwmaprsql 
-WHERE dwmaprsqlcd = 'CUSTOMER_QUERY';
+SELECT dms_maprsqlid, dms_maprsqlcd, curflg 
+FROM DMS_MAPRSQL 
+WHERE dms_maprsqlcd = 'CUSTOMER_QUERY';
 
 -- Result:
 ID    CODE              CURFLG
@@ -111,9 +111,9 @@ ID    CODE              CURFLG
 ### After Fix
 ```sql
 -- Only creates new records when SQL actually changes
-SELECT dwmaprsqlid, dwmaprsqlcd, curflg 
-FROM dwmaprsql 
-WHERE dwmaprsqlcd = 'CUSTOMER_QUERY';
+SELECT dms_maprsqlid, dms_maprsqlcd, curflg 
+FROM DMS_MAPRSQL 
+WHERE dms_maprsqlcd = 'CUSTOMER_QUERY';
 
 -- Result:
 ID    CODE              CURFLG
@@ -155,7 +155,7 @@ Action 2: Save exact same SQL again
 Result 2: No new record, returns ID = 1 ✅
 
 Verify:
-SELECT COUNT(*) FROM dwmaprsql WHERE dwmaprsqlcd = 'TEST_SQL_001';
+SELECT COUNT(*) FROM DMS_MAPRSQL WHERE dms_maprsqlcd = 'TEST_SQL_001';
 -- Should return: 1 (not 2!)
 ```
 
@@ -170,8 +170,8 @@ SQL: "SELECT id, name FROM table1"
 Result 2: ID = 3 (new version created) ✅
 
 Verify:
-SELECT dwmaprsqlid, curflg FROM dwmaprsql 
-WHERE dwmaprsqlcd = 'TEST_SQL_002';
+SELECT dms_maprsqlid, curflg FROM DMS_MAPRSQL 
+WHERE dms_maprsqlcd = 'TEST_SQL_002';
 -- Should return:
 -- ID=2, curflg='N' (old version)
 -- ID=3, curflg='Y' (current version)
@@ -199,8 +199,8 @@ Result: No new record ✅ (semicolon ignored)
 
 | File | Lines Changed | What Changed |
 |------|--------------|--------------|
-| `pkgdwmapr.py` | 108-137 | Fixed CLOB comparison logic |
-| `pkgdwmapr.py` | 127, 130, 136 | Added info logging |
+| `pkgdms_mapr.py` | 108-137 | Fixed CLOB comparison logic |
+| `pkgdms_mapr.py` | 127, 130, 136 | Added info logging |
 
 ---
 
@@ -218,27 +218,27 @@ If you have duplicate records from before this fix, you can clean them up:
 
 ```sql
 -- Find SQL codes with duplicates
-SELECT dwmaprsqlcd, COUNT(*) as versions
-FROM dwmaprsql
+SELECT dms_maprsqlcd, COUNT(*) as versions
+FROM DMS_MAPRSQL
 WHERE curflg = 'Y'
-GROUP BY dwmaprsqlcd
+GROUP BY dms_maprsqlcd
 HAVING COUNT(*) > 1;
 
 -- To keep only the latest version (be careful!):
 -- First, verify what will be kept
 SELECT * 
-FROM dwmaprsql 
-WHERE dwmaprsqlcd = 'your_sql_code'
-ORDER BY dwmaprsqlid;
+FROM DMS_MAPRSQL 
+WHERE dms_maprsqlcd = 'your_sql_code'
+ORDER BY dms_maprsqlid;
 
 -- Then update old versions to curflg='N'
-UPDATE dwmaprsql
+UPDATE DMS_MAPRSQL
 SET curflg = 'N'
-WHERE dwmaprsqlcd = 'your_sql_code'
-AND dwmaprsqlid NOT IN (
-    SELECT MAX(dwmaprsqlid) 
-    FROM dwmaprsql 
-    WHERE dwmaprsqlcd = 'your_sql_code'
+WHERE dms_maprsqlcd = 'your_sql_code'
+AND dms_maprsqlid NOT IN (
+    SELECT MAX(dms_maprsqlid) 
+    FROM DMS_MAPRSQL 
+    WHERE dms_maprsqlcd = 'your_sql_code'
 );
 COMMIT;
 ```

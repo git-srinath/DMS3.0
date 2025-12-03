@@ -12,7 +12,7 @@ import {
 import { useRouter } from 'next/navigation'
 import { useTheme as useMuiTheme } from '@mui/material/styles'
 import { useTheme } from '@/context/ThemeContext'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '@/app/context/AuthContext'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   AdminPanelSettings,
@@ -24,6 +24,9 @@ import {
   TaskAlt,
   AccountCircle,
   Dashboard,
+  Description,
+  EventNote,
+  History as HistoryIcon,
 } from '@mui/icons-material'
 
 const Page = () => {
@@ -116,13 +119,29 @@ const Page = () => {
       delay: 0.5,
     },
     {
-      title: 'Jobs and Status',
+      title: 'Logs & Status',
       accessKey: 'job_status_and_logs',
       path: '/job_status_and_logs',
       gradient: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-      description: 'Track and Manage Jobs.',
+      description: 'Track job runs and review detailed logs.',
       icon: <TaskAlt sx={{ fontSize: '2rem', color: '#fff' }} />,
       delay: 0.6,
+    },
+    {
+      title: 'Reports',
+      path: '/reports',
+      gradient: 'linear-gradient(135deg, #4ADE80 0%, #16A34A 100%)',
+      description: 'Define report mappings and preview outputs.',
+      icon: <Description sx={{ fontSize: '2rem', color: '#fff' }} />,
+      delay: 0.61,
+    },
+    {
+      title: 'Report Runs',
+      path: '/report_runs',
+      gradient: 'linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)',
+      description: 'Monitor report output history and statuses.',
+      icon: <HistoryIcon sx={{ fontSize: '2rem', color: '#fff' }} />,
+      delay: 0.63,
     },
     {
       title: 'User Profile',
@@ -157,7 +176,6 @@ const Page = () => {
     'Manage SQL',
     'Data Mapper',
     'Jobs',
-    'Jobs and Status',
   ];
   const essentialsTitles = [
     'Parameters',
@@ -169,6 +187,11 @@ const Page = () => {
     'User Profile', // Moved here
   ];
   const reportTitles = [
+    'Reports',
+    'Report Runs',
+  ];
+  const logsStatusDashboardTitles = [
+    'Logs & Status',
     'Dashboard',
   ];
 
@@ -181,6 +204,7 @@ const Page = () => {
   const essentialsCards = mapCardsByTitles(essentialsTitles);
   const adminCards = mapCardsByTitles(adminTitles);
   const reportCards = mapCardsByTitles(reportTitles);
+  const logsStatusDashboardCards = mapCardsByTitles(logsStatusDashboardTitles);
 
   // Animation variants
   const pageVariants = {
@@ -338,17 +362,23 @@ const Page = () => {
               bg: darkMode ? 'rgba(23,39,59,0.87)' : '#f2f7fd',
               order: { xs: 1, md: 1 },
             }, {
-              title: 'Report Management',
-              color: darkMode ? '#7dd3fc' : '#2563eb',
+              title: 'Reports',
+              color: darkMode ? '#34d399' : '#15803d',
               cards: reportCards,
-              bg: darkMode ? 'rgba(26,38,45,0.90)' : '#e9f5fc',
-              order: { xs: 2, md: 3 },
+              bg: darkMode ? 'rgba(4,120,87,0.25)' : '#ecfdf5',
+              order: { xs: 2, md: 2 },
             }, {
               title: 'Admin',
               color: darkMode ? '#d946ef' : '#9d174d',
               cards: adminCards,
               bg: darkMode ? 'rgba(34,17,56,0.91)' : '#fff0fc',
               order: { xs: 3, md: 2 },
+            }, {
+              title: 'Logs/Status and Dashboard',
+              color: darkMode ? '#7dd3fc' : '#2563eb',
+              cards: logsStatusDashboardCards,
+              bg: darkMode ? 'rgba(26,38,45,0.90)' : '#e9f5fc',
+              order: { xs: 4, md: 3 },
             }].filter((group) => group.cards.length > 0).map((group) => (
               <Grid
                 item

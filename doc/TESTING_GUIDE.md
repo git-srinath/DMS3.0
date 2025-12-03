@@ -36,7 +36,7 @@ You should see a new dropdown field in the Mapper form:
 - **Position:** After the "Bulk Process Rows" field
 - **Default:** "Use Metadata Connection"
 
-The dropdown will list all active database connections from your `DWDBCONDTLS` table.
+The dropdown will list all active database connections from your `DMS_DBCONDTLS` table.
 
 ---
 
@@ -79,7 +79,7 @@ The dropdown will list all active database connections from your `DWDBCONDTLS` t
 **Database Verification:**
 ```sql
 SELECT MAPREF, MAPDESC, TRGCONID 
-FROM DWMAPR 
+FROM DMS_MAPR 
 WHERE MAPREF = 'TEST_TRG_CONN_1' AND CURFLG = 'Y';
 ```
 **Expected:** `TRGCONID` should have a numeric value (e.g., 1, 2, 3...)
@@ -101,7 +101,7 @@ WHERE MAPREF = 'TEST_TRG_CONN_1' AND CURFLG = 'Y';
 **Database Verification:**
 ```sql
 SELECT MAPREF, MAPDESC, TRGCONID 
-FROM DWMAPR 
+FROM DMS_MAPR 
 WHERE MAPREF = 'TEST_NO_CONN_1' AND CURFLG = 'Y';
 ```
 **Expected:** `TRGCONID` should be `NULL`
@@ -140,7 +140,7 @@ WHERE MAPREF = 'TEST_NO_CONN_1' AND CURFLG = 'Y';
 **Setup:**
 ```sql
 -- Manually set invalid TRGCONID
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET TRGCONID = 999999 
 WHERE MAPREF = 'TEST_TRG_CONN_1' AND CURFLG = 'Y';
 COMMIT;
@@ -155,7 +155,7 @@ COMMIT;
 
 **Cleanup:**
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET TRGCONID = NULL 
 WHERE MAPREF = 'TEST_TRG_CONN_1' AND CURFLG = 'Y';
 COMMIT;
@@ -168,7 +168,7 @@ COMMIT;
 ### Check Your Connections
 ```sql
 SELECT CONID, CONNM, DBHOST, DBSRVNM, CURFLG 
-FROM DWDBCONDTLS 
+FROM DMS_DBCONDTLS 
 ORDER BY CONNM;
 ```
 
@@ -180,8 +180,8 @@ SELECT
     m.TRGCONID,
     c.CONNM as CONNECTION_NAME,
     c.DBHOST || '/' || c.DBSRVNM as TARGET_DATABASE
-FROM DWMAPR m
-LEFT JOIN DWDBCONDTLS c ON m.TRGCONID = c.CONID AND c.CURFLG = 'Y'
+FROM DMS_MAPR m
+LEFT JOIN DMS_DBCONDTLS c ON m.TRGCONID = c.CONID AND c.CURFLG = 'Y'
 WHERE m.CURFLG = 'Y'
 ORDER BY m.MAPREF;
 ```
@@ -194,7 +194,7 @@ SELECT
     TRGCONID,
     TRGSCHM,
     TRGTBNM
-FROM DWMAPR 
+FROM DMS_MAPR 
 WHERE MAPREF = 'YOUR_MAPPING_REF' AND CURFLG = 'Y';
 ```
 
@@ -219,14 +219,14 @@ The feature is working correctly if:
 ### Dropdown is Empty
 **Check:**
 ```sql
-SELECT COUNT(*) FROM DWDBCONDTLS WHERE CURFLG = 'Y';
+SELECT COUNT(*) FROM DMS_DBCONDTLS WHERE CURFLG = 'Y';
 ```
 **If count is 0:** You need to register at least one database connection in the DB Connections module.
 
 ### Connection Doesn't Appear in Dropdown
 **Check:**
 ```sql
-SELECT CONID, CONNM, CURFLG FROM DWDBCONDTLS WHERE CONID = <your_id>;
+SELECT CONID, CONNM, CURFLG FROM DMS_DBCONDTLS WHERE CONID = <your_id>;
 ```
 **Fix:** Make sure `CURFLG = 'Y'`
 

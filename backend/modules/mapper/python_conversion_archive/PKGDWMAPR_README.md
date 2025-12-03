@@ -1,8 +1,8 @@
-# PKGDWMAPR Python Module Documentation
+# PKGDMS_MAPR Python Module Documentation
 
 ## Overview
 
-This module provides a Python equivalent of the `PKGDWMAPR` PL/SQL package body. It handles data warehouse mapping creation, validation, and management operations.
+This module provides a Python equivalent of the `PKGDMS_MAPR` PL/SQL package body. It handles data warehouse mapping creation, validation, and management operations.
 
 ## Features
 
@@ -24,19 +24,19 @@ from typing import Optional, Tuple, Dict, Any, List
 from modules.logger import logger, info, warning, error
 ```
 
-## Class: PKGDWMAPR
+## Class: PKGDMS_MAPR
 
 ### Initialization
 
 ```python
-from modules.mapper.pkgdwmapr import PKGDWMAPR
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR
 import oracledb
 
 # Create database connection
 connection = oracledb.connect(user='username', password='password', dsn='dsn')
 
 # Initialize the package
-pkg = PKGDWMAPR(connection, user='current_user_id')
+pkg = PKGDMS_MAPR(connection, user='current_user_id')
 ```
 
 ### Methods
@@ -46,8 +46,8 @@ pkg = PKGDWMAPR(connection, user='current_user_id')
 Returns the package version.
 
 ```python
-version = PKGDWMAPR.version()
-print(version)  # Output: PKGDWMAPR:V001
+version = PKGDMS_MAPR.version()
+print(version)  # Output: PKGDMS_MAPR:V001
 ```
 
 #### 2. create_update_sql()
@@ -55,10 +55,10 @@ print(version)  # Output: PKGDWMAPR:V001
 Create or update SQL query mappings.
 
 **Parameters:**
-- `p_dwmaprsqlcd` (str): SQL code identifier (no spaces allowed)
-- `p_dwmaprsql` (str): SQL query text (CLOB)
+- `p_dms_maprsqlcd` (str): SQL code identifier (no spaces allowed)
+- `p_dms_maprsql` (str): SQL query text (CLOB)
 
-**Returns:** `int` - SQL mapping ID (dwmaprsqlid)
+**Returns:** `int` - SQL mapping ID (dms_maprsqlid)
 
 **Example:**
 
@@ -122,7 +122,7 @@ Create or update individual mapping field details.
 **Parameters:**
 - `p_mapref` (str): Mapping reference
 - `p_trgclnm` (str): Target column name (no spaces, no special chars, can't start with number)
-- `p_trgcldtyp` (str): Target column data type (must exist in DWPARAMS)
+- `p_trgcldtyp` (str): Target column data type (must exist in DMS_PARAMS)
 - `p_trgkeyflg` (str, optional): Primary key flag (`Y`/`N`)
 - `p_trgkeyseq` (int, optional): Primary key sequence (required if trgkeyflg='Y')
 - `p_trgcldesc` (str, optional): Target column description
@@ -338,7 +338,7 @@ The module also provides convenience functions that automatically set the user:
 **Example:**
 
 ```python
-from modules.mapper.pkgdwmapr import create_update_mapping_with_user
+from modules.mapper.pkgdms_mapr import create_update_mapping_with_user
 
 mapid = create_update_mapping_with_user(
     connection=connection,
@@ -359,10 +359,10 @@ mapid = create_update_mapping_with_user(
 
 ## Error Handling
 
-The module uses a custom exception class `PKGDWMAPRError` for all errors:
+The module uses a custom exception class `PKGDMS_MAPRError` for all errors:
 
 ```python
-from modules.mapper.pkgdwmapr import PKGDWMAPRError
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPRError
 
 try:
     mapid = pkg.create_update_mapping(
@@ -370,7 +370,7 @@ try:
         p_mapdesc='Test Mapping',
         # ... other parameters
     )
-except PKGDWMAPRError as e:
+except PKGDMS_MAPRError as e:
     print(f"Error in procedure: {e.proc_name}")
     print(f"Error code: {e.error_code}")
     print(f"Parameters: {e.params}")
@@ -382,7 +382,7 @@ except Exception as e:
 ## Complete Workflow Example
 
 ```python
-from modules.mapper.pkgdwmapr import PKGDWMAPR
+from modules.mapper.pkgdms_mapr import PKGDMS_MAPR
 import oracledb
 from datetime import datetime
 
@@ -394,7 +394,7 @@ connection = oracledb.connect(
 )
 
 # 2. Initialize package
-pkg = PKGDWMAPR(connection, user='admin')
+pkg = PKGDMS_MAPR(connection, user='admin')
 
 try:
     # 3. Create a mapping
@@ -462,8 +462,8 @@ try:
     # 8. Commit changes
     connection.commit()
     
-except PKGDWMAPRError as e:
-    print(f"PKGDWMAPR Error: {e.message}")
+except PKGDMS_MAPRError as e:
+    print(f"PKGDMS_MAPR Error: {e.message}")
     connection.rollback()
 except Exception as e:
     print(f"Error: {str(e)}")
@@ -505,7 +505,7 @@ finally:
 - Value column names cannot repeat within the same mapping combination code
 
 ### Data Types
-- Must exist in DWPARAMS table with PRTYP = 'Datatype'
+- Must exist in DMS_PARAMS table with PRTYP = 'Datatype'
 
 ### SCD Type
 - Must be: 1, 2, or 3
@@ -517,13 +517,13 @@ finally:
 
 The module interacts with the following tables:
 
-- `DWMAPR` - Main mapping table
-- `DWMAPRDTL` - Mapping details table
-- `DWMAPRSQL` - SQL query storage table
-- `DWMAPERR` - Mapping error table
-- `DWPARAMS` - Parameter configuration table
-- `DWJOB` - Job definitions table
-- `DWJOBDTL` - Job details table
+- `DMS_MAPR` - Main mapping table
+- `DMS_MAPRDTL` - Mapping details table
+- `DMS_MAPRSQL` - SQL query storage table
+- `DMS_MAPERR` - Mapping error table
+- `DMS_PARAMS` - Parameter configuration table
+- `DMS_JOB` - Job definitions table
+- `DMS_JOBDTL` - Job details table
 
 ## Logging
 
@@ -533,7 +533,7 @@ All operations are logged using the application's logging system:
 from modules.logger import logger, info, warning, error
 ```
 
-Errors are automatically logged when `PKGDWMAPRError` exceptions are raised.
+Errors are automatically logged when `PKGDMS_MAPRError` exceptions are raised.
 
 ## Migration from PL/SQL
 
@@ -548,7 +548,7 @@ If you're migrating from the PL/SQL package, here are the key differences:
 ## Version History
 
 - **V001** (12-Nov-2025): Initial Python port from PL/SQL
-  - Complete conversion of all PKGDWMAPR functions
+  - Complete conversion of all PKGDMS_MAPR functions
   - Added comprehensive error handling
   - Added Python-style convenience functions
   - Enhanced documentation

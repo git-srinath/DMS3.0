@@ -40,11 +40,11 @@ elif clob_value is not None:
 **Change:**
 ```python
 # Before:
-raise PKGDWMAPRError(self.G_NAME, w_procnm, '101', 
+raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '101', 
                    f"{w_parm} mapid={w_mapr_dict['MAPID']}")
 
 # After:
-raise PKGDWMAPRError(self.G_NAME, w_procnm, '101', 
+raise PKGDMS_MAPRError(self.G_NAME, w_procnm, '101', 
                    f"{w_parm} mapid={w_mapr_dict['MAPID']} - {str(e)}")
 ```
 
@@ -85,18 +85,18 @@ SCHEMA_PREFIX = f"{ORACLE_SCHEMA}." if ORACLE_SCHEMA else ""
 ```
 
 **Sequences Fixed:**
-1. **DWMAPRSQLSEQ** - Line 171 (dwmaprsql table)
-2. **DWMAPRSEQ** - Line 340 (dwmapr table)  
-3. **DWMAPRDTLSEQ** - Line 582 (dwmaprdtl table)
-4. **DWMAPERRSEQ** - Lines 846, 900, 929 (dwmaperr table)
+1. **DMS_MAPRSQLSEQ** - Line 171 (DMS_MAPRSQL table)
+2. **DMS_MAPRSEQ** - Line 340 (DMS_MAPR table)  
+3. **DMS_MAPRDTLSEQ** - Line 582 (DMS_MAPRDTL table)
+4. **DMS_MAPERRSEQ** - Lines 846, 900, 929 (DMS_MAPERR table)
 
 **Change:**
 ```python
 # Before:
-VALUES (dwmaprseq.nextval, ...)
+VALUES (DMS_MAPRSEQ.nextval, ...)
 
 # After:
-VALUES ({SCHEMA_PREFIX}DWMAPRSEQ.nextval, ...)
+VALUES ({SCHEMA_PREFIX}DMS_MAPRSEQ.nextval, ...)
 ```
 
 **Bonus:** Standardized all sequence names to UPPERCASE for consistency.
@@ -135,7 +135,7 @@ VALUES ({SCHEMA_PREFIX}DWMAPRSEQ.nextval, ...)
 ## Files Modified
 
 ### Primary File
-- **`backend/modules/mapper/pkgdwmapr.py`** (Total changes: ~30 lines)
+- **`backend/modules/mapper/pkgdms_mapr.py`** (Total changes: ~30 lines)
   - Added: `import os` (line 11)
   - Added: Schema configuration (lines 18-21)
   - Fixed: 4 CLOB comparison locations
@@ -215,16 +215,16 @@ All four sequences must exist and be accessible:
 SELECT sequence_name FROM user_sequences WHERE sequence_name LIKE 'DW%SEQ';
 
 -- If using multi-schema setup, grant permissions
-GRANT SELECT ON DWT.DWMAPRSQLSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPRSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPRDTLSEQ TO your_username;
-GRANT SELECT ON DWT.DWMAPERRSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRSQLSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPRDTLSEQ TO your_username;
+GRANT SELECT ON DWT.DMS_MAPERRSEQ TO your_username;
 
 -- Or create synonyms
-CREATE SYNONYM DWMAPRSQLSEQ FOR DWT.DWMAPRSQLSEQ;
-CREATE SYNONYM DWMAPRSEQ FOR DWT.DWMAPRSEQ;
-CREATE SYNONYM DWMAPRDTLSEQ FOR DWT.DWMAPRDTLSEQ;
-CREATE SYNONYM DWMAPERRSEQ FOR DWT.DWMAPERRSEQ;
+CREATE SYNONYM DMS_MAPRSQLSEQ FOR DWT.DMS_MAPRSQLSEQ;
+CREATE SYNONYM DMS_MAPRSEQ FOR DWT.DMS_MAPRSEQ;
+CREATE SYNONYM DMS_MAPRDTLSEQ FOR DWT.DMS_MAPRDTLSEQ;
+CREATE SYNONYM DMS_MAPERRSEQ FOR DWT.DMS_MAPERRSEQ;
 ```
 
 ---
@@ -258,8 +258,8 @@ SCHEMA_PREFIX = f"{os.getenv('SCHEMA', '')}." if os.getenv('SCHEMA') else ""
 
 ### 5. Sequence Names
 Use UPPERCASE for Oracle identifiers:
-- ❌ `dwmaprseq.nextval`
-- ✅ `DWMAPRSEQ.nextval`
+- ❌ `DMS_MAPRSEQ.nextval`
+- ✅ `DMS_MAPRSEQ.nextval`
 
 ---
 
@@ -286,7 +286,7 @@ Use UPPERCASE for Oracle identifiers:
 
 These were fixed in earlier sessions:
 
-1. **PKGDWMAPRError Constructor** - Added missing `package_name` parameter
+1. **PKGDMS_MAPRError Constructor** - Added missing `package_name` parameter
 2. **RETURNING Clause Handling** - Fixed with `cursor.var(oracledb.NUMBER)`
 3. **Error Code [132]** - Added exception details
 4. **Sequence Creation** - Provided DDL scripts and troubleshooting guides

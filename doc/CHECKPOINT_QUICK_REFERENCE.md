@@ -10,14 +10,14 @@ sqlplus user/pass@db @doc/database_migration_add_checkpoint.sql
 ### 2. Configure Mapping
 ```sql
 -- With unique key (RECOMMENDED)
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'YOUR_KEY_COLUMN',
     CHKPNTENABLED = 'Y'
 WHERE MAPREF = 'YOUR_MAPPING';
 
 -- Without unique key (FALLBACK)
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'PYTHON',
     CHKPNTENABLED = 'Y'
 WHERE MAPREF = 'YOUR_MAPPING';
@@ -25,7 +25,7 @@ WHERE MAPREF = 'YOUR_MAPPING';
 
 ### 3. Regenerate Job
 ```python
-pkgdwjob.create_update_job(connection, 'YOUR_MAPPING')
+pkgdms_job.create_update_job(connection, 'YOUR_MAPPING')
 ```
 
 ---
@@ -45,7 +45,7 @@ pkgdwjob.create_update_job(connection, 'YOUR_MAPPING')
 ### View Current Checkpoint
 ```sql
 SELECT param1 as checkpoint, status
-FROM DWPRCLOG
+FROM DMS_PRCLOG
 WHERE mapref = 'YOUR_MAPREF'
   AND status = 'IP'
 ORDER BY reccrdt DESC
@@ -54,7 +54,7 @@ FETCH FIRST 1 ROW ONLY;
 
 ### Clear Checkpoint (Force Full Reload)
 ```sql
-UPDATE DWPRCLOG
+UPDATE DMS_PRCLOG
 SET PARAM1 = NULL
 WHERE mapref = 'YOUR_MAPREF'
   AND sessionid = :current_session;
@@ -63,7 +63,7 @@ WHERE mapref = 'YOUR_MAPREF'
 ### Check Configuration
 ```sql
 SELECT CHKPNTSTRATEGY, CHKPNTCOLUMN, CHKPNTENABLED
-FROM DWMAPR
+FROM DMS_MAPR
 WHERE MAPREF = 'YOUR_MAPREF';
 ```
 
@@ -109,7 +109,7 @@ CHKPNTCOLUMN = 'OPTIONAL_DATE'
 
 ### Scenario 1: Large Fact Table (1M+ rows)
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'KEY',
     CHKPNTCOLUMN = 'TRANSACTION_ID',
     CHKPNTENABLED = 'Y',
@@ -119,7 +119,7 @@ WHERE MAPREF = 'SALES_FACT';
 
 ### Scenario 2: Dimension from Complex View
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'PYTHON',
     CHKPNTENABLED = 'Y',
     BLKPRCROWS = 1000  -- Smaller batches
@@ -128,7 +128,7 @@ WHERE MAPREF = 'CUSTOMER_DIM_VIEW';
 
 ### Scenario 3: Small Lookup (< 1000 rows)
 ```sql
-UPDATE DWMAPR 
+UPDATE DMS_MAPR 
 SET CHKPNTSTRATEGY = 'NONE',
     CHKPNTENABLED = 'N'
 WHERE MAPREF = 'COUNTRY_LOOKUP';
@@ -140,7 +140,7 @@ WHERE MAPREF = 'COUNTRY_LOOKUP';
 
 | Problem | Solution |
 |---------|----------|
-| Job always starts fresh | Check `CHKPNTENABLED = 'Y'` in DWMAPR |
+| Job always starts fresh | Check `CHKPNTENABLED = 'Y'` in DMS_MAPR |
 | "Checkpoint column not found" | Ensure column in source query result |
 | Skips wrong rows (PYTHON) | Switch to KEY strategy or add ORDER BY |
 | Slow restarts | Use KEY strategy, reduce batch size |
