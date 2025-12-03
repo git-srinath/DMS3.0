@@ -1,5 +1,7 @@
 Flask
 flask_cors
+fastapi
+uvicorn
 oracledb
 psycopg2-binary
 sqlalchemy
