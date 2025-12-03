@@ -1,8 +1,14 @@
 from flask import Blueprint, request, jsonify
-from database.dbconnect import create_metadata_connection
 import os
-from modules.logger import info, error
 import builtins
+
+# Support both FastAPI/package context and legacy Flask context
+try:
+    from backend.database.dbconnect import create_metadata_connection
+    from backend.modules.logger import info, error
+except ImportError:  # When running Flask app.py directly inside backend
+    from database.dbconnect import create_metadata_connection
+    from modules.logger import info, error
 
 crud_dbconnections_bp = Blueprint('crud-dbconnections', __name__)
 

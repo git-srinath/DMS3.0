@@ -70,7 +70,11 @@ def _load_db_driver(db_type_key: str):
         _driver_cache[normalized_type] = module
         return module
     except ImportError as exc:
-        from modules.logger import error
+        # Support both FastAPI (package import) and legacy Flask (relative import)
+        try:
+            from backend.modules.logger import error
+        except ImportError:  # Flask app.py context
+            from modules.logger import error
         install_hint = registry_entry.get("install_hint", f"pip install {module_name}")
         error(f"Missing driver for {normalized_type}: {module_name}. Install it via '{install_hint}'. Error: {exc}")
         raise
@@ -115,7 +119,10 @@ def create_metadata_connection():
         Database connection object (Oracle or PostgreSQL)
     """
     # Import logger inside the function to avoid circular imports
-    from modules.logger import info, error
+    try:
+        from backend.modules.logger import info, error
+    except ImportError:
+        from modules.logger import info, error
     
     # Check environment variable each time to ensure we get the current value
     current_db_type = os.getenv("DB_TYPE", "ORACLE").upper()
@@ -133,7 +140,10 @@ def create_oracle_connection():
     """Create Oracle database connection"""
     try:
         # Import logger inside the function to avoid circular imports
-        from modules.logger import info, error
+        try:
+            from backend.modules.logger import info, error
+        except ImportError:
+            from modules.logger import info, error
         oracledb = _load_db_driver("ORACLE")
         
         if db_connection_string:
@@ -148,7 +158,10 @@ def create_oracle_connection():
         return connection
     except Exception as e:
         # Import logger inside the function to avoid circular imports
-        from modules.logger import error
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error
         error(f"Error establishing Oracle connection: {str(e)}")
         raise
 
@@ -157,7 +170,10 @@ def create_postgresql_connection():
     try:
         psycopg2 = _load_db_driver("POSTGRESQL")
         # Import logger inside the function to avoid circular imports
-        from modules.logger import info, error
+        try:
+            from backend.modules.logger import info, error
+        except ImportError:
+            from modules.logger import info, error
         
         # Verify we have required parameters
         if not db_connection_string and not all([db_host, db_name, db_user, db_password]):
@@ -182,12 +198,18 @@ def create_postgresql_connection():
         info("PostgreSQL connection established successfully")
         return connection
     except ImportError:
-        from modules.logger import error
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error
         error("psycopg2 is required for PostgreSQL connections. Install it with: pip install psycopg2-binary")
         raise
     except Exception as e:
         # Import logger inside the function to avoid circular imports
-        from modules.logger import error
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error
         error(f"Error establishing PostgreSQL connection: {str(e)}")
         import traceback
         error(f"Traceback: {traceback.format_exc()}")
@@ -196,7 +218,10 @@ def create_postgresql_connection():
 def create_oracle_connection_dwapp():
     try:
         # Import logger inside the function to avoid circular imports
-        from modules.logger import info, error
+        try:
+            from backend.modules.logger import info, error
+        except ImportError:
+            from modules.logger import info, error
         oracledb = _load_db_driver("ORACLE")
         
         connection = oracledb.connect(
@@ -208,7 +233,10 @@ def create_oracle_connection_dwapp():
         return connection
     except Exception as e:
         # Import logger inside the function to avoid circular imports
-        from modules.logger import error
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error
         error(f"Error establishing Oracle connection: {str(e)}")
         raise
 
@@ -224,7 +252,10 @@ def create_target_connection(connection_id):
         Database connection object (Oracle or PostgreSQL)
     """
     try:
-        from modules.logger import info, error
+        try:
+            from backend.modules.logger import info, error
+        except ImportError:
+            from modules.logger import info, error
         import builtins
         
         # Get metadata connection first
@@ -356,7 +387,10 @@ def create_target_connection(connection_id):
         return target_conn
         
     except Exception as e:
-        from modules.logger import error
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error
         error(f"Error establishing target connection (ID: {connection_id}): {str(e)}")
         raise
 
@@ -375,7 +409,10 @@ def get_connection_for_mapping(mapref):
             - trgconid: Target connection ID (None if using metadata connection)
     """
     try:
-        from modules.logger import info
+        try:
+            from backend.modules.logger import info
+        except ImportError:
+            from modules.logger import info
         
         # Get metadata connection
         metadata_conn = create_metadata_connection()
@@ -419,6 +456,9 @@ def get_connection_for_mapping(mapref):
             return metadata_conn, False, None
             
     except Exception as e:
-        from modules.logger import error
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error
         error(f"Error getting connection for mapping {mapref}: {str(e)}")
         raise 

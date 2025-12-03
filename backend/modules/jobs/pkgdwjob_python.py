@@ -15,8 +15,12 @@ import hashlib
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 import traceback
-from modules.logger import info, error
-from modules.common.id_provider import next_id as get_next_id
+try:
+    from backend.modules.logger import info, error
+    from backend.modules.common.id_provider import next_id as get_next_id
+except ImportError:  # Fallback for Flask-style imports
+    from modules.logger import info, error  # type: ignore
+    from modules.common.id_provider import next_id as get_next_id  # type: ignore
 
 # Optional Oracle driver: allow scheduler to run even if oracledb is not installed.
 # Oracle-specific features will check for this at runtime.

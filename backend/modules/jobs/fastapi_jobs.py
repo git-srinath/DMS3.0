@@ -1,0 +1,1055 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import os
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+from backend.database.dbconnect import create_metadata_connection
+
+try:
+    from backend.modules.helper_functions import (
+        call_create_update_job,
+        get_mapping_ref,
+        get_mapping_details,
+    )
+except ImportError:  # Fallback for direct Flask-style imports if needed
+    from modules.helper_functions import (  # type: ignore
+        call_create_update_job,
+        get_mapping_ref,
+        get_mapping_details,
+    )
+
+try:
+    from backend.modules.common.db_table_utils import (
+        _detect_db_type,
+        get_postgresql_table_name,
+    )
+except ImportError:  # Fallback
+    from modules.common.db_table_utils import (  # type: ignore
+        _detect_db_type,
+        get_postgresql_table_name,
+    )
+
+try:
+    from backend.modules.logger import info, error, debug
+except ImportError:  # Fallback
+    from modules.logger import info, error, debug  # type: ignore
+
+from backend.modules.jobs.pkgdwprc_python import (
+    JobSchedulerService,
+    ScheduleRequest,
+    ImmediateJobRequest,
+    HistoryJobRequest,
+    SchedulerValidationError,
+    SchedulerRepositoryError,
+    SchedulerError,
+)
+
+
+router = APIRouter(tags=["jobs"])
+
+
+def _parse_date(value: Optional[str]):
+    if value in (None, "", "null"):
+        return None
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise SchedulerValidationError(f"Invalid date format: {value}") from exc
+
+
+def _optional_int(value: Optional[str]):
+    if value in (None, "", "null"):
+        return None
+    return int(value)
+
+
+def _parse_datetime(value: Optional[str]):
+    if value in (None, "", "null"):
+        return None
+    try:
+        sanitized = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(sanitized)
+    except ValueError:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        except ValueError as exc:
+            raise SchedulerValidationError(
+                f"Invalid datetime format: {value}"
+            ) from exc
+
+
+# ----- Simple job endpoints used by frontend -----
+
+
+@router.post("/create-update")
+async def create_update_job(payload: Dict[str, Any]):
+    """
+    Create or update a job for a given mapping reference.
+    Mirrors Flask endpoint: POST /job/create-update
+    """
+    try:
+        p_mapref = payload.get("mapref")
+
+        if not p_mapref:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "message": "Missing required parameter: mapref",
+                },
+            )
+
+        conn = create_metadata_connection()
+        try:
+            job_id, error_message = call_create_update_job(conn, p_mapref)
+
+            if error_message:
+                raise HTTPException(
+                    status_code=500,
+                    detail={"success": False, "message": error_message},
+                )
+
+            return {
+                "success": True,
+                "message": "Job created/updated successfully",
+                "job_id": job_id,
+            }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"Error in create_update_job: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "message": f"An error occurred while processing the request: {str(e)}",
+            },
+        )
+
+
+@router.get("/get_job_details/{mapref}")
+async def get_job_details(mapref: str):
+    """
+    Get job detail columns (TRGCLNM, MAPLOGIC, etc.) for a mapping.
+    Mirrors Flask endpoint: GET /job/get_job_details/<mapref>
+    """
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+
+        if db_type == "POSTGRESQL":
+            schema = (os.getenv("DMS_SCHEMA", "") or "").strip()
+            schema_lower = schema.lower() if schema else "public"
+            dms_jobdtl_ref = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_JOBDTL"
+            )
+            dms_jobdtl_ref = (
+                f'"{dms_jobdtl_ref}"'
+                if dms_jobdtl_ref != dms_jobdtl_ref.lower()
+                else dms_jobdtl_ref
+            )
+            schema_prefix = f"{schema_lower}." if schema else ""
+            dms_jobdtl_full = f"{schema_prefix}{dms_jobdtl_ref}"
+            job_details_query = (
+                f"SELECT TRGCLNM,TRGCLDTYP,TRGKEYFLG,TRGKEYSEQ,TRGCLDESC,"
+                f"MAPLOGIC,KEYCLNM,VALCLNM,SCDTYP "
+                f"FROM {dms_jobdtl_full} WHERE CURFLG = 'Y' AND MAPREF = %s"
+            )
+            cursor.execute(job_details_query, (mapref,))
+        else:
+            job_details_query = """
+                SELECT TRGCLNM,TRGCLDTYP,TRGKEYFLG,TRGKEYSEQ,TRGCLDESC,
+                       MAPLOGIC,KEYCLNM,VALCLNM,SCDTYP
+                FROM DMS_JOBDTL
+                WHERE CURFLG = 'Y' AND MAPREF = :mapref
+            """
+            cursor.execute(job_details_query, {"mapref": mapref})
+
+        job_details = cursor.fetchall()
+        return {"job_details": job_details}
+    except Exception as e:
+        error(f"Error in get_job_details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@router.get("/get_job_schedule_details/{job_flow_id}")
+async def get_job_schedule_details(job_flow_id: str):
+    """
+    Get schedule details for a job flow id.
+    Mirrors Flask endpoint: GET /job/get_job_schedule_details/<job_flow_id>
+    """
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+
+        if db_type == "POSTGRESQL":
+            schema = (os.getenv("DMS_SCHEMA", "") or "").strip()
+            schema_lower = schema.lower() if schema else "public"
+            dms_jobsch_ref = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_JOBSCH"
+            )
+            dms_jobsch_ref = (
+                f'"{dms_jobsch_ref}"'
+                if dms_jobsch_ref != dms_jobsch_ref.lower()
+                else dms_jobsch_ref
+            )
+            schema_prefix = f"{schema_lower}." if schema else ""
+            dms_jobsch_full = f"{schema_prefix}{dms_jobsch_ref}"
+            query = f"""
+                SELECT 
+                    JOBFLWID,
+                    MAPREF,
+                    FRQCD,
+                    FRQDD,
+                    FRQHH,
+                    FRQMI,
+                    STRTDT,
+                    ENDDT,
+                    STFLG,
+                    DPND_JOBSCHID,
+                    RECCRDT,
+                    RECUPDT 
+                FROM {dms_jobsch_full} 
+                WHERE CURFLG ='Y' AND JOBFLWID=%s
+            """
+            cursor.execute(query, (job_flow_id,))
+        else:
+            query = """
+                SELECT 
+                    JOBFLWID,
+                    MAPREF,
+                    FRQCD,
+                    FRQDD,
+                    FRQHH,
+                    FRQMI,
+                    STRTDT,
+                    ENDDT,
+                    STFLG,
+                    DPND_JOBSCHID,
+                    RECCRDT,
+                    RECUPDT 
+                FROM DMS_JOBSCH 
+                WHERE CURFLG ='Y' AND JOBFLWID=:job_flow_id
+            """
+            cursor.execute(query, {"job_flow_id": job_flow_id})
+
+        columns = [col[0] for col in cursor.description]
+        job_schedule_details: List[Dict[str, Any]] = []
+        for row in cursor.fetchall():
+            job_dict: Dict[str, Any] = {}
+            for i, column in enumerate(columns):
+                value = row[i]
+                if isinstance(value, (int, float)):
+                    job_dict[column] = str(value)
+                elif hasattr(value, "isoformat"):
+                    job_dict[column] = value.isoformat()
+                else:
+                    job_dict[column] = str(value) if value is not None else ""
+            job_schedule_details.append(job_dict)
+
+        return job_schedule_details
+    except Exception as e:
+        error(f"Error in get_job_schedule_details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ----- Scheduling and dependency endpoints -----
+
+
+class SaveJobScheduleRequest(BaseModel):
+    MAPREF: str
+    FRQCD: str
+    FRQDD: Optional[str] = None
+    FRQHH: Optional[str] = None
+    FRQMI: Optional[str] = None
+    STRTDT: Optional[str] = None
+    ENDDT: Optional[str] = None
+
+
+@router.post("/save_job_schedule")
+async def save_job_schedule(payload: SaveJobScheduleRequest):
+    """
+    Save or update a job schedule.
+    Mirrors Flask endpoint: POST /job/save_job_schedule
+    """
+    conn = None
+    try:
+        data = payload.model_dump()
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        schedule_request = ScheduleRequest(
+            mapref=data.get("MAPREF"),
+            frequency_code=data.get("FRQCD"),
+            frequency_day=data.get("FRQDD"),
+            frequency_hour=_optional_int(data.get("FRQHH")),
+            frequency_minute=_optional_int(data.get("FRQMI")),
+            start_date=_parse_date(data.get("STRTDT")),
+            end_date=_parse_date(data.get("ENDDT")),
+        )
+        result = service.create_job_schedule(schedule_request)
+        return {
+            "success": True,
+            "message": result.message,
+            "job_schedule_id": result.job_schedule_id,
+            "status": result.status,
+        }
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in save_job_schedule: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Unexpected error: {str(exc)}"},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+class SaveParentChildJobRequest(BaseModel):
+    PARENT_MAP_REFERENCE: str
+    CHILD_MAP_REFERENCE: str
+
+
+@router.post("/save_parent_child_job")
+async def save_parent_child_job(payload: SaveParentChildJobRequest):
+    """
+    Save parent/child job relationship.
+    Mirrors Flask endpoint: POST /job/save_parent_child_job
+    """
+    data = payload.model_dump()
+    parent_map_reference = data.get("PARENT_MAP_REFERENCE")
+    child_map_reference = data.get("CHILD_MAP_REFERENCE")
+
+    if not parent_map_reference or not child_map_reference:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "success": False,
+                "message": "Missing required parameters: PARENT_MAP_REFERENCE or CHILD_MAP_REFERENCE",
+            },
+        )
+
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        service.create_job_dependency(parent_map_reference, child_map_reference)
+        return {
+            "success": True,
+            "message": "Parent-child job relationship saved successfully",
+        }
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in save_parent_child_job: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": str(exc)},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+class EnableDisableJobRequest(BaseModel):
+    MAPREF: str
+    JOB_FLG: str
+
+
+@router.post("/enable_disable_job")
+async def enable_disable_job(payload: EnableDisableJobRequest):
+    """
+    Enable or disable a job schedule.
+    Mirrors Flask endpoint: POST /job/enable_disable_job
+    """
+    data = payload.model_dump()
+    map_ref = data.get("MAPREF")
+    job_flag = data.get("JOB_FLG")
+
+    if not map_ref or job_flag not in {"E", "D"}:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": "Invalid or missing parameters"},
+        )
+
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        service.enable_disable_schedule(map_ref, job_flag)
+        message = (
+            "Job enabled successfully"
+            if job_flag == "E"
+            else "Job disabled successfully"
+        )
+        return {"success": True, "message": message}
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in enable_disable_job: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": str(exc)},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+# ----- Immediate / history job execution -----
+
+
+class ScheduleJobImmediatelyRequest(BaseModel):
+    mapref: str
+    loadType: Optional[str] = "regular"  # 'regular' or 'history'
+    startDate: Optional[str] = None
+    endDate: Optional[str] = None
+    truncateLoad: Optional[str] = "N"
+
+
+def _call_schedule_regular_job_async(p_mapref: str):
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        request_id = service.queue_immediate_job(ImmediateJobRequest(mapref=p_mapref))
+        return True, f"Job {p_mapref} queued for immediate execution (request_id={request_id})"
+    except SchedulerError as exc:
+        return False, str(exc)
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        if conn:
+            conn.close()
+
+
+def _call_schedule_history_job_async(
+    p_mapref: str, p_strtdt: str, p_enddt: str, p_tlflg: str
+):
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        request_id = service.queue_history_job(
+            HistoryJobRequest(
+                mapref=p_mapref,
+                start_date=_parse_date(p_strtdt),
+                end_date=_parse_date(p_enddt),
+                truncate_flag=p_tlflg or "N",
+            )
+        )
+        return (
+            True,
+            f"History job {p_mapref} queued "
+            f"(request_id={request_id}, {p_strtdt} to {p_enddt})",
+        )
+    except SchedulerError as exc:
+        return False, str(exc)
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/schedule-job-immediately")
+async def schedule_job_immediately(payload: ScheduleJobImmediatelyRequest):
+    """
+    Schedule a regular or history job for immediate execution.
+    Mirrors Flask endpoint: POST /job/schedule-job-immediately
+    """
+    data = payload.model_dump()
+    p_mapref = data.get("mapref")
+    load_type = data.get("loadType", "regular")
+    start_date = data.get("startDate")
+    end_date = data.get("endDate")
+    truncate_load = data.get("truncateLoad", "N")
+
+    if not p_mapref:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": "Missing required parameter: mapref"},
+        )
+
+    # Validate history params
+    if load_type == "history" and (not start_date or not end_date):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "success": False,
+                "message": "Missing required parameters for history load: startDate and endDate",
+            },
+        )
+
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        # Reuse check_job_already_running from original module
+        from backend.modules.jobs.jobs import (  # type: ignore
+            check_job_already_running,
+        )
+
+        if check_job_already_running(conn, p_mapref):
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "message": f"{p_mapref} : Job is already running"},
+            )
+
+        if load_type == "history":
+            success, message = _call_schedule_history_job_async(
+                p_mapref, start_date, end_date, truncate_load
+            )
+        else:
+            success, message = _call_schedule_regular_job_async(p_mapref)
+
+        return {"success": success, "message": message}
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"Error in schedule_job_immediately: {e}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+    finally:
+        if conn:
+            conn.close()
+
+
+# ----- Stop running job -----
+
+
+class StopRunningJobRequest(BaseModel):
+    mapref: str
+    startDate: str
+    force: Optional[str] = "N"
+
+
+@router.post("/stop-running-job")
+async def stop_running_job(payload: StopRunningJobRequest):
+    """
+    Request stop of a running job.
+    Mirrors Flask endpoint: POST /job/stop-running-job
+    """
+    data = payload.model_dump()
+    p_mapref = data.get("mapref")
+    p_strtdt = data.get("startDate")
+    p_force = data.get("force", "N")
+
+    if not p_mapref or not p_strtdt:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "success": False,
+                "message": "Missing required parameters: mapref or startDate",
+            },
+        )
+
+    try:
+        start_dt = _parse_datetime(p_strtdt)
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        request_id = service.request_job_stop(p_mapref, start_dt, p_force)
+        info(f"Stop requested for job {p_mapref} (request_id={request_id})")
+        return {
+            "success": True,
+            "message": f"Stop request queued (request_id={request_id})",
+        }
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in stop_running_job: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": str(exc)},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+# ----- Scheduled jobs and logs (status + history) -----
+
+
+@router.get("/get_scheduled_jobs")
+async def get_scheduled_jobs(period: str = Query("7")):
+    """
+    Get list of scheduled jobs and their logs.
+    Mirrors Flask endpoint: GET /job/get_scheduled_jobs?period=...
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        # Parse period
+        period_param = period or "7"
+        if period_param.upper() == "ALL":
+            period_value: Any = "ALL"
+        else:
+            try:
+                period_value = int(period_param)
+            except (ValueError, TypeError):
+                period_value = 7
+
+        db_type = _detect_db_type(conn)
+        schema = (os.getenv("DMS_SCHEMA", "") or "").strip()
+        cursor = conn.cursor()
+
+        if db_type == "POSTGRESQL":
+            schema_lower = schema.lower() if schema else "public"
+            dms_prclog_table = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_PRCLOG"
+            )
+            dms_joblog_table = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_JOBLOG"
+            )
+            dms_joberr_table = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_JOBERR"
+            )
+
+            dms_prclog_ref = (
+                f'"{dms_prclog_table}"'
+                if dms_prclog_table != dms_prclog_table.lower()
+                else dms_prclog_table
+            )
+            dms_joblog_ref = (
+                f'"{dms_joblog_table}"'
+                if dms_joblog_table != dms_joblog_table.lower()
+                else dms_joblog_table
+            )
+            dms_joberr_ref = (
+                f'"{dms_joberr_table}"'
+                if dms_joberr_table != dms_joberr_table.lower()
+                else dms_joberr_table
+            )
+
+            schema_prefix = f"{schema_lower}." if schema else ""
+            dms_prclog_full = f"{schema_prefix}{dms_prclog_ref}"
+            dms_joblog_full = f"{schema_prefix}{dms_joblog_ref}"
+            dms_joberr_full = f"{schema_prefix}{dms_joberr_ref}"
+
+            if period_value == "ALL":
+                query = f"""
+                    SELECT 
+                        jl.joblogid AS log_id,
+                        pl.reccrdt AS log_date,
+                        pl.mapref AS job_name,
+                        pl.status,
+                        pl.strtdt AS actual_start_date,
+                        err.errmsg || E'\\n' || err.dberrmsg AS error_message,
+                        pl.sessionid AS session_id,
+                        jl.srcrows AS source_rows,
+                        jl.trgrows AS target_rows,
+                        pl.param1 AS param1,
+                        CASE 
+                            WHEN pl.enddt IS NOT NULL THEN
+                                EXTRACT(EPOCH FROM (pl.enddt - pl.strtdt))
+                            ELSE NULL
+                        END AS run_duration_seconds
+                    FROM {dms_prclog_full} pl
+                    LEFT JOIN {dms_joblog_full} jl ON jl.jobid = pl.jobid 
+                        AND jl.sessionid = pl.sessionid
+                        AND jl.prcid = pl.prcid
+                        AND jl.mapref = pl.mapref
+                    LEFT JOIN {dms_joberr_full} err ON err.sessionid = pl.sessionid
+                        AND err.prcid = pl.prcid
+                        AND err.mapref = pl.mapref
+                        AND err.jobid = pl.jobid
+                    ORDER BY pl.mapref, pl.reccrdt DESC
+                """
+            else:
+                query = f"""
+                    SELECT 
+                        jl.joblogid AS log_id,
+                        pl.reccrdt AS log_date,
+                        pl.mapref AS job_name,
+                        pl.status,
+                        pl.strtdt AS actual_start_date,
+                        err.errmsg || E'\\n' || err.dberrmsg AS error_message,
+                        pl.sessionid AS session_id,
+                        jl.srcrows AS source_rows,
+                        jl.trgrows AS target_rows,
+                        pl.param1 AS param1,
+                        CASE 
+                            WHEN pl.enddt IS NOT NULL THEN
+                                EXTRACT(EPOCH FROM (pl.enddt - pl.strtdt))
+                            ELSE NULL
+                        END AS run_duration_seconds
+                    FROM {dms_prclog_full} pl
+                    LEFT JOIN {dms_joblog_full} jl ON jl.jobid = pl.jobid 
+                        AND jl.sessionid = pl.sessionid
+                        AND jl.prcid = pl.prcid
+                        AND jl.mapref = pl.mapref
+                    LEFT JOIN {dms_joberr_full} err ON err.sessionid = pl.sessionid
+                        AND err.prcid = pl.prcid
+                        AND err.mapref = pl.mapref
+                        AND err.jobid = pl.jobid
+                    WHERE pl.reccrdt >= CURRENT_TIMESTAMP - INTERVAL '{period_value} days'
+                    ORDER BY pl.mapref, pl.reccrdt DESC
+                """
+            cursor.execute(query)
+        else:
+            schema_prefix = f"{schema}." if schema else ""
+            dms_prclog_full = f"{schema_prefix}DMS_PRCLOG"
+            dms_joblog_full = f"{schema_prefix}DMS_JOBLOG"
+            dms_joberr_full = f"{schema_prefix}DMS_JOBERR"
+
+            if period_value == "ALL":
+                query = f"""
+                    SELECT 
+                        jl.joblogid AS log_id,
+                        pl.reccrdt AS log_date,
+                        pl.mapref AS job_name,
+                        pl.status,
+                        pl.strtdt AS actual_start_date,
+                        err.errmsg || CHR(10) || err.dberrmsg AS error_message,
+                        pl.sessionid AS session_id,
+                        jl.srcrows AS source_rows,
+                        jl.trgrows AS target_rows,
+                        pl.param1 AS param1,
+                        CASE 
+                            WHEN pl.enddt IS NOT NULL THEN
+                                EXTRACT(DAY FROM (pl.enddt - pl.strtdt)) * 86400 + 
+                                EXTRACT(HOUR FROM (pl.enddt - pl.strtdt)) * 3600 + 
+                                EXTRACT(MINUTE FROM (pl.enddt - pl.strtdt)) * 60 + 
+                                EXTRACT(SECOND FROM (pl.enddt - pl.strtdt))
+                            ELSE NULL
+                        END AS run_duration_seconds
+                    FROM {dms_prclog_full} pl, {dms_joblog_full} jl, {dms_joberr_full} err
+                    WHERE jl.jobid(+) = pl.jobid 
+                        AND jl.sessionid(+) = pl.sessionid
+                        AND jl.prcid(+) = pl.prcid
+                        AND jl.mapref(+) = pl.mapref
+                        AND err.sessionid(+) = pl.sessionid
+                        AND err.prcid(+) = pl.prcid
+                        AND err.mapref(+) = pl.mapref
+                        AND err.jobid(+) = pl.jobid
+                    ORDER BY pl.mapref, jl.reccrdt DESC
+                """
+                cursor.execute(query)
+            else:
+                query = f"""
+                    SELECT 
+                        jl.joblogid AS log_id,
+                        pl.reccrdt AS log_date,
+                        pl.mapref AS job_name,
+                        pl.status,
+                        pl.strtdt AS actual_start_date,
+                        err.errmsg || CHR(10) || err.dberrmsg AS error_message,
+                        pl.sessionid AS session_id,
+                        jl.srcrows AS source_rows,
+                        jl.trgrows AS target_rows,
+                        pl.param1 AS param1,
+                        CASE 
+                            WHEN pl.enddt IS NOT NULL THEN
+                                EXTRACT(DAY FROM (pl.enddt - pl.strtdt)) * 86400 + 
+                                EXTRACT(HOUR FROM (pl.enddt - pl.strtdt)) * 3600 + 
+                                EXTRACT(MINUTE FROM (pl.enddt - pl.strtdt)) * 60 + 
+                                EXTRACT(SECOND FROM (pl.enddt - pl.strtdt))
+                            ELSE NULL
+                        END AS run_duration_seconds
+                    FROM {dms_prclog_full} pl, {dms_joblog_full} jl, {dms_joberr_full} err
+                    WHERE jl.jobid(+) = pl.jobid 
+                        AND jl.sessionid(+) = pl.sessionid
+                        AND jl.prcid(+) = pl.prcid
+                        AND jl.mapref(+) = pl.mapref
+                        AND err.sessionid(+) = pl.sessionid
+                        AND err.prcid(+) = pl.prcid
+                        AND err.mapref(+) = pl.mapref
+                        AND err.jobid(+) = pl.jobid
+                        AND pl.reccrdt >= SYSDATE - :period
+                    ORDER BY pl.mapref, jl.reccrdt DESC
+                """
+                cursor.execute(query, {"period": period_value})
+
+        column_names = [desc[0] for desc in cursor.description]
+        raw_jobs = cursor.fetchall()
+
+        jobs_dict: Dict[str, Dict[str, Any]] = {}
+
+        for row in raw_jobs:
+            log_entry: Dict[str, Any] = {}
+            for i, value in enumerate(row):
+                column_name = column_names[i]
+                column_name_upper = column_name.upper() if column_name else column_name
+
+                if value is None:
+                    log_entry[column_name_upper] = None
+                elif hasattr(value, "total_seconds"):
+                    log_entry[column_name_upper] = int(value.total_seconds())
+                elif hasattr(value, "isoformat"):
+                    log_entry[column_name_upper] = value.isoformat()
+                elif hasattr(value, "read"):
+                    try:
+                        lob_data = value.read()
+                        if isinstance(lob_data, bytes):
+                            log_entry[column_name_upper] = lob_data.decode("utf-8")
+                        else:
+                            log_entry[column_name_upper] = str(lob_data)
+                    except Exception as e:
+                        log_entry[column_name_upper] = f"Error reading LOB: {str(e)}"
+                elif isinstance(value, (int, float)):
+                    log_entry[column_name_upper] = value
+                else:
+                    log_entry[column_name_upper] = (
+                        str(value) if value is not None else None
+                    )
+
+            job_name = log_entry.get("JOB_NAME") or log_entry.get("job_name")
+            if job_name:
+                if job_name not in jobs_dict:
+                    jobs_dict[job_name] = {"job_name": job_name, "logs": []}
+                jobs_dict[job_name]["logs"].append(log_entry)
+
+        grouped_jobs = list(jobs_dict.values())
+        grouped_jobs.sort(key=lambda x: x["job_name"])
+        for job in grouped_jobs:
+            job["logs"].sort(
+                key=lambda x: x.get("LOG_DATE") or x.get("log_date") or "",
+                reverse=True,
+            )
+
+        total_logs = sum(len(job["logs"]) for job in grouped_jobs)
+
+        return {
+            "jobs": grouped_jobs,
+            "summary": {
+                "total_jobs": len(grouped_jobs),
+                "total_log_entries": total_logs,
+                "column_names": column_names,
+            },
+        }
+    except Exception as e:
+        error(f"Error in get_scheduled_jobs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.get("/get_job_and_process_log_details/{mapref}")
+async def get_job_and_process_log_details(mapref: str):
+    """
+    Get job and process log details for a scheduled job.
+    Mirrors Flask endpoint: GET /job/get_job_and_process_log_details/<mapref>
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
+        schema = (os.getenv("DMS_SCHEMA", "") or "").strip()
+        cursor = conn.cursor()
+
+        if db_type == "POSTGRESQL":
+            schema_lower = schema.lower() if schema else "public"
+            dms_joblog_table = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_JOBLOG"
+            )
+            dms_prclog_table = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_PRCLOG"
+            )
+            dms_joberr_table = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_JOBERR"
+            )
+
+            dms_joblog_ref = (
+                f'"{dms_joblog_table}"'
+                if dms_joblog_table != dms_joblog_table.lower()
+                else dms_joblog_table
+            )
+            dms_prclog_ref = (
+                f'"{dms_prclog_table}"'
+                if dms_prclog_table != dms_prclog_table.lower()
+                else dms_prclog_table
+            )
+            dms_joberr_ref = (
+                f'"{dms_joberr_table}"'
+                if dms_joberr_table != dms_joberr_table.lower()
+                else dms_joberr_table
+            )
+
+            schema_prefix = f"{schema_lower}." if schema else ""
+            dms_joblog_full = f"{schema_prefix}{dms_joblog_ref}"
+            dms_prclog_full = f"{schema_prefix}{dms_prclog_ref}"
+            dms_joberr_full = f"{schema_prefix}{dms_joberr_ref}"
+
+            query = f"""
+                SELECT jbl.prcdt AS PROCESS_DATE
+                      ,jbl.mapref AS MAP_REFERENCE
+                      ,jbl.jobid AS JOB_ID
+                      ,jbl.srcrows AS SOURCE_ROWS
+                      ,jbl.trgrows AS target_rows
+                      ,jbl.errrows AS ERROR_ROWS
+                      ,prc.strtdt AS START_DATE
+                      ,prc.enddt AS END_DATE
+                      ,prc.status AS STATUS
+                      ,err.errmsg || E'\\n' || err.dberrmsg AS ERROR_MESSAGE
+                FROM {dms_joblog_full} jbl
+                INNER JOIN {dms_prclog_full} prc ON jbl.jobid = prc.jobid
+                LEFT JOIN {dms_joberr_full} err ON err.sessionid = prc.sessionid
+                    AND err.prcid = prc.prcid
+                    AND err.mapref = prc.mapref
+                    AND err.jobid = prc.jobid
+                WHERE jbl.mapref = %s
+                ORDER BY prc.strtdt DESC
+            """
+            cursor.execute(query, (mapref,))
+        else:
+            schema_prefix = f"{schema}." if schema else ""
+            dms_joblog_full = f"{schema_prefix}DMS_JOBLOG"
+            dms_prclog_full = f"{schema_prefix}DMS_PRCLOG"
+            dms_joberr_full = f"{schema_prefix}DMS_JOBERR"
+
+            query = f"""
+                SELECT jbl.prcdt AS PROCESS_DATE
+                      ,jbl.mapref AS MAP_REFERENCE
+                      ,jbl.jobid AS JOB_ID
+                      ,jbl.srcrows AS SOURCE_ROWS
+                      ,jbl.trgrows AS target_rows
+                      ,jbl.errrows AS ERROR_ROWS
+                      ,prc.strtdt AS START_DATE
+                      ,prc.enddt AS END_DATE
+                      ,prc.status AS STATUS
+                      ,err.errmsg || CHR(10) || err.dberrmsg AS ERROR_MESSAGE
+                FROM {dms_joblog_full} jbl
+                    ,{dms_prclog_full} prc
+                    ,{dms_joberr_full} err
+                WHERE jbl.mapref = :mapref
+                    AND jbl.jobid = prc.jobid
+                    AND err.sessionid(+) = prc.sessionid
+                    AND err.prcid(+) = prc.prcid
+                    AND err.mapref(+) = prc.mapref
+                    AND err.jobid(+) = prc.jobid
+                ORDER BY prc.strtdt DESC
+            """
+            cursor.execute(query, {"mapref": mapref})
+
+        job_and_process_log_details = cursor.fetchall()
+        return {"job_and_process_log_details": job_and_process_log_details}
+    except Exception as e:
+        error(f"Error in get_job_and_process_log_details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.get("/get_error_details/{job_id}")
+async def get_error_details(job_id: str):
+    """
+    Get error details for a scheduled job.
+    Mirrors Flask endpoint: GET /job/get_error_details/<job_id>
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+
+        query = """
+        SELECT ERRID as ERROR_ID,
+               PRCDT as PROCESS_DATE,
+               ERRTYP as ERROR_TYPE,
+               DBERRMSG as DATABASE_ERROR_MESSAGE,
+               ERRMSG as ERROR_MESSAGE,
+               KEYVALUE as KEY_VALUE 
+        FROM {dms_joberr_full} WHERE JOBID = {bind_param}
+        """
+
+        if db_type == "POSTGRESQL":
+            schema = (os.getenv("DMS_SCHEMA", "") or "").strip()
+            schema_lower = schema.lower() if schema else "public"
+            dms_joberr_ref = get_postgresql_table_name(
+                cursor, schema_lower, "DMS_JOBERR"
+            )
+            dms_joberr_ref = (
+                f'"{dms_joberr_ref}"'
+                if dms_joberr_ref != dms_joberr_ref.lower()
+                else dms_joberr_ref
+            )
+            schema_prefix = f"{schema_lower}." if schema else ""
+            dms_joberr_full = f"{schema_prefix}{dms_joberr_ref}"
+            bind_param = "%s"
+            cursor.execute(
+                query.format(dms_joberr_full=dms_joberr_full, bind_param=bind_param),
+                (job_id,),
+            )
+        else:
+            oracle_schema = os.getenv("DMS_SCHEMA", "") or ""
+            schema_prefix = f"{oracle_schema}." if oracle_schema else ""
+            dms_joberr_full = f"{schema_prefix}DMS_JOBERR"
+            bind_param = ":job_id"
+            cursor.execute(
+                query.format(dms_joberr_full=dms_joberr_full, bind_param=bind_param),
+                {"job_id": job_id},
+            )
+
+        error_details = cursor.fetchall()
+        return {"error_details": error_details}
+    except Exception as e:
+        error(f"Error in get_error_details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+

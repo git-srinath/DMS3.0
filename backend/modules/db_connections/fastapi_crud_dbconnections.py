@@ -1,0 +1,438 @@
+from typing import List, Optional
+
+import builtins
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from backend.database.dbconnect import create_metadata_connection
+
+
+router = APIRouter(tags=["db_connections"])
+
+TABLE_NAME = "DMS_DBCONDTLS"
+
+
+def _detect_db_type(conn) -> str:
+    """Detect database type from connection (PostgreSQL vs Oracle)."""
+    module_name = builtins.type(conn).__module__
+    if "psycopg" in module_name or "pg8000" in module_name:
+        return "POSTGRESQL"
+    if "oracledb" in module_name or "cx_Oracle" in module_name:
+        return "ORACLE"
+    # Fallback with simple queries
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM dual")
+        cursor.close()
+        return "ORACLE"
+    except Exception:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            return "POSTGRESQL"
+        except Exception:
+            return "ORACLE"
+
+
+def format_error_message(err: Exception) -> str:
+    """Port of the Flask helper to keep user-facing messages consistent."""
+    error_str = str(err)
+    if "DPY-6005" in error_str or "timed out" in error_str.lower():
+        return (
+            "Unable to connect to the database. Please check if the database "
+            "server is running and accessible."
+        )
+    if "ORA-" in error_str:
+        return f"Database error: {error_str}"
+    if "connection" in error_str.lower() and "refused" in error_str.lower():
+        return (
+            "Database connection refused. Please check database server status "
+            "and network connectivity."
+        )
+    return f"An error occurred: {error_str}"
+
+
+class DbConnectionBase(BaseModel):
+    connm: str
+    dbtyp: str
+    dbhost: str
+    # Allow numeric ports (e.g. INTEGER/DECIMAL from DB) as well as strings
+    dbport: Optional[str | int] = None
+    dbsrvnm: Optional[str] = None
+    usrnm: Optional[str] = None
+    passwd: Optional[str] = None
+    constr: Optional[str] = None
+    dbdescr: Optional[str] = None
+    sslfg: Optional[str] = "N"
+
+
+class DbConnectionCreate(DbConnectionBase):
+    crtdby: Optional[str] = "system"
+
+
+class DbConnectionUpdate(DbConnectionBase):
+    uptdby: Optional[str] = "system"
+
+
+class DbConnection(DbConnectionBase):
+    conid: int
+    curflg: Optional[str] = "Y"
+
+    class Config:
+        from_attributes = True
+
+
+class DbConnectionsResponse(BaseModel):
+    success: bool
+    data: List[DbConnection]
+
+
+class DbConnectionSingleResponse(BaseModel):
+    success: bool
+    data: Optional[DbConnection] = None
+    message: Optional[str] = None
+
+
+class SimpleResponse(BaseModel):
+    success: bool
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.get("/dbconnections", response_model=DbConnectionsResponse)
+async def get_all_db_connections():
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, constr, "
+            f"dbdescr, sslfg, curflg FROM {TABLE_NAME} WHERE curflg = 'Y'"
+        )
+        columns = [desc[0].lower() for desc in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.close()
+        return DbConnectionsResponse(
+            success=True, data=[DbConnection(**row) for row in rows]
+        )
+    except Exception as e:  # pragma: no cover - mirrors Flask behavior
+        user_message = format_error_message(e)
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": user_message, "error": str(e)},
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.get("/dbconnections/{conid}", response_model=DbConnectionSingleResponse)
+async def get_db_connection(conid: int):
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
+        cursor = conn.cursor()
+
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, constr, "
+                f"dbdescr, sslfg, curflg FROM {TABLE_NAME} "
+                "WHERE conid = %s AND curflg = 'Y'",
+                (conid,),
+            )
+        else:
+            cursor.execute(
+                f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, constr, "
+                f"dbdescr, sslfg, curflg FROM {TABLE_NAME} "
+                "WHERE conid = :conid AND curflg = 'Y'",
+                {"conid": conid},
+            )
+
+        row = cursor.fetchone()
+        columns = [desc[0].lower() for desc in cursor.description]
+        data = dict(zip(columns, row)) if row else None
+        cursor.close()
+
+        if not data:
+            return DbConnectionSingleResponse(
+                success=False, data=None, message="Record not found"
+            )
+
+        return DbConnectionSingleResponse(success=True, data=DbConnection(**data))
+
+    except Exception as e:
+        user_message = format_error_message(e)
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": user_message, "error": str(e)},
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.post("/dbconnections", response_model=SimpleResponse)
+async def create_db_connection(payload: DbConnectionCreate):
+    conn = None
+    db_type = None
+    try:
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
+        cursor = conn.cursor()
+
+        # Get new conid from sequence
+        if db_type == "POSTGRESQL":
+            cursor.execute("SELECT nextval('DMS_DBCONDTLSSEQ')")
+        else:
+            cursor.execute("SELECT DMS_DBCONDTLSSEQ.NEXTVAL FROM dual")
+        (conid,) = cursor.fetchone()
+
+        data = payload.dict()
+
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"""
+                INSERT INTO {TABLE_NAME} 
+                (conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, passwd, constr, 
+                 dbdescr, sslfg, reccrdt, recupdt, curflg, crtdby) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'Y', %s)
+            """,
+                (
+                    conid,
+                    data.get("connm"),
+                    data.get("dbtyp"),
+                    data.get("dbhost"),
+                    data.get("dbport"),
+                    data.get("dbsrvnm"),
+                    data.get("usrnm"),
+                    data.get("passwd"),
+                    data.get("constr"),
+                    data.get("dbdescr"),
+                    data.get("sslfg", "N"),
+                    data.get("crtdby", "system"),
+                ),
+            )
+        else:
+            cursor.execute(
+                f"""
+                INSERT INTO {TABLE_NAME} 
+                (conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, passwd, constr, 
+                 dbdescr, sslfg, reccrdt, recupdt, curflg, crtdby) 
+                VALUES (:conid, :connm, :dbtyp, :dbhost, :dbport, :dbsrvnm, :usrnm, 
+                        :passwd, :constr, :dbdescr, :sslfg, SYSDATE, SYSDATE, 'Y', :crtdby)
+            """,
+                {
+                    "conid": conid,
+                    "connm": data.get("connm"),
+                    "dbtyp": data.get("dbtyp"),
+                    "dbhost": data.get("dbhost"),
+                    "dbport": data.get("dbport"),
+                    "dbsrvnm": data.get("dbsrvnm"),
+                    "usrnm": data.get("usrnm"),
+                    "passwd": data.get("passwd"),
+                    "constr": data.get("constr"),
+                    "dbdescr": data.get("dbdescr"),
+                    "sslfg": data.get("sslfg", "N"),
+                    "crtdby": data.get("crtdby", "system"),
+                },
+            )
+
+        if db_type == "POSTGRESQL" and not getattr(conn, "autocommit", False):
+            conn.commit()
+        elif db_type == "ORACLE":
+            conn.commit()
+
+        cursor.close()
+        return SimpleResponse(
+            success=True, message="Connection created successfully", error=None
+        )
+    except Exception as e:
+        if conn and db_type:
+            try:
+                if db_type == "POSTGRESQL" and not getattr(conn, "autocommit", False):
+                    conn.rollback()
+                elif db_type == "ORACLE":
+                    conn.rollback()
+            except Exception:
+                pass
+        user_message = format_error_message(e)
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": user_message, "error": str(e)},
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.put("/dbconnections/{conid}", response_model=SimpleResponse)
+async def update_db_connection(conid: int, payload: DbConnectionUpdate):
+    conn = None
+    db_type = None
+    try:
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
+        cursor = conn.cursor()
+        data = payload.dict()
+
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"""
+                UPDATE {TABLE_NAME} SET
+                    connm = %s,
+                    dbtyp = %s,
+                    dbhost = %s,
+                    dbport = %s,
+                    dbsrvnm = %s,
+                    usrnm = %s,
+                    passwd = %s,
+                    constr = %s,
+                    dbdescr = %s,
+                    sslfg = %s,
+                    recupdt = CURRENT_TIMESTAMP,
+                    uptdby = %s
+                WHERE conid = %s
+            """,
+                (
+                    data.get("connm"),
+                    data.get("dbtyp"),
+                    data.get("dbhost"),
+                    data.get("dbport"),
+                    data.get("dbsrvnm"),
+                    data.get("usrnm"),
+                    data.get("passwd"),
+                    data.get("constr"),
+                    data.get("dbdescr"),
+                    data.get("sslfg", "N"),
+                    data.get("uptdby", "system"),
+                    conid,
+                ),
+            )
+        else:
+            cursor.execute(
+                f"""
+                UPDATE {TABLE_NAME} SET
+                    connm = :connm,
+                    dbtyp = :dbtyp,
+                    dbhost = :dbhost,
+                    dbport = :dbport,
+                    dbsrvnm = :dbsrvnm,
+                    usrnm = :usrnm,
+                    passwd = :passwd,
+                    constr = :constr,
+                    dbdescr = :dbdescr,
+                    sslfg = :sslfg,
+                    recupdt = SYSDATE,
+                    uptdby = :uptdby
+                WHERE conid = :conid
+            """,
+                {
+                    "conid": conid,
+                    "connm": data.get("connm"),
+                    "dbtyp": data.get("dbtyp"),
+                    "dbhost": data.get("dbhost"),
+                    "dbport": data.get("dbport"),
+                    "dbsrvnm": data.get("dbsrvnm"),
+                    "usrnm": data.get("usrnm"),
+                    "passwd": data.get("passwd"),
+                    "constr": data.get("constr"),
+                    "dbdescr": data.get("dbdescr"),
+                    "sslfg": data.get("sslfg", "N"),
+                    "uptdby": data.get("uptdby", "system"),
+                },
+            )
+
+        if db_type == "POSTGRESQL" and not getattr(conn, "autocommit", False):
+            conn.commit()
+        elif db_type == "ORACLE":
+            conn.commit()
+
+        cursor.close()
+        return SimpleResponse(success=True, message="Connection updated", error=None)
+    except Exception as e:
+        if conn and db_type:
+            try:
+                if db_type == "POSTGRESQL" and not getattr(conn, "autocommit", False):
+                    conn.rollback()
+                elif db_type == "ORACLE":
+                    conn.rollback()
+            except Exception:
+                pass
+        user_message = format_error_message(e)
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": user_message, "error": str(e)},
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.delete("/dbconnections/{conid}", response_model=SimpleResponse)
+async def delete_db_connection(conid: int):
+    conn = None
+    db_type = None
+    try:
+        conn = create_metadata_connection()
+        db_type = _detect_db_type(conn)
+        cursor = conn.cursor()
+
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"UPDATE {TABLE_NAME} "
+                "SET curflg = 'N', actby = %s, actdt = CURRENT_TIMESTAMP "
+                "WHERE conid = %s",
+                ("system", conid),
+            )
+        else:
+            cursor.execute(
+                f"UPDATE {TABLE_NAME} "
+                "SET curflg = 'N', actby = :actby, actdt = SYSDATE "
+                "WHERE conid = :conid",
+                {"conid": conid, "actby": "system"},
+            )
+
+        if db_type == "POSTGRESQL" and not getattr(conn, "autocommit", False):
+            conn.commit()
+        elif db_type == "ORACLE":
+            conn.commit()
+
+        cursor.close()
+        return SimpleResponse(success=True, message="Connection deleted", error=None)
+    except Exception as e:
+        if conn and db_type:
+            try:
+                if db_type == "POSTGRESQL" and not getattr(conn, "autocommit", False):
+                    conn.rollback()
+                elif db_type == "ORACLE":
+                    conn.rollback()
+            except Exception:
+                pass
+        user_message = format_error_message(e)
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": user_message, "error": str(e)},
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+

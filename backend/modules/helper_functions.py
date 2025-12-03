@@ -1,8 +1,14 @@
 import os
 import oracledb
 import dotenv
-from modules.logger import logger, info, warning, error
-from modules.mapper import pkgdwmapr_python as pkgdwmapr
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.logger import logger, info, warning, error
+    from backend.modules.mapper import pkgdwmapr_python as pkgdwmapr
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.logger import logger, info, warning, error
+    from modules.mapper import pkgdwmapr_python as pkgdwmapr
 dotenv.load_dotenv()
 
 ORACLE_SCHEMA = os.getenv("DMS_SCHEMA")
@@ -95,7 +101,7 @@ def _get_table_ref(cursor, db_type, table_name, schema_name=None):
         
         # Detect actual table name format
         try:
-            from modules.common.db_table_utils import get_postgresql_table_name as pg_get_table_name
+            from backend.modules.common.db_table_utils import get_postgresql_table_name as pg_get_table_name
             actual_table_name = pg_get_table_name(cursor, schema_lower, table_name)
             # Quote if uppercase (was created with quotes)
             if actual_table_name != actual_table_name.lower():
@@ -715,7 +721,7 @@ def call_create_update_job(connection, p_mapref):
     """
     try:
         # Import Python implementation
-        from modules.jobs import pkgdwjob_python as pkgdms_job
+        from backend.modules.jobs import pkgdwjob_python as pkgdms_job
         
         # Call Python version
         job_id = pkgdms_job.create_update_job(connection, p_mapref)

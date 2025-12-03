@@ -10,10 +10,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from xml.etree.ElementTree import Element, SubElement, ElementTree
 
-from database.dbconnect import create_metadata_connection, create_target_connection
-from modules.common.db_table_utils import detect_db_type, get_metadata_table_refs
-from modules.common.id_provider import IdProviderError, next_id
-from modules.logger import debug, error, info
+try:
+    from backend.database.dbconnect import (
+        create_metadata_connection,
+        create_target_connection,
+    )
+    from backend.modules.common.db_table_utils import (
+        detect_db_type,
+        get_metadata_table_refs,
+    )
+    from backend.modules.common.id_provider import IdProviderError, next_id
+    from backend.modules.logger import debug, error, info
+except ImportError:  # Fallback for Flask-style imports
+    from database.dbconnect import (  # type: ignore
+        create_metadata_connection,
+        create_target_connection,
+    )
+    from modules.common.db_table_utils import (  # type: ignore
+        detect_db_type,
+        get_metadata_table_refs,
+    )
+    from modules.common.id_provider import IdProviderError, next_id  # type: ignore
+    from modules.logger import debug, error, info  # type: ignore
 
 MAX_PREVIEW_ROWS = 1000
 REPORT_OUTPUT_BASE = Path(os.getenv("REPORT_OUTPUT_DIR", os.path.join("data", "reports_output")))

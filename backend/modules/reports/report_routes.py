@@ -1,8 +1,19 @@
 from flask import Blueprint, jsonify, request
 
-from database.dbconnect import create_metadata_connection
-from modules.jobs.pkgdwprc_python import JobSchedulerService, SchedulerRepositoryError
-from modules.logger import error, info
+try:
+    from backend.database.dbconnect import create_metadata_connection
+    from backend.modules.jobs.pkgdwprc_python import (
+        JobSchedulerService,
+        SchedulerRepositoryError,
+    )
+    from backend.modules.logger import error, info
+except ImportError:  # Fallback for Flask-style imports
+    from database.dbconnect import create_metadata_connection  # type: ignore
+    from modules.jobs.pkgdwprc_python import (  # type: ignore
+        JobSchedulerService,
+        SchedulerRepositoryError,
+    )
+    from modules.logger import error, info  # type: ignore
 
 from .report_service import ReportMetadataService, ReportServiceError
 

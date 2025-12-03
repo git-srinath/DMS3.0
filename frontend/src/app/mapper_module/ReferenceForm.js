@@ -1521,6 +1521,10 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
             p_logic: currentRow.logic,
             p_keyclnm: currentRow.keyColumn,
             p_valclnm: currentRow.valColumn,
+            // Use the selected target connection for validation when available
+            ...(formData.targetConnectionId
+              ? { connection_id: formData.targetConnectionId }
+              : {}),
           }),
         }
       )

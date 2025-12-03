@@ -16,9 +16,20 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Any, Dict, Optional
 
-from modules.logger import info, error, warning
-from modules.common.id_provider import next_id as get_next_id
-from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
+try:
+    from backend.modules.logger import info, error, warning
+    from backend.modules.common.id_provider import next_id as get_next_id
+    from backend.modules.common.db_table_utils import (
+        _detect_db_type,
+        get_postgresql_table_name,
+    )
+except ImportError:  # Fallback for Flask-style imports
+    from modules.logger import info, error, warning  # type: ignore
+    from modules.common.id_provider import next_id as get_next_id  # type: ignore
+    from modules.common.db_table_utils import (  # type: ignore
+        _detect_db_type,
+        get_postgresql_table_name,
+    )
 import os
 
 ALLOWED_FREQUENCY_CODES = {"ID", "DL", "WK", "FN", "MN", "HY", "YR"}

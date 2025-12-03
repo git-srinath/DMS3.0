@@ -12,11 +12,18 @@ date        who              Remarks
 import os
 import re
 from datetime import datetime
-from modules.logger import logger, info, warning, error
 import oracledb
-from modules.common.id_provider import next_id as get_next_id
-from modules.common.db_table_utils import get_postgresql_table_name
 import builtins
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.logger import logger, info, warning, error
+    from backend.modules.common.id_provider import next_id as get_next_id
+    from backend.modules.common.db_table_utils import get_postgresql_table_name
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.logger import logger, info, warning, error
+    from modules.common.id_provider import next_id as get_next_id
+    from modules.common.db_table_utils import get_postgresql_table_name
 
 # Package constants
 G_NAME = 'PKGDMS_MAPR_PY'
