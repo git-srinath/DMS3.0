@@ -1,23 +1,11 @@
 import React from 'react';
 import { Box, Tab, Tabs, useTheme, alpha } from '@mui/material';
 import { motion } from 'framer-motion';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import SecurityIcon from '@mui/icons-material/Security';
-import HistoryIcon from '@mui/icons-material/History';
-import VpnKeyIcon from '@mui/icons-material/VpnKey';
-import InfoIcon from '@mui/icons-material/Info';
-import NotificationsIcon from '@mui/icons-material/Notifications';
 import StorageIcon from '@mui/icons-material/Storage';
 import { useRouter, usePathname } from 'next/navigation';
 
 const tabRoutes = [
-  { label: 'Users', path: '/admin/users', icon: <AssignmentIcon sx={{ fontSize: '1rem', mr: 0.5 }} /> },
   { label: 'Database Connection', path: '/register_db_connections', icon: <StorageIcon sx={{ fontSize: '1rem', mr: 0.5 }} /> },
-  { label: 'Roles', path: '/admin/roles', icon: <SecurityIcon sx={{ fontSize: '1rem', mr: 0.5 }} /> },
-  { label: 'Audit Logs', path: '/admin/audit-logs', icon: <HistoryIcon sx={{ fontSize: '1rem', mr: 0.5 }} /> },
-  { label: 'License', path: '/admin/license', icon: <VpnKeyIcon sx={{ fontSize: '1rem', mr: 0.5 }} /> },
-  { label: 'Notifications', path: '/admin/notifications', icon: <NotificationsIcon sx={{ fontSize: '1rem', mr: 0.5 }} /> },
-  { label: 'About', path: '/admin/about', icon: <InfoIcon sx={{ fontSize: '1rem', mr: 0.5 }} /> },
 ];
 
 const TabsLayout = ({ isMobile }) => {

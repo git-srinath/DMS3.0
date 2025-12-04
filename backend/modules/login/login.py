@@ -192,7 +192,10 @@ def login():
         
     except Exception as e:
         # Import logger inside the function to avoid circular imports
-        from modules.logger import error
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error  # type: ignore
         error(f"Login error: {str(e)}")
         return jsonify({'error': 'An error occurred during login'}), 500
     finally:
@@ -338,7 +341,10 @@ def token_required(f):
         token = None
         
         # Import logger inside the function to avoid circular imports
-        from modules.logger import info, warning, error
+        try:
+            from backend.modules.logger import info, warning, error
+        except ImportError:
+            from modules.logger import info, warning, error  # type: ignore
         
         # Check for token in Authorization header
         if 'Authorization' in request.headers:

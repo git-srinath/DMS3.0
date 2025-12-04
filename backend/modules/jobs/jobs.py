@@ -1,25 +1,42 @@
 from flask import Blueprint, request, jsonify
-from modules.helper_functions import get_job_list,call_create_update_job,get_mapping_ref,get_mapping_details
-from database.dbconnect import create_metadata_connection
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.helper_functions import get_job_list,call_create_update_job,get_mapping_ref,get_mapping_details
+    from backend.database.dbconnect import create_metadata_connection
+    from backend.modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
+    from backend.modules.logger import logger, info, warning, error, exception, debug
+    from backend.modules.jobs.pkgdwprc_python import (
+        JobSchedulerService,
+        ScheduleRequest,
+        ImmediateJobRequest,
+        HistoryJobRequest,
+        SchedulerValidationError,
+        SchedulerRepositoryError,
+        SchedulerError,
+    )
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.helper_functions import get_job_list,call_create_update_job,get_mapping_ref,get_mapping_details  # type: ignore
+    from database.dbconnect import create_metadata_connection  # type: ignore
+    from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name  # type: ignore
+    from modules.logger import logger, info, warning, error, exception, debug  # type: ignore
+    from modules.jobs.pkgdwprc_python import (  # type: ignore
+        JobSchedulerService,
+        ScheduleRequest,
+        ImmediateJobRequest,
+        HistoryJobRequest,
+        SchedulerValidationError,
+        SchedulerRepositoryError,
+        SchedulerError,
+    )
 import os
 import dotenv
 import oracledb
-from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
 import threading
 import pandas as pd
 import json
 import traceback
-from modules.logger import logger, info, warning, error, exception, debug
 from datetime import datetime
-from modules.jobs.pkgdwprc_python import (
-    JobSchedulerService,
-    ScheduleRequest,
-    ImmediateJobRequest,
-    HistoryJobRequest,
-    SchedulerValidationError,
-    SchedulerRepositoryError,
-    SchedulerError,
-)
 dotenv.load_dotenv()
 ORACLE_SCHEMA = os.getenv("DMS_SCHEMA")
 # Create blueprint

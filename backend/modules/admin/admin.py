@@ -3,12 +3,19 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
-from modules.login.login import token_required, hash_password, generate_salt, is_valid_password
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.login.login import token_required, hash_password, generate_salt, is_valid_password
+    from backend.modules.license.license_manager import LicenseManager
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.login.login import token_required, hash_password, generate_salt, is_valid_password  # type: ignore
+    from modules.license.license_manager import LicenseManager  # type: ignore
+
 from datetime import datetime
 import json
 import re
 from functools import wraps
-from modules.license.license_manager import LicenseManager
 import os.path
 
 load_dotenv()

@@ -79,7 +79,11 @@ def send_reset_email_fastapi(email: str, reset_token: str, base_url: str) -> boo
         server.quit()
         return True
     except Exception as e:  # pragma: no cover - logging side-effect
-        from backend.modules.logger import error
+        # Support both FastAPI/package context and legacy Flask context
+        try:
+            from backend.modules.logger import error
+        except ImportError:
+            from modules.logger import error  # type: ignore
 
         error(f"Error sending email: {str(e)}")
         return False
@@ -90,7 +94,11 @@ def get_user_from_token(request: Request):
     Decode JWT token from Authorization header or cookie and return user record.
     Mirrors the behavior of the Flask `token_required` decorator.
     """
-    from backend.modules.logger import info, error
+    # Support both FastAPI/package context and legacy Flask context
+    try:
+        from backend.modules.logger import info, error
+    except ImportError:
+        from modules.logger import info, error  # type: ignore
 
     token = None
 

@@ -129,6 +129,7 @@ const Page = () => {
     },
     {
       title: 'Reports',
+      accessKey: 'reports',
       path: '/reports',
       gradient: 'linear-gradient(135deg, #4ADE80 0%, #16A34A 100%)',
       description: 'Define report mappings and preview outputs.',

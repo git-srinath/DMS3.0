@@ -721,8 +721,11 @@ def call_create_update_job(connection, p_mapref):
     """
     try:
         # Import Python implementation
-        from backend.modules.jobs import pkgdwjob_python as pkgdms_job
-        
+        try:
+            from backend.modules.jobs import pkgdwjob_python as pkgdms_job
+        except ImportError:
+            from modules.jobs import pkgdwjob_python as pkgdms_job  # type: ignore
+
         # Call Python version
         job_id = pkgdms_job.create_update_job(connection, p_mapref)
         

@@ -9,13 +9,34 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import oracledb
-from modules.common.db_table_utils import get_postgresql_table_name
 
-from database.dbconnect import create_metadata_connection
-from modules.common.id_provider import next_id as get_next_id
-from modules.logger import info, warning, error, debug
-from modules.jobs.pkgdwprc_python import JobRequestType, SchedulerRepositoryError
-from modules.jobs.scheduler_models import QueueRequest
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.common.db_table_utils import (
+        get_postgresql_table_name,
+        _detect_db_type,
+    )
+    from backend.database.dbconnect import create_metadata_connection
+    from backend.modules.common.id_provider import next_id as get_next_id
+    from backend.modules.logger import info, warning, error, debug
+    from backend.modules.jobs.pkgdwprc_python import (
+        JobRequestType,
+        SchedulerRepositoryError,
+    )
+    from backend.modules.jobs.scheduler_models import QueueRequest
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.common.db_table_utils import (  # type: ignore
+        get_postgresql_table_name,
+        _detect_db_type,
+    )
+    from database.dbconnect import create_metadata_connection  # type: ignore
+    from modules.common.id_provider import next_id as get_next_id  # type: ignore
+    from modules.logger import info, warning, error, debug  # type: ignore
+    from modules.jobs.pkgdwprc_python import (  # type: ignore
+        JobRequestType,
+        SchedulerRepositoryError,
+    )
+    from modules.jobs.scheduler_models import QueueRequest  # type: ignore
 
 
 def _read_lob(value):
@@ -86,7 +107,11 @@ class JobExecutionEngine:
             debug(f"SQLCONID from job flow: {sqlconid}")
             if sqlconid:
                 try:
-                    from database.dbconnect import create_target_connection
+                    # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                    try:
+                        from backend.database.dbconnect import create_target_connection
+                    except ImportError:  # When running Flask app.py directly inside backend
+                        from database.dbconnect import create_target_connection  # type: ignore
                     source_conn = create_target_connection(sqlconid)
                     if source_conn:
                         info(f"Using source connection (ID: {sqlconid}) for SELECT queries")
@@ -104,12 +129,15 @@ class JobExecutionEngine:
             debug(f"TRGCONID from job flow: {trgconid}")
             if trgconid:
                 try:
-                    from database.dbconnect import create_target_connection
+                    # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                    try:
+                        from backend.database.dbconnect import create_target_connection
+                    except ImportError:  # When running Flask app.py directly inside backend
+                        from database.dbconnect import create_target_connection  # type: ignore
                     target_conn = create_target_connection(trgconid)
                     if target_conn:
                         # Verify the target connection can access the schema
                         try:
-                            from modules.common.db_table_utils import _detect_db_type
                             target_db_type = _detect_db_type(target_conn)
                             test_cursor = target_conn.cursor()
                             
@@ -376,7 +404,6 @@ class JobExecutionEngine:
                                     debug(f"Using TARGET connection for old signature")
                                     # Verify target connection schema access
                                     try:
-                                        from modules.common.db_table_utils import _detect_db_type
                                         target_db_type = _detect_db_type(target_conn)
                                         test_cursor = target_conn.cursor()
                                         
@@ -614,7 +641,17 @@ class JobExecutionEngine:
         return {"status": "SUCCESS", "runs": runs}
 
     def _execute_report_job(self, request: QueueRequest) -> Dict[str, Any]:
-        from modules.reports.report_service import ReportMetadataService, ReportServiceError
+        # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+        try:
+            from backend.modules.reports.report_service import (
+                ReportMetadataService,
+                ReportServiceError,
+            )
+        except ImportError:  # When running Flask app.py directly inside backend
+            from modules.reports.report_service import (  # type: ignore
+                ReportMetadataService,
+                ReportServiceError,
+            )
 
         payload = request.payload or {}
         report_id = payload.get("reportId") or self._extract_report_id(request.mapref)
@@ -665,7 +702,6 @@ class JobExecutionEngine:
     # ------------------------------------------------------------------ #
     def _load_job_flow(self, cursor, mapref: str) -> Optional[Dict[str, Any]]:
         # Detect database type
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         
@@ -806,7 +842,6 @@ class JobExecutionEngine:
 
     def _create_process_log(self, cursor, job_flow: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         # Detect database type
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         schema = (os.getenv("DMS_SCHEMA", "")).strip()
@@ -1017,7 +1052,6 @@ class JobExecutionEngine:
 
     def _finalize_success(self, cursor, job_flow, context, result):
         # Detect database type for table reference
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         schema = (os.getenv("DMS_SCHEMA", "")).strip()
@@ -1132,7 +1166,6 @@ class JobExecutionEngine:
             return
         
         # Detect database type for table reference
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         schema = (os.getenv("DMS_SCHEMA", "")).strip()

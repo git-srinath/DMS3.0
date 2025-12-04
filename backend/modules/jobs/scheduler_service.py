@@ -24,18 +24,37 @@ from typing import Any, Dict, List, Optional, Tuple
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from database.dbconnect import create_metadata_connection
-from modules.logger import info, error, debug
-from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.database.dbconnect import create_metadata_connection
+    from backend.modules.logger import info, error, debug
+    from backend.modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
+    from backend.modules.jobs.pkgdwprc_python import (
+        JobRequestType,
+        JobSchedulerService,
+        ImmediateJobRequest,
+    )
+    from backend.modules.jobs.scheduler_models import SchedulerConfig, QueueRequest
+    from backend.modules.jobs.execution_engine import JobExecutionEngine
+    from backend.modules.jobs.scheduler_frequency import build_trigger
+except ImportError:  # When running Flask app.py directly inside backend
+    # Fallback imports for legacy Flask-style context
+    try:
+        from database.dbconnect import create_metadata_connection  # type: ignore
+        from modules.logger import info, error, debug  # type: ignore
+        from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name  # type: ignore
+        from modules.jobs.pkgdwprc_python import (  # type: ignore
+            JobRequestType,
+            JobSchedulerService,
+            ImmediateJobRequest,
+        )
+        from modules.jobs.scheduler_models import SchedulerConfig, QueueRequest  # type: ignore
+        from modules.jobs.execution_engine import JobExecutionEngine  # type: ignore
+        from modules.jobs.scheduler_frequency import build_trigger  # type: ignore
+    except ImportError:
+        # As a last resort, re-raise to surface the real import problem
+        raise
 import os
-from modules.jobs.pkgdwprc_python import (
-    JobRequestType,
-    JobSchedulerService,
-    ImmediateJobRequest,
-)
-from modules.jobs.scheduler_models import SchedulerConfig, QueueRequest
-from modules.jobs.execution_engine import JobExecutionEngine
-from modules.jobs.scheduler_frequency import build_trigger
 
 
 def _read_lob(value):
@@ -374,8 +393,12 @@ class SchedulerService:
 
     def _execute_report_request(self, request: QueueRequest) -> Dict[str, Any]:
         """Execute a REPORT type request using the ReportExecutor."""
-        from modules.reports.report_executor import get_report_executor
-        
+        # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+        try:
+            from backend.modules.reports.report_executor import get_report_executor
+        except ImportError:  # When running Flask app.py directly inside backend
+            from modules.reports.report_executor import get_report_executor  # type: ignore
+
         payload = request.payload or {}
         # Ensure the downstream executor knows the originating queue request ID
         # so it can be stored in DMS_RPRT_RUN.RQST_ID (NOT NULL column).

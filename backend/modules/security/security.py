@@ -5,8 +5,20 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 
-from modules.login.login import token_required
-from modules.admin.admin import admin_required
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.login.login import token_required
+    from backend.modules.admin.admin import admin_required
+except ImportError:  # When running Flask app.py directly inside backend
+    # Try relative import first (works in both contexts)
+    try:
+        from ..login.login import token_required  # type: ignore
+        from ..admin.admin import admin_required  # type: ignore
+    except ImportError:
+        # Last resort: absolute import for Flask context
+        from modules.login.login import token_required  # type: ignore
+        from modules.admin.admin import admin_required  # type: ignore
+
 from .utils import (
     AVAILABLE_MODULES,
     AVAILABLE_MODULE_KEYS,
@@ -16,14 +28,24 @@ from .utils import (
 
 load_dotenv()
 
-engine = create_engine(os.getenv('SQLITE_DATABASE_URL'))
-Session = sessionmaker(bind=engine)
+# Lazy initialization: only create engine and session when actually needed
+# This prevents SQLite connection errors when importing in FastAPI context
+_engine = None
+_Session = None
 
-security_bp = Blueprint('security', __name__)
+
+def _get_session():
+    """Lazy initialization of SQLite engine and session"""
+    global _engine, _Session
+    if _engine is None:
+        _engine = create_engine(os.getenv('SQLITE_DATABASE_URL'))
+        _Session = sessionmaker(bind=_engine)
+    return _Session()
 
 
 def _initialize_table():
-    session = Session()
+    """Initialize the user_module table - only called when Flask blueprint is actually used"""
+    session = _get_session()
     try:
         ensure_user_module_table(session)
         session.commit()
@@ -31,7 +53,11 @@ def _initialize_table():
         session.close()
 
 
-_initialize_table()
+security_bp = Blueprint('security', __name__)
+
+# Defer initialization - don't run at module import time
+# This prevents SQLite connection errors when importing in FastAPI context
+# The table will be initialized on first route access instead
 
 
 @security_bp.route('/modules', methods=['GET'])
@@ -41,6 +67,8 @@ def list_modules(current_user_id):
     """
     Returns the modules that can be assigned to users.
     """
+    # Ensure table is initialized on first access
+    _initialize_table()
     return jsonify({'modules': AVAILABLE_MODULES})
 
 
@@ -48,7 +76,9 @@ def list_modules(current_user_id):
 @token_required
 @admin_required
 def get_user_access(current_user_id, user_id):
-    session = Session()
+    # Ensure table is initialized on first access
+    _initialize_table()
+    session = _get_session()
     try:
         # Validate user exists
         user_exists = session.execute(
@@ -69,13 +99,15 @@ def get_user_access(current_user_id, user_id):
 @token_required
 @admin_required
 def update_user_access(current_user_id, user_id):
+    # Ensure table is initialized on first access
+    _initialize_table()
     payload = request.get_json() or {}
     modules_payload = payload.get('modules')
 
     if not isinstance(modules_payload, list):
         return jsonify({'error': 'Modules payload must be a list'}), 400
 
-    session = Session()
+    session = _get_session()
     try:
         ensure_user_module_table(session)
 
@@ -136,7 +168,9 @@ def update_user_access(current_user_id, user_id):
 @security_bp.route('/my-modules', methods=['GET'])
 @token_required
 def get_current_user_modules(current_user_id):
-    session = Session()
+    # Ensure table is initialized on first access
+    _initialize_table()
+    session = _get_session()
     try:
         modules = get_user_module_states(session, current_user_id)
         enabled_keys = [module['key'] for module in modules if module['enabled']]

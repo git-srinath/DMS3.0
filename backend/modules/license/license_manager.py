@@ -2,8 +2,14 @@ import os
 import json
 from datetime import datetime
 import getmac
-from key_gen import LicenseKeyGenerator, get_system_identifier
-from modules.logger import logger, info, warning, error
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.key_gen import LicenseKeyGenerator, get_system_identifier
+    from backend.modules.logger import logger, info, warning, error
+except ImportError:  # When running Flask app.py directly inside backend
+    from key_gen import LicenseKeyGenerator, get_system_identifier  # type: ignore
+    from modules.logger import logger, info, warning, error  # type: ignore
 
 class LicenseManager:
     def __init__(self):
@@ -25,7 +31,10 @@ class LicenseManager:
                     self.secret_key = f.read()
             else:
                 info("No secret key found, generating new one")
-                from key_gen import generate_secret_key
+                try:
+                    from backend.key_gen import generate_secret_key
+                except ImportError:
+                    from key_gen import generate_secret_key  # type: ignore
                 self.secret_key = generate_secret_key()
                 # Ensure directory exists
                 os.makedirs(os.path.dirname(self.secret_key_file), exist_ok=True)
@@ -34,7 +43,10 @@ class LicenseManager:
                 info(f"New secret key saved to: {self.secret_key_file}")
         except Exception as e:
             error(f"Error loading secret key: {str(e)}")
-            from key_gen import generate_secret_key
+            try:
+                from backend.key_gen import generate_secret_key
+            except ImportError:
+                from key_gen import generate_secret_key  # type: ignore
             self.secret_key = generate_secret_key()
 
     def get_license_status(self):

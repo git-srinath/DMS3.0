@@ -1,12 +1,21 @@
 from flask import Blueprint, jsonify, request
-from modules.license.license_manager import LicenseManager
-from modules.login.login import token_required, hash_password
-from modules.admin.admin import admin_required      
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.license.license_manager import LicenseManager
+    from backend.modules.login.login import token_required, hash_password
+    from backend.modules.admin.admin import admin_required
+    from backend.modules.logger import logger, info, warning, error
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.license.license_manager import LicenseManager  # type: ignore
+    from modules.login.login import token_required, hash_password  # type: ignore
+    from modules.admin.admin import admin_required  # type: ignore
+    from modules.logger import logger, info, warning, error  # type: ignore
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
-from modules.logger import logger, info, warning, error
 
 load_dotenv()
 

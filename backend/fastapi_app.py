@@ -23,15 +23,35 @@ from backend.modules.jobs.fastapi_jobs import (
 from backend.modules.reports.fastapi_reports import (
     router as reports_router,
 )
+from backend.modules.license.fastapi_license import (
+    router as license_router,
+)
+from backend.modules.dashboard.fastapi_dashboard import (
+    router as dashboard_router,
+)
+from backend.modules.admin.fastapi_access_control import (
+    router as access_control_router,
+)
+from backend.modules.admin.fastapi_admin import (
+    router as admin_router,
+)
+from backend.modules.security.fastapi_security import (
+    router as security_router,
+)
 
 load_dotenv()
 
 app = FastAPI(title="DMS Backend (FastAPI)", version="4.0.0")
 
-# CORS configuration – start permissive, can be tightened later
+# CORS configuration – must specify exact origins when using credentials
+# Cannot use wildcard "*" when allow_credentials=True
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: restrict to specific frontend origins if needed
+    allow_origins=[
+        "http://localhost:3000",  # Next.js dev server
+        "http://127.0.0.1:3000",  # Alternative localhost
+        # Add production frontend URL here when deploying
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,6 +85,14 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/")
+async def root():
+    """
+    Root endpoint that redirects to health check.
+    """
+    return {"status": "ok", "message": "DMS Backend (FastAPI) is running", "health": "/health"}
+
+
 # Routers (Phase 2: start with auth/login)
 app.include_router(auth_router, prefix="/auth")
 app.include_router(parameter_mapping_router, prefix="/mapping")
@@ -73,6 +101,11 @@ app.include_router(manage_sql_router, prefix="/manage-sql")
 app.include_router(mapper_router, prefix="/mapper")
 app.include_router(jobs_router, prefix="/job")
 app.include_router(reports_router, prefix="/api")
+app.include_router(license_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/dashboard")
+app.include_router(access_control_router, prefix="/access-control")
+app.include_router(admin_router, prefix="/admin")
+app.include_router(security_router, prefix="/security")
 
 
 # Ensure required directories exist (mirrors Flask app.py behavior)

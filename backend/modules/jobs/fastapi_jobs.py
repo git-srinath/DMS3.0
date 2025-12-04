@@ -85,6 +85,256 @@ def _parse_datetime(value: Optional[str]):
 # ----- Simple job endpoints used by frontend -----
 
 
+@router.get("/get_all_jobs")
+async def get_all_jobs():
+    """
+    Get all jobs and their schedule status.
+    Mirrors Flask endpoint: GET /job/get_all_jobs
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+
+        info(f"[get_all_jobs] Database type detected: {db_type}")
+
+        # Get schema name from environment
+        schema = os.getenv("DMS_SCHEMA", "TRG")
+        info(f"[get_all_jobs] Using schema: {schema}")
+
+        # Get table references for PostgreSQL (handles case sensitivity)
+        if db_type == "POSTGRESQL":
+            schema_lower = schema.lower() if schema else "public"
+            try:
+                dms_job_table = get_postgresql_table_name(
+                    cursor, schema_lower, "DMS_JOB"
+                )
+                dms_jobflw_table = get_postgresql_table_name(
+                    cursor, schema_lower, "DMS_JOBFLW"
+                )
+                dms_jobsch_table = get_postgresql_table_name(
+                    cursor, schema_lower, "DMS_JOBSCH"
+                )
+                info(
+                    "[get_all_jobs] PostgreSQL table names - "
+                    f"JOB: {dms_job_table}, JOBFLW: {dms_jobflw_table}, "
+                    f"JOBSCH: {dms_jobsch_table}"
+                )
+            except Exception as table_err:
+                error(f"[get_all_jobs] Error detecting table names: {str(table_err)}")
+                # Fallback to lowercase
+                dms_job_table = "dms_job"
+                dms_jobflw_table = "dms_jobflw"
+                dms_jobsch_table = "dms_jobsch"
+                info("[get_all_jobs] Using fallback table names")
+
+            # Quote table names if they contain uppercase letters (were created with quotes)
+            dms_job_ref = (
+                f'"{dms_job_table}"'
+                if dms_job_table != dms_job_table.lower()
+                else dms_job_table
+            )
+            dms_jobflw_ref = (
+                f'"{dms_jobflw_table}"'
+                if dms_jobflw_table != dms_jobflw_table.lower()
+                else dms_jobflw_table
+            )
+            dms_jobsch_ref = (
+                f'"{dms_jobsch_table}"'
+                if dms_jobsch_table != dms_jobsch_table.lower()
+                else dms_jobsch_table
+            )
+
+            schema_prefix = f"{schema_lower}." if schema else ""
+            dms_job_full = f"{schema_prefix}{dms_job_ref}"
+            dms_jobflw_full = f"{schema_prefix}{dms_jobflw_ref}"
+            dms_jobsch_full = f"{schema_prefix}{dms_jobsch_ref}"
+
+            info(
+                "[get_all_jobs] Full table references - "
+                f"JOB: {dms_job_full}, JOBFLW: {dms_jobflw_full}, "
+                f"JOBSCH: {dms_jobsch_full}"
+            )
+
+            # Query from DMS_JOB and left join with DMS_JOBFLW and DMS_JOBSCH
+            # This ensures we show all jobs even if flow creation failed
+            query_job_flow = f"""
+                SELECT 
+                    COALESCE(f.JOBFLWID, j.JOBID) AS JOBFLWID,
+                    j.MAPREF,
+                    j.TRGSCHM,
+                    j.TRGTBTYP,
+                    j.TRGTBNM,
+                    f.DWLOGIC,
+                    COALESCE(f.STFLG, j.STFLG) AS STFLG,
+                    CASE 
+                        WHEN s.SCHFLG = 'Y' THEN 'Scheduled'
+                        ELSE 'Not Scheduled'
+                    END AS JOB_SCHEDULE_STATUS,
+                    s.JOBSCHID,
+                    s.DPND_JOBSCHID,
+                    s.FRQCD AS "Frequency code",
+                    s.FRQDD AS "Frequency day",
+                    s.FRQHH AS "frequency hour",
+                    s.FRQMI AS "frequency month",
+                    s.STRTDT AS "start date",
+                    s.ENDDT AS "end date"
+                FROM 
+                    {dms_job_full} j
+                LEFT JOIN 
+                    {dms_jobflw_full} f ON f.MAPREF = j.MAPREF AND f.CURFLG = 'Y'
+                LEFT JOIN 
+                    (
+                        SELECT 
+                            f2.JOBFLWID,
+                            MIN(s2.JOBSCHID) AS JOBSCHID, 
+                            MIN(s2.DPND_JOBSCHID) AS DPND_JOBSCHID,
+                            MIN(s2.FRQCD) AS FRQCD,
+                            MIN(s2.FRQDD) AS FRQDD,
+                            MIN(s2.FRQHH) AS FRQHH,
+                            MIN(s2.FRQMI) AS FRQMI,
+                            MIN(s2.STRTDT) AS STRTDT,
+                            MIN(s2.ENDDT) AS ENDDT,
+                            MAX(s2.SCHFLG) AS SCHFLG
+                        FROM 
+                            {dms_jobsch_full} s2
+                        INNER JOIN
+                            {dms_jobflw_full} f2 ON f2.JOBFLWID = s2.JOBFLWID
+                        WHERE 
+                            s2.CURFLG = 'Y' AND f2.CURFLG = 'Y'
+                        GROUP BY 
+                            f2.JOBFLWID
+                    ) s
+                ON 
+                    f.JOBFLWID = s.JOBFLWID
+                WHERE 
+                    j.CURFLG = 'Y'
+                ORDER BY j.RECCRDT DESC
+            """
+        else:  # Oracle
+            schema_prefix = f"{schema}." if schema else ""
+            # Query from DMS_JOB and left join with DMS_JOBFLW and DMS_JOBSCH
+            # This ensures we show all jobs even if flow creation failed
+            query_job_flow = f"""
+                SELECT 
+                    NVL(f.JOBFLWID, j.JOBID) AS JOBFLWID,
+                    j.MAPREF,
+                    j.TRGSCHM,
+                    j.TRGTBTYP,
+                    j.TRGTBNM,
+                    f.DWLOGIC,
+                    NVL(f.STFLG, j.STFLG) AS STFLG,
+                    CASE 
+                        WHEN s.SCHFLG = 'Y' THEN 'Scheduled'
+                        ELSE 'Not Scheduled'
+                    END AS JOB_SCHEDULE_STATUS,
+                    s.JOBSCHID,
+                    s.DPND_JOBSCHID,
+                    s.FRQCD AS "Frequency code",
+                    s.FRQDD AS "Frequency day",
+                    s.FRQHH AS "frequency hour",
+                    s.FRQMI AS "frequency month",
+                    s.STRTDT AS "start date",
+                    s.ENDDT AS "end date"
+                FROM 
+                    {schema_prefix}DMS_JOB j
+                LEFT JOIN 
+                    {schema_prefix}DMS_JOBFLW f ON f.MAPREF = j.MAPREF AND f.CURFLG = 'Y'
+                LEFT JOIN 
+                    (
+                        SELECT 
+                            f2.JOBFLWID,
+                            MIN(s2.JOBSCHID) AS JOBSCHID, 
+                            MIN(s2.DPND_JOBSCHID) AS DPND_JOBSCHID,
+                            MIN(s2.FRQCD) AS FRQCD,
+                            MIN(s2.FRQDD) AS FRQDD,
+                            MIN(s2.FRQHH) AS FRQHH,
+                            MIN(s2.FRQMI) AS FRQMI,
+                            MIN(s2.STRTDT) AS STRTDT,
+                            MIN(s2.ENDDT) AS ENDDT,
+                            MAX(s2.SCHFLG) AS SCHFLG
+                        FROM 
+                            {schema_prefix}DMS_JOBSCH s2
+                        INNER JOIN
+                            {schema_prefix}DMS_JOBFLW f2 ON f2.JOBFLWID = s2.JOBFLWID
+                        WHERE 
+                            s2.CURFLG = 'Y' AND f2.CURFLG = 'Y'
+                        GROUP BY 
+                            f2.JOBFLWID
+                    ) s
+                ON 
+                    f.JOBFLWID = s.JOBFLWID
+                WHERE 
+                    j.CURFLG = 'Y'
+                ORDER BY j.RECCRDT DESC
+            """
+
+        info("[get_all_jobs] Executing query...")
+        cursor.execute(query_job_flow)
+        columns = [col[0] for col in cursor.description]
+        raw_jobs = cursor.fetchall()
+
+        info(f"[get_all_jobs] Query executed successfully. Found {len(raw_jobs)} rows.")
+        info(f"[get_all_jobs] Column names from query: {columns}")
+
+        # Normalize column names to uppercase for consistency (PostgreSQL returns lowercase)
+        columns_upper = [col.upper() if col else col for col in columns]
+        info(f"[get_all_jobs] Normalized column names: {columns_upper}")
+
+        # Convert rows into list of dictionaries (JSON-serialisable)
+        jobs: List[Dict[str, Any]] = []
+        for row_idx, row in enumerate(raw_jobs):
+            job_dict: Dict[str, Any] = {}
+            for i, column in enumerate(columns_upper):
+                value = row[i]
+                # Handle LOB-like objects
+                if hasattr(value, "read"):
+                    try:
+                        value = value.read()
+                        if isinstance(value, bytes):
+                            value = value.decode("utf-8")
+                    except Exception as lob_err:
+                        value = str(lob_err)
+                # Convert dates/datetimes to ISO strings for JSON
+                if hasattr(value, "isoformat"):
+                    value = value.isoformat()
+                job_dict[column] = value
+
+            if row_idx == 0:
+                info(f"[get_all_jobs] First job keys: {list(job_dict.keys())}")
+                info(
+                    "[get_all_jobs] First job JOBFLWID: "
+                    f"{job_dict.get('JOBFLWID')}, MAPREF: {job_dict.get('MAPREF')}"
+                )
+
+            jobs.append(job_dict)
+
+        info(f"[get_all_jobs] Returning {len(jobs)} jobs")
+        return jobs
+    except Exception as e:
+        error(f"Error in get_all_jobs: {str(e)}")
+        import traceback
+
+        error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail={"error": str(e), "details": traceback.format_exc()},
+        )
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 @router.post("/create-update")
 async def create_update_job(payload: Dict[str, Any]):
     """
@@ -782,7 +1032,7 @@ async def get_scheduled_jobs(period: str = Query("7")):
                         AND err.prcid(+) = pl.prcid
                         AND err.mapref(+) = pl.mapref
                         AND err.jobid(+) = pl.jobid
-                    ORDER BY pl.mapref, jl.reccrdt DESC
+                    ORDER BY pl.mapref, pl.reccrdt DESC
                 """
                 cursor.execute(query)
             else:
@@ -816,7 +1066,7 @@ async def get_scheduled_jobs(period: str = Query("7")):
                         AND err.mapref(+) = pl.mapref
                         AND err.jobid(+) = pl.jobid
                         AND pl.reccrdt >= SYSDATE - :period
-                    ORDER BY pl.mapref, jl.reccrdt DESC
+                    ORDER BY pl.mapref, pl.reccrdt DESC
                 """
                 cursor.execute(query, {"period": period_value})
 
