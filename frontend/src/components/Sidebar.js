@@ -224,112 +224,112 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
       <nav className="mt-4 px-1 space-y-0.5">
         {/* Home - always visible */}
         {isItemVisible({}) && (
-          <SidebarItem 
-            icon={<LayoutDashboard />} 
-            text="Home" 
-            active={pathname === '/home'} 
-            expanded={sidebarOpen}
-            href="/home"
-          />
+        <SidebarItem 
+          icon={<LayoutDashboard />} 
+          text="Home" 
+          active={pathname === '/home'} 
+          expanded={sidebarOpen}
+          href="/home"
+        />
         )}
         
         {/* DB Connections - always visible (no accessKey) */}
         {isItemVisible({}) && (
-          <SidebarItem
-            icon={<CustomDbIcon size={18} />}
-            text="DB Connections"
-            active={pathname === '/register_db_connections'}
-            expanded={sidebarOpen}
-            href="/register_db_connections"
-          />
+        <SidebarItem
+          icon={<CustomDbIcon size={18} />}
+          text="DB Connections"
+          active={pathname === '/register_db_connections'}
+          expanded={sidebarOpen}
+          href="/register_db_connections"
+        />
         )}
 
         {/* Manage SQL - requires 'manage_sql' access */}
         {isItemVisible({ accessKey: 'manage_sql' }) && (
-          <SidebarItem 
-            icon={<Code />} 
-            text="Manage SQL" 
-            active={pathname === '/manage_sql'} 
-            expanded={sidebarOpen}
-            href="/manage_sql"
-          />
+        <SidebarItem 
+          icon={<Code />} 
+          text="Manage SQL" 
+          active={pathname === '/manage_sql'} 
+          expanded={sidebarOpen}
+          href="/manage_sql"
+        />
         )}
 
         {/* Mapper Module - requires 'data_mapper' access */}
         {isItemVisible({ accessKey: 'data_mapper' }) && (
-          <SidebarItem 
-            icon={<Briefcase />} 
-            text="Mapper Module" 
-            active={pathname === '/mapper_module'} 
-            expanded={sidebarOpen}
-            href="/mapper_module"
-          /> 
+        <SidebarItem 
+          icon={<Briefcase />} 
+          text="Mapper Module" 
+          active={pathname === '/mapper_module'} 
+          expanded={sidebarOpen}
+          href="/mapper_module"
+        /> 
         )}
 
         {/* Jobs - requires 'jobs' access */}
         {isItemVisible({ accessKey: 'jobs' }) && (
-          <SidebarItem 
-            icon={<FileSpreadsheet />} 
-            text="Jobs" 
-            active={pathname === '/jobs'} 
-            expanded={sidebarOpen}
-            href="/jobs"
-          /> 
+        <SidebarItem 
+          icon={<FileSpreadsheet />} 
+          text="Jobs" 
+          active={pathname === '/jobs'} 
+          expanded={sidebarOpen}
+          href="/jobs"
+        /> 
         )}
 
         {/* Reports - requires 'reports' access */}
         {isItemVisible({ accessKey: 'reports' }) && (
-          <SidebarItem 
-            icon={<FileText />} 
-            text="Reports" 
-            active={pathname === '/reports'} 
-            expanded={sidebarOpen}
-            href="/reports"
-          /> 
+        <SidebarItem 
+          icon={<FileText />} 
+          text="Reports" 
+          active={pathname === '/reports'} 
+          expanded={sidebarOpen}
+          href="/reports"
+        /> 
         )}
 
-        {/* Report Runs - always visible (no accessKey) */}
-        {isItemVisible({}) && (
-          <SidebarItem 
-            icon={<History />} 
-            text="Report Runs" 
-            active={pathname === '/report_runs'} 
-            expanded={sidebarOpen}
-            href="/report_runs"
-          /> 
+        {/* Report Runs - requires 'reports' access (same as Reports) */}
+        {isItemVisible({ accessKey: 'reports' }) && (
+        <SidebarItem 
+          icon={<History />} 
+          text="Report Runs" 
+          active={pathname === '/report_runs'} 
+          expanded={sidebarOpen}
+          href="/report_runs"
+        /> 
         )}
 
         {/* Logs & Status - requires 'job_status_and_logs' access */}
         {isItemVisible({ accessKey: 'job_status_and_logs' }) && (
-          <SidebarItem 
-            icon={<ActivitySquare />} 
-            text="Logs & Status" 
-            active={pathname === '/job_status_and_logs'} 
-            expanded={sidebarOpen}
-            href="/job_status_and_logs"
-          />
+        <SidebarItem 
+          icon={<ActivitySquare />} 
+          text="Logs & Status" 
+          active={pathname === '/job_status_and_logs'} 
+          expanded={sidebarOpen}
+          href="/job_status_and_logs"
+        />
         )}
 
         {/* Dashboard - requires 'dashboard' access */}
         {isItemVisible({ accessKey: 'dashboard' }) && (
-          <SidebarItem 
-            icon={<LineChart />} 
-            text="Dashboard" 
-            active={pathname === '/dashboard'} 
-            expanded={sidebarOpen}
-            href="/dashboard"
-          />
+        <SidebarItem 
+          icon={<LineChart />} 
+          text="Dashboard" 
+          active={pathname === '/dashboard'} 
+          expanded={sidebarOpen}
+          href="/dashboard"
+        />
         )}
-
+  
         {/* Parameters - always visible (no accessKey) */}
         {isItemVisible({}) && (
-          <SidebarItem
-            icon={<CustomParameterIcon size={18} />}
-            text="Parameters"
-            active={pathname === '/type_mapper'}
-            expanded={sidebarOpen}
-            href="/type_mapper"
-          />
+        <SidebarItem
+          icon={<CustomParameterIcon size={18} />}
+          text="Parameters"
+          active={pathname === '/type_mapper'}
+          expanded={sidebarOpen}
+          href="/type_mapper"
+        />
         )}
 
         {/* Security - admin only */}
@@ -345,24 +345,24 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
 
         {/* Admin - admin only */}
         {isItemVisible({ requiresAdmin: true }) && (
-          <SidebarItem 
-            icon={<Settings />} 
-            text="Admin" 
-            active={pathname === '/admin'} 
-            expanded={sidebarOpen}
-            href="/admin"
-          />  
+        <SidebarItem 
+          icon={<Settings />} 
+          text="Admin" 
+          active={pathname === '/admin'} 
+          expanded={sidebarOpen}
+          href="/admin"
+        />  
         )}
 
         {/* User Profile - always visible */}
         {isItemVisible({}) && (
-          <SidebarItem 
-            icon={<UserCog />} 
-            text="User Profile" 
-            active={pathname === '/profile'} 
-            expanded={sidebarOpen}
-            href="/profile"
-          />
+        <SidebarItem 
+          icon={<UserCog />} 
+          text="User Profile" 
+          active={pathname === '/profile'} 
+          expanded={sidebarOpen}
+          href="/profile"
+        />
         )}
 
       </nav>

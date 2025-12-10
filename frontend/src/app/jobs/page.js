@@ -31,7 +31,9 @@ import {
   Chip,
   Fade,
   FormControlLabel,
-  Checkbox
+  Checkbox,
+  Stack,
+  Switch
 } from '@mui/material';
 import { styled, useTheme as useMuiTheme } from '@mui/material/styles';
 import { 
@@ -50,7 +52,8 @@ import {
   ToggleOn as ToggleOnIcon,
   ToggleOff as ToggleOffIcon,
   Warning as WarningIcon,
-  RemoveRedEye as EyeIcon
+  RemoveRedEye as EyeIcon,
+  Schedule as ScheduleIcon
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { useTheme } from '@/context/ThemeContext';
@@ -69,7 +72,8 @@ import {
   InlineScheduleConfig,
   TargetTableDisplay,
   ScheduleSummary,
-  DependencyDisplay
+  DependencyDisplay,
+  ScheduleDialog
 } from './components';
 
 // Styled components
@@ -330,7 +334,11 @@ const JobsPage = () => {
   // State for schedule data
   const [scheduleData, setScheduleData] = useState({});
   const [scheduleLoading, setScheduleLoading] = useState({});
+  const fetchingScheduleRef = useRef(new Set()); // Track which jobs are currently being fetched to prevent duplicates
   const [scheduleSaving, setScheduleSaving] = useState({});
+  
+  // State for schedule dialog
+  const [scheduleDialog, setScheduleDialog] = useState({ open: false, job: null });
   
   // State for filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -423,29 +431,127 @@ const JobsPage = () => {
       
       // Since the response structure has changed, we'll directly use the data as it comes
       const jobsData = response.data;
-      setJobs(jobsData);
       
-      // Initialize schedule data for each job
-      const initialScheduleData = {};
+      // Normalize job data - ensure JOB_SCHEDULE_STATUS is always 'Scheduled' or 'Not Scheduled'
       jobsData.forEach(job => {
+        // Normalize JOB_SCHEDULE_STATUS to always be 'Scheduled' or 'Not Scheduled'
+        if (!job.JOB_SCHEDULE_STATUS || (job.JOB_SCHEDULE_STATUS !== 'Scheduled' && job.JOB_SCHEDULE_STATUS !== 'Not Scheduled')) {
+          // If job has JOBSCHID or is marked as scheduled, set to 'Scheduled', otherwise 'Not Scheduled'
+          job.JOB_SCHEDULE_STATUS = (job.JOBSCHID || job.JOB_SCHEDULE_STATUS === 'Scheduled') ? 'Scheduled' : 'Not Scheduled';
+        }
+      });
+      
+      // Initialize schedule data for each job from the response
+      const initialScheduleData = {};
+      
+      // Helper function to get field value with case-insensitive lookup
+      // Backend normalizes column names to uppercase, so "Frequency code" becomes "FREQUENCY CODE"
+      const getField = (job, fieldName) => {
+        // Try exact match first
+        if (job[fieldName] !== undefined) return job[fieldName];
+        // Try uppercase (backend normalization)
+        if (job[fieldName.toUpperCase()] !== undefined) return job[fieldName.toUpperCase()];
+        // Try lowercase
+        if (job[fieldName.toLowerCase()] !== undefined) return job[fieldName.toLowerCase()];
+        // Try with underscores instead of spaces
+        const underscoreName = fieldName.replace(/\s+/g, '_');
+        if (job[underscoreName] !== undefined) return job[underscoreName];
+        if (job[underscoreName.toUpperCase()] !== undefined) return job[underscoreName.toUpperCase()];
+        if (job[underscoreName.toLowerCase()] !== undefined) return job[underscoreName.toLowerCase()];
+        return null;
+      };
+      
+      jobsData.forEach(job => {
+        
+        // Build TIMEPARAM from frequency fields if available
+        // Backend normalizes column names to uppercase, so "Frequency code" becomes "FREQUENCY CODE"
+        const frequencyCode = getField(job, "Frequency code") || job.FRQCD || null;
+        const frequencyDay = getField(job, "Frequency day") || job.FRQDD || null;
+        const frequencyHour = getField(job, "frequency hour") || job.FRQHH || null;
+        // Note: API returns "frequency month" but it's actually FRQMI (frequency minute), not month
+        // FRQMI represents minutes (0-59), not months
+        const frequencyMinute = getField(job, "frequency month") || job["frequency_minute"] || job.FRQMI || null;
+        
+        let timeParam = '';
+        if (frequencyCode) {
+          timeParam = frequencyCode;
+          if (frequencyDay) {
+            timeParam += `_${frequencyDay}`;
+          }
+          if (frequencyHour !== undefined && frequencyHour !== null && frequencyMinute !== undefined && frequencyMinute !== null) {
+            timeParam += `_${String(frequencyHour).padStart(2, '0')}:${String(frequencyMinute).padStart(2, '0')}`;
+          } else if (frequencyHour !== undefined && frequencyHour !== null) {
+            timeParam += `_${String(frequencyHour).padStart(2, '0')}:00`;
+          }
+        }
+        
+        // Store dates from initial job data - check multiple possible field names (case-insensitive)
+        // Backend normalizes to uppercase, so "last run" becomes "LAST RUN"
+        const lastRunDate = getField(job, "last run") || job["last_run"] || job.LST_RUN_DT || job.last_run || job.LAST_RUN_DT || null;
+        const nextRunDate = getField(job, "next run") || job["next_run"] || job.NXT_RUN_DT || job.next_run || job.NEXT_RUN_DT || null;
+        
+        // Debug logging for scheduled jobs - especially for DIM_ACNT_LN2
+        if (job.JOB_SCHEDULE_STATUS === 'Scheduled' || job.JOBSCHID || job.MAPREF === 'DIM_ACNT_LN2') {
+          console.log(`[fetchJobs] Job ${job.MAPREF} (${job.JOBFLWID}) schedule data:`, {
+            JOB_SCHEDULE_STATUS: job.JOB_SCHEDULE_STATUS,
+            JOBSCHID: job.JOBSCHID,
+            frequencyCode: frequencyCode,
+            frequencyDay: frequencyDay,
+            frequencyHour: frequencyHour,
+            frequencyMinute: frequencyMinute,
+            lastRunDate: lastRunDate,
+            nextRunDate: nextRunDate,
+            allJobKeys: Object.keys(job),
+            // Check all possible field name variations
+            fieldChecks: {
+              "Frequency code": job["Frequency code"],
+              "FREQUENCY CODE": job["FREQUENCY CODE"],
+              "last run": job["last run"],
+              "LAST RUN": job["LAST RUN"],
+              "next run": job["next run"],
+              "NEXT RUN": job["NEXT RUN"],
+              FRQCD: job.FRQCD,
+              LST_RUN_DT: job.LST_RUN_DT,
+              NXT_RUN_DT: job.NXT_RUN_DT
+            },
+            initialScheduleData: initialScheduleData[job.JOBFLWID]
+          });
+        }
+        
         initialScheduleData[job.JOBFLWID] = {
           JOBFLWID: job.JOBFLWID,
           MAPREF: job.MAPREF || '',
-          TIMEPARAM: '',
-          STRT_DT: null,
-          END_DT: null,
-          STFLG: 'A' // Default status is Active
+          TIMEPARAM: timeParam,
+          STRT_DT: getField(job, "start date") || job["start_date"] || job.STRT_DT || null,
+          END_DT: getField(job, "end date") || job["end_date"] || job.END_DT || null,
+          STFLG: job.STFLG || 'A',
+          LST_RUN_DT: lastRunDate,
+          NXT_RUN_DT: nextRunDate,
+          FRQCD: frequencyCode,
+          FRQDD: frequencyDay,
+          FRQHH: frequencyHour,
+          // FRQMI is minutes (0-59), NOT months - API incorrectly names it "frequency month"
+          FRQMI: frequencyMinute
         };
       });
       
+      setJobs(jobsData);
       setScheduleData(initialScheduleData);
       setError(null);
       
-      // After getting all jobs, fetch schedule details for all jobs that might have schedule information
-      // This ensures the summary is shown even for jobs not officially scheduled
+      // After getting all jobs, fetch schedule details for scheduled jobs only
+      // Batch the API calls to avoid overwhelming the network (max 5 concurrent)
       setTimeout(() => {
-        jobsData.forEach(job => {
-          fetchJobScheduleDetails(job.JOBFLWID);
+        const scheduledJobs = jobsData.filter(job => job.JOB_SCHEDULE_STATUS === 'Scheduled' || job.JOBSCHID);
+        
+        // Batch process: fetch 5 jobs at a time with delays
+        const batchSize = 5;
+        const delayBetweenBatches = 500; // 500ms between batches
+        
+        scheduledJobs.forEach((job, index) => {
+          setTimeout(() => {
+            fetchJobScheduleDetails(job.JOBFLWID);
+          }, Math.floor(index / batchSize) * delayBetweenBatches);
         });
       }, 300); // Small delay to ensure jobs state is updated
       
@@ -459,9 +565,27 @@ const JobsPage = () => {
 
   // Fetch job schedule details for a job
   const fetchJobScheduleDetails = async (jobId) => {
-    // Get the job from the jobs list
-    const job = jobs.find(j => j.JOBFLWID === jobId);
-    if (!job) return;
+    // Prevent duplicate requests for the same job
+    if (fetchingScheduleRef.current.has(jobId)) {
+      console.log(`[fetchJobScheduleDetails] Already fetching schedule for job ${jobId}, skipping duplicate request`);
+      return;
+    }
+    
+    // Get the job from the jobs list - use current jobs state
+    const currentJobs = jobs.length > 0 ? jobs : [];
+    const job = currentJobs.find(j => j.JOBFLWID === jobId);
+    if (!job && jobs.length === 0) {
+      // If jobs haven't loaded yet, wait a bit and try again
+      setTimeout(() => fetchJobScheduleDetails(jobId), 500);
+      return;
+    }
+    if (!job) {
+      console.warn(`Job with JOBFLWID ${jobId} not found in jobs list`);
+      return;
+    }
+    
+    // Mark as fetching
+    fetchingScheduleRef.current.add(jobId);
     
     // Set loading state for this specific job
     setScheduleLoading(prev => ({ ...prev, [jobId]: true }));
@@ -471,64 +595,246 @@ const JobsPage = () => {
       const response = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/job/get_job_schedule_details/${jobId}`);
       console.log('API Response:', response.data);
       
-      // Check if there's schedule data
-      if (response.data && response.data.length > 0) {
-        const scheduleDetails = response.data[0];
+      // Check if there's schedule data - handle both array and object responses
+      let scheduleDetails = null;
+      if (response.data) {
+        if (Array.isArray(response.data) && response.data.length > 0) {
+          scheduleDetails = response.data[0];
+        } else if (typeof response.data === 'object' && !Array.isArray(response.data)) {
+          scheduleDetails = response.data;
+        }
+      }
+      
+      // Debug log for scheduled jobs - especially DIM_ACNT_LN2
+      if (job.JOB_SCHEDULE_STATUS === 'Scheduled' || job.JOBSCHID || job.MAPREF === 'DIM_ACNT_LN2') {
+        console.log(`[fetchJobScheduleDetails] Schedule details for scheduled job ${job.MAPREF} (${jobId}):`, {
+          hasScheduleDetails: !!scheduleDetails,
+          scheduleDetails: scheduleDetails,
+          scheduleDetailsKeys: scheduleDetails ? Object.keys(scheduleDetails) : [],
+          // Check all possible field name variations (case-insensitive)
+          FRQCD: scheduleDetails?.FRQCD || scheduleDetails?.frqcd || scheduleDetails?.["FRQCD"] || scheduleDetails?.["frqcd"],
+          LST_RUN_DT: scheduleDetails?.LST_RUN_DT || scheduleDetails?.lst_run_dt || scheduleDetails?.["LST_RUN_DT"] || scheduleDetails?.["lst_run_dt"],
+          NXT_RUN_DT: scheduleDetails?.NXT_RUN_DT || scheduleDetails?.nxt_run_dt || scheduleDetails?.["NXT_RUN_DT"] || scheduleDetails?.["nxt_run_dt"],
+          jobLastRun: job['last run'] || job["last run"] || job["LAST RUN"],
+          jobNextRun: job['next run'] || job["next run"] || job["NEXT RUN"],
+          jobFRQCD: job["Frequency code"] || job["FREQUENCY CODE"] || job.FRQCD
+        });
+      }
+      
+      // If we have schedule details, process them
+      if (scheduleDetails) {
+        // Helper to get field value with case-insensitive lookup
+        const getScheduleField = (fieldName) => {
+          return scheduleDetails[fieldName] || 
+                 scheduleDetails[fieldName.toUpperCase()] || 
+                 scheduleDetails[fieldName.toLowerCase()] || 
+                 null;
+        };
+
+        // Get field values with case-insensitive lookup (backend may return uppercase or lowercase)
+        const frqcd = getScheduleField("FRQCD");
+        const frqdd = getScheduleField("FRQDD");
+        const frqhh = getScheduleField("FRQHH");
+        const frqmi = getScheduleField("FRQMI");
+        const strtdt = getScheduleField("STRTDT") || getScheduleField("STRT_DT");
+        const enddt = getScheduleField("ENDDT") || getScheduleField("END_DT");
+        const lstRunDt = getScheduleField("LST_RUN_DT");
+        const nxtRunDt = getScheduleField("NXT_RUN_DT");
+        
+        // Fallback: compute next run locally if backend didn't return it
+        // Note: FRQMI is minutes (0-59), NOT months
+        const computeNextRun = (details) => {
+          const freq = details.FRQCD || '';
+          // FRQHH is hour (0-23), FRQMI is minute (0-59) - NOT month!
+          const hour = details.FRQHH !== undefined && details.FRQHH !== null ? Number(details.FRQHH) : 0;
+          const minute = details.FRQMI !== undefined && details.FRQMI !== null ? Number(details.FRQMI) : 0;
+          const start = details.STRT_DT || details.STRTDT || null;
+          if (!freq || !start) return null;
+          const base = new Date(start);
+          if (isNaN(base.getTime())) return null;
+          // Apply time - hour and minute (FRQMI is minutes, not months!)
+          base.setHours(hour || 0, minute || 0, 0, 0);
+          const now = new Date();
+          let next = base;
+          if (next <= now) {
+            const addDays = (d) => { const n = new Date(next); n.setDate(n.getDate() + d); return n; };
+            switch (freq) {
+              case 'WK': next = addDays(7); break;
+              case 'FN': next = addDays(14); break;
+              case 'MN': next = addDays(30); break; // MN = Monthly, not related to FRQMI
+              case 'HY': next = addDays(180); break;
+              case 'YR': next = addDays(365); break;
+              case 'ID': next = addDays(1); break;
+              case 'DL':
+              default: next = addDays(1); break;
+            }
+          }
+          return next.toISOString();
+        };
         
         // Extract time parameter from individual fields if they exist
         let timeParam = '';
-        if (scheduleDetails.FRQCD) {
-          timeParam = scheduleDetails.FRQCD;
+        if (frqcd) {
+          timeParam = frqcd;
           
-          if (scheduleDetails.FRQDD) {
-            timeParam += `_${scheduleDetails.FRQDD}`;
+          if (frqdd) {
+            timeParam += `_${frqdd}`;
           }
           
-          if (scheduleDetails.FRQHH !== undefined && scheduleDetails.FRQMI !== undefined) {
-            timeParam += `_${scheduleDetails.FRQHH}:${scheduleDetails.FRQMI}`;
+          if (frqhh !== undefined && frqhh !== null && frqmi !== undefined && frqmi !== null) {
+            timeParam += `_${String(frqhh).padStart(2, '0')}:${String(frqmi).padStart(2, '0')}`;
+          } else if (frqhh !== undefined && frqhh !== null) {
+            timeParam += `_${String(frqhh).padStart(2, '0')}:00`;
           }
         }
         
+        // Compute next run fallback if missing
+        const computedNextRun = nxtRunDt || computeNextRun({
+          FRQCD: frqcd,
+          FRQHH: frqhh,
+          FRQMI: frqmi,
+          STRT_DT: strtdt,
+          STRTDT: strtdt,
+        });
+
         // Update the schedule data with fetched values
+        // Handle date fields - API returns STRTDT/ENDDT but we store as STRT_DT/END_DT
+        const startDate = strtdt || null;
+        const endDate = enddt || null;
+        
         setScheduleData(prev => ({
           ...prev,
           [jobId]: {
             ...prev[jobId],
             JOBFLWID: jobId,
-            MAPREF: scheduleDetails.MAPREF || job.MAPREF || '',
-            TIMEPARAM: scheduleDetails.TIMEPARAM || timeParam,
-            STRT_DT: scheduleDetails.STRT_DT || scheduleDetails.STRTDT,
-            END_DT: scheduleDetails.END_DT || scheduleDetails.ENDDT,
-            STFLG: scheduleDetails.STFLG || '',
-            JOB_SCHEDULE_STATUS: job.JOB_SCHEDULE_STATUS
+            MAPREF: getScheduleField("MAPREF") || job.MAPREF || '',
+            TIMEPARAM: timeParam || prev[jobId]?.TIMEPARAM || '',
+            STRT_DT: startDate || prev[jobId]?.STRT_DT || null,
+            END_DT: endDate || prev[jobId]?.END_DT || null,
+            STFLG: getScheduleField("STFLG") || prev[jobId]?.STFLG || '',
+            JOB_SCHEDULE_STATUS: job.JOB_SCHEDULE_STATUS,
+            LST_RUN_DT: lstRunDt || prev[jobId]?.LST_RUN_DT || null,
+            NXT_RUN_DT: computedNextRun || nxtRunDt || prev[jobId]?.NXT_RUN_DT || null,
+            // Store frequency components separately for easy access - prioritize API response
+            FRQCD: frqcd || prev[jobId]?.FRQCD || job["Frequency code"] || job["FREQUENCY CODE"] || null,
+            FRQDD: frqdd || prev[jobId]?.FRQDD || job["Frequency day"] || job["FREQUENCY DAY"] || null,
+            FRQHH: (frqhh !== undefined && frqhh !== null) ? frqhh : (prev[jobId]?.FRQHH !== undefined && prev[jobId].FRQHH !== null ? prev[jobId].FRQHH : (job["frequency hour"] || job["FREQUENCY HOUR"] || job.FRQHH || null)),
+            // FRQMI is minutes (0-59), NOT months - API incorrectly names it "frequency month"
+            FRQMI: (frqmi !== undefined && frqmi !== null) ? frqmi : (prev[jobId]?.FRQMI !== undefined && prev[jobId].FRQMI !== null ? prev[jobId].FRQMI : (job["frequency month"] || job["FREQUENCY MONTH"] || job.FRQMI || null))
           }
         }));
         
-        // Update job data with schedule information so it's available for display
-        // even if the job is not officially scheduled
-        if (!job["Frequency code"] && scheduleDetails.FRQCD) {
-          setJobs(prevJobs => 
-            prevJobs.map(j => 
-              j.JOBFLWID === jobId 
-                ? { 
-                    ...j, 
-                    "Frequency code": scheduleDetails.FRQCD,
-                    "Frequency day": scheduleDetails.FRQDD,
-                    "frequency hour": scheduleDetails.FRQHH,
-                    "frequency month": scheduleDetails.FRQMI,
-                    "start date": scheduleDetails.STRT_DT || scheduleDetails.STRTDT,
-                    "end date": scheduleDetails.END_DT || scheduleDetails.ENDDT
-                  } 
-                : j
-            )
-          );
+        // Always update job data with schedule information so it's available for display
+        // This ensures the frequency code is in the job object for getScheduleLabel to find
+        setJobs(prevJobs => 
+          prevJobs.map(j => 
+            j.JOBFLWID === jobId 
+              ? { 
+                  ...j, 
+                  "Frequency code": frqcd || j["Frequency code"] || j["FREQUENCY CODE"] || null,
+                  FRQCD: frqcd || j.FRQCD || null, // Also set direct FRQCD field
+                  "Frequency day": frqdd || j["Frequency day"] || j["FREQUENCY DAY"] || null,
+                  "frequency hour": (frqhh !== undefined && frqhh !== null) ? frqhh : (j["frequency hour"] || j["FREQUENCY HOUR"] || j.FRQHH || null),
+                  "frequency month": (frqmi !== undefined && frqmi !== null) ? frqmi : (j["frequency month"] || j["FREQUENCY MONTH"] || j.FRQMI || null),
+                  "start date": startDate || j["start date"] || j["START DATE"] || null,
+                  "end date": endDate || j["end date"] || j["END DATE"] || null,
+                  "last run": lstRunDt || computedNextRun || j["last run"] || j["LAST RUN"] || null,
+                  "next run": computedNextRun || nxtRunDt || j["next run"] || j["NEXT RUN"] || null,
+                  LST_RUN_DT: lstRunDt || j.LST_RUN_DT || null,
+                  NXT_RUN_DT: computedNextRun || nxtRunDt || j.NXT_RUN_DT || null
+                } 
+              : j
+          )
+        );
+        
+        // Debug log after updating - especially for DIM_ACNT_LN2
+        if (job.JOB_SCHEDULE_STATUS === 'Scheduled' || job.JOBSCHID || job.MAPREF === 'DIM_ACNT_LN2') {
+          console.log(`[fetchJobScheduleDetails] Updated job ${job.MAPREF} with schedule data:`, {
+            FRQCD: frqcd,
+            FRQDD: frqdd,
+            FRQHH: frqhh,
+            FRQMI: frqmi,
+            LST_RUN_DT: lstRunDt,
+            NXT_RUN_DT: computedNextRun || nxtRunDt,
+            scheduleDataUpdated: scheduleData[jobId]
+          });
+        }
+      } else {
+        // Even if no schedule details from API, ensure we preserve any existing dates from job data
+        // This is important for scheduled jobs that might have dates in the initial job data
+        const existingLastRun = job['last run'] || job["last run"] || null;
+        const existingNextRun = job['next run'] || job["next run"] || null;
+        
+        if (existingLastRun || existingNextRun) {
+          setScheduleData(prev => ({
+            ...prev,
+            [jobId]: {
+              ...prev[jobId],
+              JOBFLWID: jobId,
+              LST_RUN_DT: existingLastRun,
+              NXT_RUN_DT: existingNextRun,
+            }
+          }));
         }
       }
     } catch (err) {
-      console.error('Error fetching job schedule details:', err);
-      // Don't show error message to avoid cluttering the UI
+      // Only log network errors if they're not due to insufficient resources (too many requests)
+      if (err.code !== 'ERR_NETWORK' || !err.message?.includes('ERR_INSUFFICIENT_RESOURCES')) {
+        console.error(`Error fetching job schedule details for job ${jobId}:`, err);
+      } else {
+        console.warn(`[fetchJobScheduleDetails] Network resource limit reached for job ${jobId}, will retry later`);
+      }
+      // Even on error, try to preserve dates from job data
+      const existingLastRun = getField(job, "last run") || null;
+      const existingNextRun = getField(job, "next run") || null;
+      
+      if (existingLastRun || existingNextRun) {
+        setScheduleData(prev => ({
+          ...prev,
+          [jobId]: {
+            ...prev[jobId],
+            JOBFLWID: jobId,
+            LST_RUN_DT: existingLastRun,
+            NXT_RUN_DT: existingNextRun,
+          }
+        }));
+      }
     } finally {
+      // Remove from fetching set and clear loading state
+      fetchingScheduleRef.current.delete(jobId);
       setScheduleLoading(prev => ({ ...prev, [jobId]: false }));
+    }
+  };
+
+  // Handle open schedule dialog
+  const openScheduleDialog = (job) => {
+    setScheduleDialog({ open: true, job });
+    // Fetch schedule details when opening dialog to ensure we have the latest data
+    if (job && job.JOBFLWID) {
+      fetchJobScheduleDetails(job.JOBFLWID);
+    }
+  };
+
+  // Handle close schedule dialog
+  const closeScheduleDialog = () => {
+    setScheduleDialog({ open: false, job: null });
+  };
+
+  // Handle save schedule from dialog
+  const handleSaveScheduleFromDialog = async (jobId, updatedScheduleData) => {
+    // Update schedule data first
+    setScheduleData(prev => ({
+      ...prev,
+      [jobId]: updatedScheduleData
+    }));
+    
+    // Then call the existing save schedule handler with the updated data
+    // handleSaveSchedule will handle errors and show messages
+    const success = await handleSaveSchedule(jobId, updatedScheduleData);
+    
+    // Only close dialog if save was successful
+    if (success) {
+      closeScheduleDialog();
     }
   };
 
@@ -578,8 +884,8 @@ const JobsPage = () => {
     }));
   };
 
-  // Handle save schedule
-  const handleSaveSchedule = async (jobId) => {
+  // Handle save schedule (save only, doesn't enable)
+  const handleSaveSchedule = async (jobId, scheduleDataOverride = null) => {
     try {
       // Find the job to check if it's currently enabled/scheduled
       const currentJob = jobs.find(job => job.JOBFLWID === jobId);
@@ -591,20 +897,38 @@ const JobsPage = () => {
           message: 'Cannot update schedule details while job is enabled. Please disable the job first before updating schedule details.',
           severity: 'warning'
         });
-        return;
+        return false;
       }
       
       // Set saving state for this specific job
       setScheduleSaving(prev => ({ ...prev, [jobId]: true }));
       
-      const jobData = scheduleData[jobId];
+      // Use override data if provided, otherwise use state data
+      const jobData = scheduleDataOverride || scheduleData[jobId];
+      
+      // Ensure we have MAPREF - get it from the job if not in schedule data
+      if (!jobData || !jobData.MAPREF) {
+        const job = jobs.find(j => j.JOBFLWID === jobId);
+        if (!job || !job.MAPREF) {
+          setError('Job mapping reference (MAPREF) is missing. Cannot save schedule.');
+          setScheduleSaving(prev => ({ ...prev, [jobId]: false }));
+          return false;
+        }
+        // Ensure MAPREF is in jobData
+        if (!jobData) {
+          setError('Schedule data is missing. Cannot save schedule.');
+          setScheduleSaving(prev => ({ ...prev, [jobId]: false }));
+          return false;
+        }
+        jobData.MAPREF = job.MAPREF;
+      }
       
       // Validate the schedule data before sending to backend
       const validationError = validateScheduleData(jobData);
       if (validationError) {
         setError(validationError);
         setScheduleSaving(prev => ({ ...prev, [jobId]: false }));
-        return;
+        return false;
       }
       
       // Extract time parameter components for backend format
@@ -637,13 +961,172 @@ const JobsPage = () => {
         ENDDT: jobData.END_DT
       };
       
+      console.log('Saving job schedule with data:', requestData);
+      
       const response = await axios.post(
         `${process.env.NEXT_PUBLIC_API_URL}/job/save_job_schedule`, 
         requestData
       );
       
+      console.log('Save schedule response:', response.data);
+      
       if (response.data.success) {
-        setSuccessMessage('Schedule saved successfully');
+        // After saving the schedule, enable it so it shows as "Scheduled" and the scheduler picks it up
+        try {
+          const enableResponse = await axios.post(
+            `${process.env.NEXT_PUBLIC_API_URL}/job/enable_disable_job`,
+            {
+              MAPREF: jobData.MAPREF,
+              JOB_FLG: 'E' // Enable the schedule
+            }
+          );
+          
+          if (enableResponse.data.success) {
+            setSuccessMessage('Schedule saved and enabled successfully');
+            
+            // Update the job status to Scheduled in the jobs list
+            setJobs(prevJobs => 
+              prevJobs.map(job => 
+                job.JOBFLWID === jobId 
+                  ? { 
+                      ...job, 
+                      JOB_SCHEDULE_STATUS: 'Scheduled',
+                      // Add the frequency components to the job object for ScheduleSummary display
+                      "Frequency code": frequencyCode,
+                      "Frequency day": frequencyDay,
+                      "frequency hour": frequencyHour,
+                      "frequency month": frequencyMinute,
+                      "start date": jobData.STRT_DT,
+                      "end date": jobData.END_DT,
+                      JOBSCHID: response.data.job_schedule_id
+                    } 
+                  : job
+              )
+            );
+            
+            // IMPORTANT: Reload schedule details from backend after successful save
+            // This ensures the UI shows the exact data that was saved
+            setTimeout(() => {
+              fetchJobScheduleDetails(jobId);
+            }, 500); // Small delay to ensure backend has committed the transaction
+            
+            return true;
+          } else {
+            // Schedule was saved but enabling failed
+            setError(enableResponse.data.message || 'Schedule saved but failed to enable. Please enable it manually.');
+            return false;
+          }
+        } catch (enableErr) {
+          console.error('Error enabling schedule after save:', enableErr);
+          // Schedule was saved but enabling failed
+          setError('Schedule saved but failed to enable. Please enable it manually.');
+          return false;
+        }
+      } else {
+        setError(response.data.message || 'Failed to save schedule');
+        return false;
+      }
+    } catch (err) {
+      console.error('Error saving job schedule:', err);
+      const errorMessage = err.response?.data?.message || err.response?.data?.detail?.message || err.message || 'Failed to save schedule. Please try again.';
+      setError(errorMessage);
+      return false;
+    } finally {
+      // Clear saving state for this job
+      setScheduleSaving(prev => ({ ...prev, [jobId]: false }));
+      
+      setTimeout(() => {
+        setSuccessMessage(null);
+        setError(null);
+      }, 3000);
+    }
+  };
+
+  // Handle schedule job (save and enable)
+  const handleScheduleJob = async (jobId) => {
+    try {
+      // First save the schedule
+      const currentJob = jobs.find(job => job.JOBFLWID === jobId);
+      if (!currentJob) {
+        setError('Job not found');
+        return;
+      }
+
+      // Check if job is currently enabled (scheduled)
+      if (currentJob && currentJob.JOB_SCHEDULE_STATUS === 'Scheduled') {
+        setNotification({
+          open: true,
+          message: 'Cannot schedule job while it is already enabled. Please disable the job first before rescheduling.',
+          severity: 'warning'
+        });
+        return;
+      }
+
+      // Set saving state for this specific job
+      setScheduleSaving(prev => ({ ...prev, [jobId]: true }));
+      
+      const jobData = scheduleData[jobId];
+      
+      // Validate the schedule data before sending to backend
+      const validationError = validateScheduleData(jobData);
+      if (validationError) {
+        setError(validationError);
+        setScheduleSaving(prev => ({ ...prev, [jobId]: false }));
+        return;
+      }
+      
+      // Extract time parameter components for backend format
+      const timeParts = jobData.TIMEPARAM ? jobData.TIMEPARAM.split('_') : [];
+      const frequencyCode = timeParts[0] || '';
+      
+      // Get day and time parameters based on frequency type
+      let frequencyDay = '', frequencyHour = '', frequencyMinute = '';
+      
+      if (['WK', 'FN', 'MN', 'HY', 'YR'].includes(frequencyCode)) {
+        frequencyDay = timeParts[1] || '';
+        const timePieces = timeParts[2] ? timeParts[2].split(':') : [];
+        frequencyHour = timePieces[0] || '';
+        frequencyMinute = timePieces[1] || '';
+      } else {
+        const timePieces = timeParts[1] ? timeParts[1].split(':') : [];
+        frequencyHour = timePieces[0] || '';
+        frequencyMinute = timePieces[1] || '';
+      }
+      
+      // Step 1: Save the schedule
+      const requestData = {
+        JOBFLWID: jobId,
+        MAPREF: jobData.MAPREF,
+        FRQCD: frequencyCode,
+        FRQDD: frequencyDay,
+        FRQHH: frequencyHour,
+        FRQMI: frequencyMinute,
+        STRTDT: jobData.STRT_DT,
+        ENDDT: jobData.END_DT
+      };
+      
+      const saveResponse = await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL}/job/save_job_schedule`, 
+        requestData
+      );
+      
+      if (!saveResponse.data.success) {
+        setError(saveResponse.data.message || 'Failed to save schedule');
+        setScheduleSaving(prev => ({ ...prev, [jobId]: false }));
+        return;
+      }
+
+      // Step 2: Enable the schedule
+      const enableResponse = await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL}/job/enable_disable_job`,
+        {
+          MAPREF: jobData.MAPREF,
+          JOB_FLG: 'E' // Enable
+        }
+      );
+
+      if (enableResponse.data.success) {
+        setSuccessMessage('Job scheduled successfully! The job will run according to the configured schedule.');
         
         // Update the job status to Scheduled in the jobs list
         setJobs(prevJobs => 
@@ -659,17 +1142,22 @@ const JobsPage = () => {
                   "frequency month": frequencyMinute,
                   "start date": jobData.STRT_DT,
                   "end date": jobData.END_DT,
-                  JOBSCHID: response.data.job_schedule_id
+                  JOBSCHID: saveResponse.data.job_schedule_id
                 } 
               : job
           )
         );
+        
+        // Reload schedule details from backend after successful save
+        setTimeout(() => {
+          fetchJobScheduleDetails(jobId);
+        }, 500);
       } else {
-        setError(response.data.message || 'Failed to save schedule');
+        setError(enableResponse.data.message || 'Schedule saved but failed to enable job');
       }
     } catch (err) {
-      console.error('Error saving job schedule:', err);
-      setError('Failed to save schedule. Please try again.');
+      console.error('Error scheduling job:', err);
+      setError(err.response?.data?.message || 'Failed to schedule job. Please try again.');
     } finally {
       // Clear saving state for this job
       setScheduleSaving(prev => ({ ...prev, [jobId]: false }));
@@ -677,7 +1165,7 @@ const JobsPage = () => {
       setTimeout(() => {
         setSuccessMessage(null);
         setError(null);
-      }, 3000);
+      }, 5000); // Longer timeout for success message since it's important
     }
   };
 
@@ -834,17 +1322,226 @@ const JobsPage = () => {
   // Get unique table types for filter dropdown
   const tableTypes = [...new Set(jobs.map(job => job.TRGTBTYP))].filter(Boolean).sort();
 
-  // Define columns for table
-  const columns = [
-    { id: 'MAPREF', label: 'Job Mapping Reference', width: '18%' },
-    { id: 'TRGTBNM', label: 'Target Table', width: '14%' },
-    { id: 'STATUS', label: 'Status', width: '5%' },
-    { id: 'SCHEDULE', label: 'Schedule Configuration', width: '17%' },
-    { id: 'SUMMARY', label: 'Schedule Summary', width: '18%' },
-    { id: 'DEPENDENCY', label: 'Dependency', width: '12%' },
-    { id: 'view', label: 'View', width: '8%' },
-    { id: 'actions', label: 'Actions', width: '8%' },
-  ];
+  // Helper functions similar to reports page
+  const getScheduleLabel = (job) => {
+    // Helper to check if a value is valid (not null, undefined, or empty string)
+    const isValid = (val) => val !== null && val !== undefined && val !== '';
+    
+    // Helper to get field value with case-insensitive lookup (backend normalizes to uppercase)
+    const getField = (fieldName) => {
+      // Try exact match first
+      if (job[fieldName] !== undefined) return job[fieldName];
+      // Try uppercase (backend normalization)
+      if (job[fieldName.toUpperCase()] !== undefined) return job[fieldName.toUpperCase()];
+      // Try lowercase
+      if (job[fieldName.toLowerCase()] !== undefined) return job[fieldName.toLowerCase()];
+      // Try with underscores instead of spaces
+      const underscoreName = fieldName.replace(/\s+/g, '_');
+      if (job[underscoreName] !== undefined) return job[underscoreName];
+      if (job[underscoreName.toUpperCase()] !== undefined) return job[underscoreName.toUpperCase()];
+      if (job[underscoreName.toLowerCase()] !== undefined) return job[underscoreName.toLowerCase()];
+      return null;
+    };
+    
+    // Try to get frequency code from multiple sources - prioritize direct job data
+    // Check in order: job object -> scheduleData FRQCD -> scheduleData TIMEPARAM -> job object frequency fields
+    let frequencyCode = null;
+    
+    // First check job object's "Frequency code" field (from API) - handle case variations
+    // Backend normalizes to uppercase, so "Frequency code" becomes "FREQUENCY CODE"
+    const freqCodeField = getField("Frequency code");
+    if (isValid(freqCodeField)) {
+      frequencyCode = freqCodeField;
+    }
+    // Then check scheduleData FRQCD
+    else if (isValid(scheduleData[job.JOBFLWID]?.FRQCD)) {
+      frequencyCode = scheduleData[job.JOBFLWID].FRQCD;
+    } 
+    // Then try to extract from TIMEPARAM
+    else if (scheduleData[job.JOBFLWID]?.TIMEPARAM) {
+      const timeParamParts = scheduleData[job.JOBFLWID].TIMEPARAM.split('_');
+      if (timeParamParts.length > 0 && isValid(timeParamParts[0])) {
+        frequencyCode = timeParamParts[0];
+      }
+    }
+    // Check if job has FRQCD field directly (case variations)
+    else if (isValid(job.FRQCD)) {
+      frequencyCode = job.FRQCD;
+    }
+    // Check if job has frequency_code field
+    else if (isValid(job.frequency_code)) {
+      frequencyCode = job.frequency_code;
+    }
+    
+    // If we have a valid frequency code, map it to a readable label
+    if (isValid(frequencyCode)) {
+      const frequencyMap = {
+        'DL': 'Daily',
+        'WK': 'Weekly',
+        'FN': 'Fortnightly',
+        'MN': 'Monthly',
+        'HY': 'Half-Yearly',
+        'YR': 'Yearly',
+        'ID': 'Interval'
+      };
+      return frequencyMap[frequencyCode] || frequencyCode;
+    }
+    
+    // If no frequency code found, trigger fetch for scheduled jobs and return blank
+    const isScheduled = job.JOB_SCHEDULE_STATUS === 'Scheduled' || job.JOBSCHID;
+    if (isScheduled) {
+      // Try to fetch schedule details if not already fetched
+      if (!scheduleData[job.JOBFLWID] || !scheduleData[job.JOBFLWID].FRQCD) {
+        // Trigger a fetch if we haven't already
+        setTimeout(() => {
+          fetchJobScheduleDetails(job.JOBFLWID);
+        }, 100);
+      }
+    }
+    
+    // Return blank/dash if no frequency is set
+    return '-';
+  };
+
+  const getScheduleStatusColor = (job) => {
+    if (job.JOB_SCHEDULE_STATUS === 'Scheduled') return "success";
+    return "default";
+  };
+
+  // Format date time helper (similar to reports page)
+  const formatDateTime = (isoString) => {
+    if (!isoString) return '-';
+    try {
+      // Handle different date formats
+      let date;
+      if (typeof isoString === 'string') {
+        // Try parsing as ISO string first
+        date = new Date(isoString);
+        // If invalid, try other formats
+        if (isNaN(date.getTime())) {
+          // Try parsing as date string without timezone
+          date = new Date(isoString.replace(' ', 'T'));
+        }
+      } else if (isoString instanceof Date) {
+        date = isoString;
+      } else {
+        date = new Date(isoString);
+      }
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return '-';
+      }
+      
+      return date.toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
+    } catch (err) {
+      console.warn('Error formatting date:', isoString, err);
+      return '-';
+    }
+  };
+  
+  // Helper function to get last run date from multiple sources
+  const getLastRunDate = (job) => {
+    // Helper to get field value with case-insensitive lookup (backend normalizes to uppercase)
+    const getField = (fieldName) => {
+      // Try exact match first
+      if (job[fieldName] !== undefined) return job[fieldName];
+      // Try uppercase (backend normalization)
+      if (job[fieldName.toUpperCase()] !== undefined) return job[fieldName.toUpperCase()];
+      // Try lowercase
+      if (job[fieldName.toLowerCase()] !== undefined) return job[fieldName.toLowerCase()];
+      // Try with underscores instead of spaces
+      const underscoreName = fieldName.replace(/\s+/g, '_');
+      if (job[underscoreName] !== undefined) return job[underscoreName];
+      if (job[underscoreName.toUpperCase()] !== undefined) return job[underscoreName.toUpperCase()];
+      if (job[underscoreName.toLowerCase()] !== undefined) return job[underscoreName.toLowerCase()];
+      return null;
+    };
+    
+    // Check scheduleData first (most up-to-date)
+    const scheduleLastRun = scheduleData[job.JOBFLWID]?.LST_RUN_DT;
+    if (scheduleLastRun) {
+      return scheduleLastRun;
+    }
+    // Check job object with various field name variations (case-insensitive)
+    // Backend normalizes to uppercase, so "last run" becomes "LAST RUN"
+    const jobLastRun = getField("last run") || 
+                      job["last_run"] || 
+                      job.LST_RUN_DT || 
+                      job.last_run || 
+                      job.LAST_RUN_DT;
+    if (jobLastRun) {
+      return jobLastRun;
+    }
+    
+    // If scheduled but no date found, try to fetch schedule details
+    if ((job.JOB_SCHEDULE_STATUS === 'Scheduled' || job.JOBSCHID) && !scheduleData[job.JOBFLWID]?.LST_RUN_DT) {
+      // Trigger a fetch if we haven't already
+      if (!scheduleData[job.JOBFLWID] || !scheduleData[job.JOBFLWID].LST_RUN_DT) {
+        setTimeout(() => {
+          fetchJobScheduleDetails(job.JOBFLWID);
+        }, 100);
+      }
+    }
+    
+    return null;
+  };
+  
+  // Helper function to get next run date from multiple sources
+  const getNextRunDate = (job) => {
+    // Helper to get field value with case-insensitive lookup (backend normalizes to uppercase)
+    const getField = (fieldName) => {
+      // Try exact match first
+      if (job[fieldName] !== undefined) return job[fieldName];
+      // Try uppercase (backend normalization)
+      if (job[fieldName.toUpperCase()] !== undefined) return job[fieldName.toUpperCase()];
+      // Try lowercase
+      if (job[fieldName.toLowerCase()] !== undefined) return job[fieldName.toLowerCase()];
+      // Try with underscores instead of spaces
+      const underscoreName = fieldName.replace(/\s+/g, '_');
+      if (job[underscoreName] !== undefined) return job[underscoreName];
+      if (job[underscoreName.toUpperCase()] !== undefined) return job[underscoreName.toUpperCase()];
+      if (job[underscoreName.toLowerCase()] !== undefined) return job[underscoreName.toLowerCase()];
+      return null;
+    };
+    
+    // Check scheduleData first (most up-to-date)
+    const scheduleNextRun = scheduleData[job.JOBFLWID]?.NXT_RUN_DT;
+    if (scheduleNextRun) {
+      return scheduleNextRun;
+    }
+    // Check job object with various field name variations (case-insensitive)
+    // Backend normalizes to uppercase, so "next run" becomes "NEXT RUN"
+    const jobNextRun = getField("next run") || 
+                       job["next_run"] || 
+                       job.NXT_RUN_DT || 
+                       job.next_run || 
+                       job.NEXT_RUN_DT;
+    if (jobNextRun) {
+      return jobNextRun;
+    }
+    
+    // If scheduled but no date found, try to fetch schedule details
+    if ((job.JOB_SCHEDULE_STATUS === 'Scheduled' || job.JOBSCHID) && !scheduleData[job.JOBFLWID]?.NXT_RUN_DT) {
+      // Trigger a fetch if we haven't already
+      if (!scheduleData[job.JOBFLWID] || !scheduleData[job.JOBFLWID].NXT_RUN_DT) {
+        setTimeout(() => {
+          fetchJobScheduleDetails(job.JOBFLWID);
+        }, 100);
+      }
+    }
+    
+    return null;
+  };
 
   const handleRefresh = () => {
     fetchJobs();
@@ -890,6 +1587,9 @@ const JobsPage = () => {
       if (executeData.loadType === 'history') {
         payload.startDate = executeData.startDate;
         payload.endDate = executeData.endDate;
+        payload.truncateLoad = executeData.truncateLoad ? 'Y' : 'N';
+      } else {
+        // Add truncate option for regular load as well
         payload.truncateLoad = executeData.truncateLoad ? 'Y' : 'N';
       }
 
@@ -974,6 +1674,118 @@ const JobsPage = () => {
     } finally {
       setOpenEnableDisableDialog(false);
       setJobToToggle(null);
+    }
+  };
+
+  // Direct toggle handler for schedule checkbox/switch (with confirmation for disable)
+  const handleScheduleToggle = async (job, newStatus) => {
+    // If enabling, do it directly
+    if (newStatus === 'Scheduled') {
+      try {
+        const response = await axios.post(
+          `${process.env.NEXT_PUBLIC_API_URL}/job/enable_disable_job`,
+          { 
+            MAPREF: job.MAPREF,
+            JOB_FLG: 'E'
+          }
+        );
+
+        if (response.data.success) {
+          setSuccessMessage('Schedule enabled successfully');
+          setJobs(prevJobs => 
+            prevJobs.map(j => 
+              j.MAPREF === job.MAPREF 
+                ? { ...j, JOB_SCHEDULE_STATUS: 'Scheduled' } 
+                : j
+            )
+          );
+          fetchJobs();
+        } else {
+          setError(response.data.message || 'Failed to enable schedule');
+        }
+      } catch (err) {
+        console.error('Error enabling schedule:', err);
+        setError(err.response?.data?.message || 'Failed to enable schedule. Please try again.');
+      }
+    } else {
+      // If disabling, show confirmation dialog
+      handleEnableDisableJob(job);
+    }
+  };
+
+  // Toggle handler for job active/inactive status (STFLG)
+  const handleJobStatusToggle = async (job, newStatus) => {
+    const stflg = newStatus === 'Active' ? 'A' : 'N';
+    
+    // Optimistically update the UI immediately for better UX
+    setJobs(prevJobs => 
+      prevJobs.map(j => 
+        j.MAPREF === job.MAPREF 
+          ? { ...j, STFLG: stflg } 
+          : j
+      )
+    );
+    
+    try {
+      const response = await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL}/job/toggle_job_status`,
+        { 
+          MAPREF: job.MAPREF,
+          STFLG: stflg
+        }
+      );
+
+      if (response.data.success) {
+        setSuccessMessage(response.data.message);
+        // Refresh jobs to get the latest state from database
+        fetchJobs();
+      } else {
+        // Revert optimistic update on error
+        setJobs(prevJobs => 
+          prevJobs.map(j => 
+            j.MAPREF === job.MAPREF 
+              ? { ...j, STFLG: job.STFLG } 
+              : j
+          )
+        );
+        setError(response.data.message || 'Failed to update job status');
+      }
+    } catch (err) {
+      console.error('Error toggling job status:', err);
+      // Revert optimistic update on error
+      setJobs(prevJobs => 
+        prevJobs.map(j => 
+          j.MAPREF === job.MAPREF 
+            ? { ...j, STFLG: job.STFLG } 
+            : j
+        )
+      );
+      
+      // Handle different error response formats (Flask vs FastAPI)
+      let errorMessage = 'Failed to update job status. Please try again.';
+      if (err.response) {
+        if (err.response.data) {
+          if (typeof err.response.data === 'string') {
+            errorMessage = err.response.data;
+          } else if (err.response.data.message) {
+            errorMessage = err.response.data.message;
+          } else if (err.response.data.detail) {
+            if (typeof err.response.data.detail === 'string') {
+              errorMessage = err.response.data.detail;
+            } else if (err.response.data.detail.message) {
+              errorMessage = err.response.data.detail.message;
+            }
+          }
+        } else if (err.response.status === 404) {
+          errorMessage = 'Endpoint not found. Please check if the backend server is running correctly.';
+        } else if (err.response.status >= 500) {
+          errorMessage = 'Server error. Please try again later.';
+        }
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
     }
   };
 
@@ -1072,17 +1884,13 @@ const JobsPage = () => {
       </Box>
 
       {/* Success/Error Messages */}
-      <Collapse in={!!error || !!successMessage}>
+      {(error || successMessage) && (
         <Box sx={{ mb: 2 }}>
           {error && (
             <Alert 
               severity="error" 
-              sx={{ 
-                mb: 2,
-                borderRadius: '8px',
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-              }}
               onClose={() => setError(null)}
+              sx={{ mb: 1 }}
             >
               {error}
             </Alert>
@@ -1090,260 +1898,193 @@ const JobsPage = () => {
           {successMessage && (
             <Alert 
               severity="success"
-              sx={{ 
-                mb: 2,
-                borderRadius: '8px',
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
-              }}
               onClose={() => setSuccessMessage(null)}
             >
               {successMessage}
             </Alert>
           )}
         </Box>
-      </Collapse>
+      )}
 
       {/* Jobs table */}
       {loading ? (
-        <Box sx={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          alignItems: 'center',
-          height: '50vh',
-          flexDirection: 'column',
-          gap: 2
-        }}>
-          <CircularProgress size={60} thickness={4} />
-          <Typography variant="h6" sx={{ mt: 2 }}>Loading jobs...</Typography>
+        <Box display="flex" justifyContent="center" py={4}>
+          <CircularProgress />
         </Box>
-      ) : jobs.length === 0 ? (
-        <Paper 
-          elevation={0}
-          sx={{ 
-            p: 4, 
-            textAlign: 'center',
-            borderRadius: '12px',
-            backgroundColor: darkMode ? 'rgba(17, 24, 39, 0.6)' : 'rgba(249, 250, 251, 0.8)',
-            backdropFilter: 'blur(8px)',
-            border: darkMode ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(0, 0, 0, 0.05)',
-          }}
-        >
-          <Typography variant="h5" sx={{ mb: 2 }}>No jobs found</Typography>
-          <Typography color="textSecondary">
-            Try clearing filters or refreshing the page
-          </Typography>
-        </Paper>
       ) : (
-        <Box
-          ref={contentRef}
-          sx={{ 
-            overflow: 'auto', 
-            flexGrow: 1,
-            maxHeight: 'calc(100vh - 130px)',
-            position: 'relative',
-            '&::-webkit-scrollbar': {
-              width: '8px',
-              height: '8px',
-            },
-            '&::-webkit-scrollbar-track': {
-              backgroundColor: darkMode ? 'rgba(15, 23, 42, 0.3)' : 'rgba(243, 244, 246, 0.5)',
-            },
-            '&::-webkit-scrollbar-thumb': {
-              backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.5)' : 'rgba(59, 130, 246, 0.3)',
-              borderRadius: '4px',
-              '&:hover': {
-                backgroundColor: darkMode ? 'rgba(59, 130, 246, 0.7)' : 'rgba(59, 130, 246, 0.5)',
-              }
-            }
-          }}
-        >
-          <StyledTableContainer darkMode={darkMode}>
-            <Table stickyHeader size="small" aria-label="jobs table">
-              <TableHead>
-                <TableRow>
-                  {columns.map((column) => (
-                    <TableCell
-                      key={column.id}
-                      align={column.id === 'actions' || column.id === 'STATUS' || column.id === 'view' ? 'center' : 'left'}
-                      sx={{ 
-                        width: column.width,
-                        px: column.id === 'actions' || column.id === 'view' ? 1 : 2,
-                        position: 'sticky',
-                        top: 0,
-                        zIndex: 1,
-                        fontWeight: 600,
-                        fontSize: '0.75rem',
-                        whiteSpace: 'nowrap',
-                        backgroundColor: darkMode ? '#1A202C' : '#F7FAFC'
-                      }}
+        <TableContainer component={Paper} elevation={darkMode ? 0 : 1} sx={{ borderRadius: 2, border: darkMode ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(0,0,0,0.05)" }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Schema</TableCell>
+                <TableCell align="center">Status</TableCell>
+                <TableCell align="center">Scheduled</TableCell>
+                <TableCell>Frequency</TableCell>
+                <TableCell>Last Run</TableCell>
+                <TableCell>Next Run</TableCell>
+                <TableCell align="center">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredJobs.map((job) => (
+                <TableRow key={job.JOBID} hover>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={500}>{job.MAPREF}</Typography>
+                    {job.TRGSCHM && job.TRGTBNM && (
+                      <Typography variant="caption" color="text.secondary">
+                        {job.TRGSCHM}.{job.TRGTBNM} ({job.TRGTBTYP})
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {job.TRGSCHM || "Metadata"}
+                  </TableCell>
+                  <TableCell align="center">
+                    <Tooltip 
+                      title={
+                        (job.STFLG === 'A' ? 'Click to deactivate job' : 'Click to activate job')
+                      }
+                      arrow
                     >
-                      {column.label}
-                    </TableCell>
-                  ))}
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={job.STFLG === 'A'}
+                            onChange={(e) => {
+                              const newStatus = e.target.checked ? 'Active' : 'Inactive';
+                              handleJobStatusToggle(job, newStatus);
+                            }}
+                            size="small"
+                            color="primary"
+                          />
+                        }
+                        label={
+                          <Typography 
+                            variant="caption" 
+                            sx={{ 
+                              fontSize: '0.75rem', 
+                              ml: 0.5,
+                              color: job.STFLG === 'A' 
+                                ? (darkMode ? '#60A5FA' : '#3B82F6') 
+                                : 'text.secondary',
+                              fontWeight: job.STFLG === 'A' ? 600 : 400
+                            }}
+                          >
+                            {job.STFLG === 'A' ? 'Active' : 'Inactive'}
+                          </Typography>
+                        }
+                        sx={{ m: 0, cursor: 'pointer' }}
+                      />
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell align="center">
+                    <Tooltip 
+                      title={
+                        !job.JOBSCHID && job.JOB_SCHEDULE_STATUS !== 'Scheduled' 
+                          ? 'Configure schedule first to enable' 
+                          : job.JOB_SCHEDULE_STATUS === 'Scheduled' 
+                            ? 'Click to disable schedule' 
+                            : 'Click to enable schedule'
+                      }
+                      arrow
+                    >
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={job.JOB_SCHEDULE_STATUS === 'Scheduled'}
+                            onChange={(e) => {
+                              const newStatus = e.target.checked ? 'Scheduled' : 'Not Scheduled';
+                              handleScheduleToggle(job, newStatus);
+                            }}
+                            size="small"
+                            color="success"
+                            disabled={!job.JOBSCHID && job.JOB_SCHEDULE_STATUS !== 'Scheduled'}
+                          />
+                        }
+                        label={
+                          <Typography 
+                            variant="caption" 
+                            sx={{ 
+                              fontSize: '0.75rem', 
+                              ml: 0.5,
+                              color: (job.JOB_SCHEDULE_STATUS === 'Scheduled') 
+                                ? (darkMode ? '#4ADE80' : '#22C55E') 
+                                : 'text.secondary',
+                              fontWeight: (job.JOB_SCHEDULE_STATUS === 'Scheduled') ? 600 : 400
+                            }}
+                          >
+                            {(job.JOB_SCHEDULE_STATUS === 'Scheduled') ? 'Scheduled' : 'Not Scheduled'}
+                          </Typography>
+                        }
+                        sx={{ m: 0, cursor: (!job.JOBSCHID && job.JOB_SCHEDULE_STATUS !== 'Scheduled') ? 'not-allowed' : 'pointer' }}
+                      />
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem', color: getScheduleLabel(job) === '-' ? 'text.secondary' : 'text.primary' }}>
+                      {getScheduleLabel(job)}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                      {formatDateTime(getLastRunDate(job))}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontSize: '0.8125rem' }}>
+                      {formatDateTime(getNextRunDate(job))}
+                    </Typography>
+                  </TableCell>
+                  <TableCell align="center">
+                    <Stack direction="row" spacing={0.5} justifyContent="center">
+                      <Tooltip title="View Details">
+                        <ActionButton 
+                          size="small" 
+                          onClick={() => handleViewDetails(job)}
+                          darkMode={darkMode}
+                          color="info"
+                        >
+                          <VisibilityIcon fontSize="small" />
+                        </ActionButton>
+                      </Tooltip>
+                      <Tooltip title="Execute Now">
+                        <ActionButton 
+                          size="small" 
+                          onClick={() => handleExecuteNow(job)}
+                          darkMode={darkMode}
+                          color="primary"
+                        >
+                          <PlayArrowIcon fontSize="small" />
+                        </ActionButton>
+                      </Tooltip>
+                      <Tooltip title="Schedule Job">
+                        <ActionButton 
+                          size="small" 
+                          onClick={() => openScheduleDialog(job)}
+                          darkMode={darkMode}
+                          color="success"
+                        >
+                          <ScheduleIcon fontSize="small" />
+                        </ActionButton>
+                      </Tooltip>
+                      <Tooltip title="View Logic">
+                        <ActionButton 
+                          size="small" 
+                          onClick={() => handleViewLogic(job)}
+                          darkMode={darkMode}
+                          color="info"
+                        >
+                          <CodeIcon fontSize="small" />
+                        </ActionButton>
+                      </Tooltip>
+                    </Stack>
+                  </TableCell>
                 </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredJobs.map((job) => {
-                  return (
-                    <React.Fragment key={job.JOBID}>
-                      <TableRow hover>
-                        {/* Job Details - Mapping Reference */}
-                        <TableCell sx={{ py: 0.5 }}>
-                          <MappingDetails
-                            mapRef={job.MAPREF}
-                            darkMode={darkMode}
-                          />
-                        </TableCell>
-
-                        {/* Target Table Details */}
-                        <TableCell sx={{ py: 0.5 }}>
-                          <TargetTableDisplay
-                            targetSchema={job.TRGSCHM}
-                            targetTable={job.TRGTBNM}
-                            tableType={job.TRGTBTYP}
-                            darkMode={darkMode}
-                          />
-                        </TableCell>
-
-                        {/* Status - Display as icon */}
-                        <TableCell align="center" sx={{ py: 0.5 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-                            <StatusChip 
-                              status={job.JOB_SCHEDULE_STATUS} 
-                              darkMode={darkMode} 
-                            />
-                          </Box>
-                        </TableCell>
-
-                        {/* Schedule Configuration */}
-                        <TableCell sx={{ py: 0.5 }}>
-                          <InlineScheduleConfig
-                            jobId={job.JOBFLWID}
-                            scheduleData={scheduleData}
-                            handleScheduleChange={handleScheduleChange}
-                            handleDateChange={handleDateChange}
-                            handleSaveSchedule={handleSaveSchedule}
-                            isScheduled={job.JOB_SCHEDULE_STATUS === 'Scheduled'}
-                            darkMode={darkMode}
-                            scheduleLoading={scheduleLoading}
-                            scheduleSaving={scheduleSaving}
-                          />
-                        </TableCell>
-                        
-                        {/* Schedule Summary */}
-                        <TableCell sx={{ py: 0.5 }}>
-                          <ScheduleSummary
-                            scheduleData={scheduleData}
-                            jobId={job.JOBFLWID}
-                            darkMode={darkMode}
-                            job={job}
-                          />
-                        </TableCell>
-                        
-                        {/* Dependency */}
-                        <TableCell sx={{ py: 0.5 }}>
-                          <DependencyDisplay
-                            jobId={job.JOBFLWID}
-                            mapRef={job.MAPREF}
-                            dependency={job.DPND_MAPREF}
-                            darkMode={darkMode}
-                            onDependencyUpdated={(dependencyMapRef) => handleDependencyUpdated(job.JOBFLWID, dependencyMapRef)}
-                            job={job}
-                            allJobs={jobs}
-                          />
-                        </TableCell>
-                        
-                        {/* View Column */}
-                        <TableCell align="center" sx={{ py: 0.5 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
-                            <Tooltip title="View Details">
-                              <ActionButton
-                                size="small"
-                                color="primary"
-                                darkMode={darkMode}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleViewDetails(job);
-                                }}
-                              >
-                                <VisibilityIcon fontSize="small" sx={{ fontSize: 16 }} />
-                              </ActionButton>
-                            </Tooltip>
-
-                            <Tooltip title="View SQL Logic">
-                              <ActionButton
-                                size="small"
-                                color="info"
-                                darkMode={darkMode}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleViewLogic(job);
-                                }}
-                              >
-                                <CodeIcon fontSize="small" sx={{ fontSize: 16 }} />
-                              </ActionButton>
-                            </Tooltip>
-                          </Box>
-                        </TableCell>
-                        
-                        {/* Actions */}
-                        <TableCell align="center" sx={{ py: 0.5 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.5 }}>
-                            <Tooltip title="Execute Now">
-                              <ActionButton
-                                size="small"
-                                color="secondary"
-                                darkMode={darkMode}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleExecuteNow(job);
-                                }}
-                              >
-                                <PlayArrowIcon fontSize="small" sx={{ fontSize: 16 }} />
-                              </ActionButton>
-                            </Tooltip>
-
-                            <Tooltip title={job.JOB_SCHEDULE_STATUS === 'Scheduled' ? "Disable Job" : "Enable Job"}>
-                              <ActionButton
-                                size="small"
-                                color={job.JOB_SCHEDULE_STATUS === 'Scheduled' ? "success" : "error"}
-                                darkMode={darkMode}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleEnableDisableJob(job);
-                                }}
-                              >
-                                {job.JOB_SCHEDULE_STATUS === 'Scheduled' ? 
-                                  <ToggleOnIcon fontSize="small" sx={{ fontSize: 16, color: '#2E7D32' }} /> :
-                                  <ToggleOffIcon fontSize="small" sx={{ fontSize: 16, color: '#D32F2F' }} />
-                                }
-                              </ActionButton>
-                            </Tooltip>
-                          </Box>
-                        </TableCell>
-                      </TableRow>
-                    </React.Fragment>
-                  );
-                })}
-                {filteredJobs.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
-                      {searchTerm || tableTypeFilter || scheduleStatusFilter ? (
-                        <Typography variant="body1" color={darkMode ? 'gray.300' : 'gray.600'}>
-                          No matching jobs found with current filters
-                        </Typography>
-                      ) : (
-                        <Typography variant="body1" color={darkMode ? 'gray.300' : 'gray.600'}>
-                          No jobs found
-                        </Typography>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </StyledTableContainer>
-        </Box>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
       
       {/* Scroll to top button */}
@@ -1392,6 +2133,17 @@ const JobsPage = () => {
         job={jobToToggle}
         isEnabling={isEnabling}
         onConfirm={handleConfirmEnableDisable}
+      />
+
+      {/* Schedule Dialog */}
+      <ScheduleDialog
+        open={scheduleDialog.open}
+        onClose={closeScheduleDialog}
+        job={scheduleDialog.job}
+        scheduleData={scheduleData}
+        onSave={handleSaveScheduleFromDialog}
+        darkMode={darkMode}
+        saving={scheduleDialog.job ? (scheduleSaving[scheduleDialog.job.JOBFLWID] || false) : false}
       />
 
       {/* Notification Snackbar */}
@@ -1582,7 +2334,7 @@ const ExecuteJobDialog = ({ open, onClose, job, onConfirm }) => {
         loadType,
         startDate: loadType === 'history' ? startDate : null,
         endDate: loadType === 'history' ? endDate : null,
-        truncateLoad: loadType === 'history' ? truncateLoad : false
+        truncateLoad: truncateLoad // Available for both regular and history load
       };
       
       // Pass the reset callback along with the data
@@ -1716,10 +2468,32 @@ const ExecuteJobDialog = ({ open, onClose, job, onConfirm }) => {
             <Typography variant="body2" sx={{ 
               color: darkMode ? '#A0AEC0' : '#718096',
               fontSize: '0.8125rem',
-              fontStyle: 'italic'
+              fontStyle: 'italic',
+              mb: 2
             }}>
               This will trigger the job execution outside of its scheduled time.
             </Typography>
+            
+            {/* Truncate Load Option for Regular Load */}
+            <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+              <input
+                type="checkbox"
+                id="truncateLoadRegular"
+                checked={truncateLoad}
+                onChange={(e) => setTruncateLoad(e.target.checked)}
+                style={{
+                  marginRight: '8px',
+                  accentColor: darkMode ? '#3B82F6' : '#3B82F6'
+                }}
+              />
+              <label htmlFor="truncateLoadRegular" style={{ 
+                fontSize: '0.875rem',
+                color: darkMode ? '#E2E8F0' : '#4A5568',
+                cursor: 'pointer'
+              }}>
+                Truncate & Load (Clear target table before loading data)
+              </label>
+            </Box>
           </Box>
         )}
 

@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 import datetime
 import io
+import traceback
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
@@ -22,13 +23,20 @@ from backend.modules.helper_functions import (
     check_if_job_already_created,
     create_update_mapping,
     create_update_mapping_detail,
-    validate_logic2,
     validate_all_mapping_details,
     get_error_messages_list,
     call_activate_deactivate_mapping,
     call_delete_mapping,
     call_delete_mapping_details,
 )
+# Import validate_logic2 directly from pkgdwmapr_python to support target_connection parameter
+from backend.modules.mapper.pkgdwmapr_python import validate_logic2
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.logger import info, error, warning
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.logger import info, error, warning  # type: ignore
 
 
 router = APIRouter(tags=["mapper"])
@@ -410,6 +418,8 @@ class ValidateLogicRequest(BaseModel):
     p_valclnm: str
     # Optional: validate against a specific target connection instead of metadata DB
     connection_id: Optional[int] = None
+    # Optional: mapping reference to look up target connection if connection_id not provided
+    mapref: Optional[str] = None
 
 
 @router.post("/validate-logic")
@@ -423,6 +433,7 @@ async def validate_logic(payload: ValidateLogicRequest):
     p_keyclnm = data.get("p_keyclnm")
     p_valclnm = data.get("p_valclnm")
     connection_id = data.get("connection_id")
+    mapref = data.get("mapref")  # Get mapping reference to look up target connection
 
     if not all([p_logic, p_keyclnm, p_valclnm]):
         raise HTTPException(
@@ -433,36 +444,133 @@ async def validate_logic(payload: ValidateLogicRequest):
             ),
         )
 
-    connection = None
+    metadata_connection = None
+    target_connection = None
     try:
-        # If a connection_id is provided, use that target DB for validation;
-        # otherwise, fall back to metadata connection (mirrors extended behavior of validate-sql).
-        if connection_id is not None:
-            try:
-                connection = create_target_connection(connection_id)
-            except Exception as e:
+        # Always create metadata connection for querying DMS_MAPRSQL table
+        try:
+            metadata_connection = create_metadata_connection()
+            if not metadata_connection:
                 raise HTTPException(
                     status_code=500,
-                    detail=(
-                        f"Failed to connect to selected database for validation "
-                        f"(connection_id={connection_id}): {str(e)}"
-                    ),
+                    detail="Failed to create metadata connection"
                 )
+        except Exception as e:
+            error(f"Error creating metadata connection: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create metadata connection: {str(e)}"
+            )
+        
+        # Determine target connection ID:
+        # 1. First, use connection_id if explicitly provided
+        # 2. Otherwise, look up target connection from mapping reference if mapref is provided
+        trgconid = None
+        info(f"validate_logic: Received connection_id={connection_id}, mapref={mapref}")
+        if connection_id is not None and connection_id != 0:
+            trgconid = connection_id
+            info(f"Using provided connection_id={connection_id} for validation")
+        elif mapref:
+            # Look up target connection from mapping reference
+            try:
+                from backend.modules.helper_functions import get_mapping_ref
+                info(f"Looking up target connection for mapref={mapref}")
+                mapping_data = get_mapping_ref(metadata_connection, mapref)
+                if mapping_data:
+                    trgconid = mapping_data.get("TRGCONID") or mapping_data.get("trgconid")
+                    info(f"Mapping data retrieved: TRGCONID={trgconid}, keys={list(mapping_data.keys())}")
+                    if trgconid:
+                        info(f"Found target connection ID {trgconid} from mapping reference {mapref}")
+                    else:
+                        warning(f"No target connection (TRGCONID) configured for mapping reference {mapref}")
+                else:
+                    warning(f"Mapping reference {mapref} not found in database")
+            except Exception as e:
+                error(f"Error looking up target connection for mapref {mapref}: {str(e)}", exc_info=True)
+                # Continue without target connection
+        
+        # Create target connection if we have a connection ID
+        if trgconid:
+            try:
+                info(f"Creating target connection for validation (connection_id={trgconid})")
+                target_connection = create_target_connection(trgconid)
+                if not target_connection:
+                    error(f"create_target_connection returned None for connection_id={trgconid}")
+                    # Don't fail - just log and continue with metadata connection
+                else:
+                    # Verify target connection can access the database
+                    try:
+                        test_cursor = target_connection.cursor()
+                        # Detect database type from connection module
+                        import builtins
+                        module_name = builtins.type(target_connection).__module__
+                        if "psycopg" in module_name or "pg8000" in module_name:
+                            test_cursor.execute("SELECT current_database(), current_schema()")
+                        else:
+                            test_cursor.execute("SELECT sys_context('userenv', 'db_name'), sys_context('userenv', 'current_schema') FROM dual")
+                        test_result = test_cursor.fetchone()
+                        test_cursor.close()
+                        info(f"Successfully created target connection (ID: {trgconid}) for SQL validation. Database info: {test_result}")
+                    except Exception as test_e:
+                        warning(f"Target connection created but test query failed: {str(test_e)}")
+                    info(f"Target connection (ID: {trgconid}) ready for SQL validation")
+            except Exception as e:
+                error(f"Failed to create target connection (ID: {trgconid}): {str(e)}", exc_info=True)
+                # Don't fail the entire request - just log and continue with metadata connection
+                # The validation will use metadata connection instead
+                target_connection = None
         else:
-            connection = create_metadata_connection()
-        is_valid, err = validate_logic2(connection, p_logic, p_keyclnm, p_valclnm)
-        return {
-            "status": "success",
-            "is_valid": is_valid,
-            "message": "Logic is valid" if is_valid == "Y" else err,
-        }
+            warning("No target connection_id available, will use metadata connection for SQL validation (tables may not exist)")
+        
+        # Pass both connections: metadata for metadata queries, target for SQL validation
+        # Log connection details before validation
+        info(f"About to call validate_logic2: target_connection is {'NOT None' if target_connection else 'None'}")
+        if target_connection:
+            try:
+                import builtins
+                target_module = builtins.type(target_connection).__module__
+                metadata_module = builtins.type(metadata_connection).__module__
+                info(f"Connection types - Metadata: {metadata_module}, Target: {target_module}")
+                # Check if they're the same object
+                if target_connection is metadata_connection:
+                    error("CRITICAL: target_connection and metadata_connection are the SAME object!")
+                else:
+                    info("Connection objects are different (good)")
+            except Exception as conn_check_e:
+                warning(f"Could not verify connection objects: {str(conn_check_e)}")
+        
+        try:
+            is_valid, err = validate_logic2(metadata_connection, p_logic, p_keyclnm, p_valclnm, target_connection)
+            return {
+                "status": "success",
+                "is_valid": is_valid,
+                "message": "Logic is valid" if is_valid == "Y" else err,
+            }
+        except Exception as validation_error:
+            error(f"Error in validate_logic2: {str(validation_error)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error during SQL validation: {str(validation_error)}"
+            )
+    except HTTPException:
+        raise
     except Exception as e:
+        error(f"Unexpected error in validate_logic endpoint: {str(e)}")
+        error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500, detail=f"Error validating logic: {str(e)}"
         )
     finally:
-        if connection:
-            connection.close()
+        if metadata_connection:
+            try:
+                metadata_connection.close()
+            except Exception:
+                pass
+        if target_connection:
+            try:
+                target_connection.close()
+            except Exception:
+                pass
 
 
 class ValidateBatchRequest(BaseModel):

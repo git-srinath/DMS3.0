@@ -6,6 +6,12 @@ from pydantic import BaseModel
 
 from backend.database.dbconnect import create_metadata_connection
 
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.logger import info, error
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.logger import info, error  # type: ignore
+
 
 router = APIRouter(tags=["db_connections"])
 
@@ -98,6 +104,16 @@ class SimpleResponse(BaseModel):
     success: bool
     message: Optional[str] = None
     error: Optional[str] = None
+
+
+class TestConnectionRequest(BaseModel):
+    dbtyp: str
+    dbhost: str
+    dbport: Optional[str | int] = None
+    dbsrvnm: Optional[str] = None
+    usrnm: Optional[str] = None
+    passwd: Optional[str] = None
+    constr: Optional[str] = None
 
 
 @router.get("/dbconnections", response_model=DbConnectionsResponse)
@@ -252,9 +268,12 @@ async def create_db_connection(payload: DbConnectionCreate):
             conn.commit()
 
         cursor.close()
-        return SimpleResponse(
-            success=True, message="Connection created successfully", error=None
-        )
+        # Return conid in response to match Flask behavior (frontend expects it)
+        return {
+            "success": True,
+            "conid": conid,
+            "message": "Connection created successfully"
+        }
     except Exception as e:
         if conn and db_type:
             try:
@@ -432,6 +451,146 @@ async def delete_db_connection(conid: int):
         if conn:
             try:
                 conn.close()
+            except Exception:
+                pass
+
+
+@router.post("/dbconnections/test", response_model=SimpleResponse)
+async def test_db_connection(payload: TestConnectionRequest):
+    """Test a database connection with provided credentials"""
+    test_conn = None
+    try:
+        # Validate required fields
+        required_fields = ['dbtyp', 'dbhost', 'dbport', 'dbsrvnm', 'usrnm', 'passwd']
+        missing_fields = [field for field in required_fields if not getattr(payload, field, None)]
+        if missing_fields:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "message": f"Missing required fields: {', '.join(missing_fields)}"
+                }
+            )
+        
+        db_type = payload.dbtyp.upper()
+        host = payload.dbhost
+        port = payload.dbport
+        database = payload.dbsrvnm
+        username = payload.usrnm
+        password = payload.passwd
+        connection_string = payload.constr
+        
+        # Test connection based on database type
+        if db_type in ['ORACLE', 'ORACLEDB']:
+            import oracledb
+            if connection_string:
+                # Use custom connection string if provided
+                test_conn = oracledb.connect(connection_string)
+            else:
+                # Build DSN for Oracle
+                dsn = f"{host}:{port}/{database}"
+                test_conn = oracledb.connect(
+                    user=username,
+                    password=password,
+                    dsn=dsn
+                )
+            # Test with a simple query
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT 1 FROM dual")
+            cursor.fetchone()
+            cursor.close()
+            
+        elif db_type == 'POSTGRESQL':
+            import psycopg2
+            if connection_string:
+                test_conn = psycopg2.connect(connection_string)
+            else:
+                test_conn = psycopg2.connect(
+                    host=host,
+                    port=port,
+                    database=database,
+                    user=username,
+                    password=password
+                )
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            
+        elif db_type == 'MYSQL':
+            import mysql.connector
+            if connection_string:
+                # Parse connection string if provided (basic implementation)
+                test_conn = mysql.connector.connect(connection_string)
+            else:
+                test_conn = mysql.connector.connect(
+                    host=host,
+                    port=port,
+                    database=database,
+                    user=username,
+                    password=password
+                )
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            
+        elif db_type in ['SQLSERVER', 'MSSQL', 'SQL SERVER']:
+            import pyodbc
+            if connection_string:
+                test_conn = pyodbc.connect(connection_string)
+            else:
+                # Build connection string for SQL Server
+                driver = '{ODBC Driver 17 for SQL Server}'  # Common driver
+                conn_str = f"DRIVER={driver};SERVER={host},{port};DATABASE={database};UID={username};PWD={password}"
+                test_conn = pyodbc.connect(conn_str)
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "message": f"Unsupported database type: {db_type}. Supported types: Oracle, PostgreSQL, MySQL, SQL Server"
+                }
+            )
+        
+        info(f"Test connection successful for {db_type} database: {host}:{port}/{database}")
+        return SimpleResponse(
+            success=True,
+            message=f"Connection test successful! Successfully connected to {db_type} database."
+        )
+        
+    except ImportError as e:
+        error(f"Database driver not installed: {str(e)}")
+        missing_module = str(e).split("'")[1] if "'" in str(e) else "unknown"
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "message": f"Database driver not installed. Please install: {missing_module}"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"Test connection failed: {str(e)}")
+        user_message = format_error_message(e)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "success": False,
+                "message": user_message,
+                "error": str(e)
+            }
+        )
+    finally:
+        if test_conn:
+            try:
+                test_conn.close()
             except Exception:
                 pass
 

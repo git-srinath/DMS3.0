@@ -1063,7 +1063,52 @@ def _validate_sql(connection, p_logic, p_keyclnm, p_valclnm, p_flg='Y'):
                 # PostgreSQL: Use EXPLAIN to validate SQL syntax without executing
                 explain_sql = f"EXPLAIN {w_sql}"
                 info(f"Validating SQL with PostgreSQL EXPLAIN: {explain_sql[:200]}")
-                cursor.execute(explain_sql)
+                try:
+                    cursor.execute(explain_sql)
+                    # EXPLAIN succeeded - SQL is valid
+                    p_error = None
+                except Exception as explain_error:
+                    error_str = str(explain_error)
+                    # Check if error is about relation/table not existing
+                    if "does not exist" in error_str.lower() or "relation" in error_str.lower():
+                        # Table doesn't exist - try PREPARE statement for syntax validation
+                        # PREPARE might provide better error messages for syntax vs table existence
+                        info(f"EXPLAIN failed due to missing relation, trying PREPARE for syntax validation: {error_str[:200]}")
+                        try:
+                            # Use a unique statement name
+                            import uuid
+                            stmt_name = f"validate_{uuid.uuid4().hex[:8]}"
+                            prepare_sql = f"PREPARE {stmt_name} AS {w_sql}"
+                            cursor.execute(prepare_sql)
+                            # If successful, clean up the prepared statement
+                            try:
+                                cursor.execute(f"DEALLOCATE {stmt_name}")
+                            except:
+                                pass  # Ignore cleanup errors
+                            # If we got here, syntax is valid (table existence is a separate concern)
+                            info("PREPARE succeeded - SQL syntax is valid (table existence not verified)")
+                            p_error = None
+                        except Exception as prepare_error:
+                            prepare_error_str = str(prepare_error)
+                            # Check if PREPARE also failed due to missing relation
+                            if "does not exist" in prepare_error_str.lower() or "relation" in prepare_error_str.lower():
+                                # Both EXPLAIN and PREPARE failed due to missing tables
+                                # This is expected if validating against wrong database
+                                # Extract table name from error message if possible
+                                table_match = re.search(r'relation\s+"?([^"]+)"?\s+does not exist', error_str, re.IGNORECASE)
+                                table_name = table_match.group(1) if table_match else "unknown"
+                                # Note: We can't determine if target_connection was used here since it's not in scope
+                                # The calling function (validate_logic2) will log this information
+                                p_error = f"Cannot validate: Table/relation '{table_name}' not found in validation database. Ensure you are validating against the correct database connection where tables exist. If using mapper validation, ensure the target connection is properly configured and the mapping reference has TRGCONID set."
+                                info(f"Validation: Table not found in validation database: {error_str[:200]}")
+                            else:
+                                # PREPARE failed with a different error - likely syntax issue
+                                p_error = f"SQL syntax error: {prepare_error_str}"
+                                error(f"SQL validation failed on {db_type} (syntax error): {p_error}")
+                    else:
+                        # EXPLAIN failed for a different reason (likely syntax error)
+                        p_error = f"SQL validation error: {error_str}"
+                        error(f"SQL validation failed on {db_type}: {p_error}")
             else:  # Oracle
                 # Oracle: Try EXPLAIN PLAN first, fallback to parse() if needed
                 try:
@@ -1081,8 +1126,10 @@ def _validate_sql(connection, p_logic, p_keyclnm, p_valclnm, p_flg='Y'):
                         # If both fail, use the original EXPLAIN PLAN error
                         raise explain_error
         except Exception as e:
-            p_error = str(e)
-            error(f"SQL validation failed on {db_type}: {p_error}")
+            # Only set error if not already set by PostgreSQL handling above
+            if p_error is None:
+                p_error = str(e)
+                error(f"SQL validation failed on {db_type}: {p_error}")
         finally:
             cursor.close()
         
@@ -1187,8 +1234,11 @@ def validate_logic2(metadata_connection, p_logic, p_keyclnm, p_valclnm, target_c
     w_procnm = 'VALIDATE_LOGIC2'
     w_parm = f'KeyColumn={p_keyclnm} ValColumn={p_valclnm}:{p_logic}'[:400]
     
-    # Use target_connection for SQL validation if provided, otherwise use metadata_connection
-    sql_validation_connection = target_connection if target_connection else metadata_connection
+    # IMPORTANT: For validation, we should use SOURCE connection (where data comes from), not target connection
+    # Priority: 1) Source connection from SQL code (SQLCONID), 2) Explicit target_connection, 3) metadata_connection
+    source_connection = None
+    sql_validation_connection = None
+    connection_source = "unknown"
     
     cursor = None
     try:
@@ -1196,26 +1246,49 @@ def validate_logic2(metadata_connection, p_logic, p_keyclnm, p_valclnm, target_c
         db_type = _detect_db_type(metadata_connection)
         
         # Check if this is a SQL code reference (query metadata database)
+        # Also get SQLCONID (source connection ID) from the SQL code
         w_rec = None
+        sqlconid = None
         if p_logic and len(p_logic) <= 100:
             dms_maprsql_ref = _get_table_ref(cursor, db_type, 'DMS_MAPRSQL')
             if db_type == "POSTGRESQL":
                 cursor.execute(f"""
-                    SELECT maprsqlcd, maprsql
+                    SELECT maprsqlcd, maprsql, sqlconid
                     FROM {dms_maprsql_ref}
                     WHERE maprsqlcd = %s
                     AND curflg = 'Y'
                 """, (p_logic[:100],))
             else:  # Oracle
                 cursor.execute("""
-                    SELECT maprsqlcd, maprsql
+                    SELECT maprsqlcd, maprsql, sqlconid
                     FROM DMS_MAPRSQL
                     WHERE maprsqlcd = :1
                     AND curflg = 'Y'
                 """, [p_logic[:100]])
             row = cursor.fetchone()
             if row:
-                w_rec = {'maprsqlcd': row[0], 'maprsql': row[1]}
+                w_rec = {'maprsqlcd': row[0], 'maprsql': row[1], 'sqlconid': row[2]}
+                sqlconid = row[2]  # Get source connection ID from SQL code
+                if sqlconid:
+                    info(f"Found SQL code {p_logic[:100]} with source connection ID (SQLCONID): {sqlconid}")
+                    # Create source connection for validation
+                    try:
+                        from backend.database.dbconnect import create_target_connection
+                    except ImportError:
+                        from database.dbconnect import create_target_connection
+                    try:
+                        source_connection = create_target_connection(sqlconid)
+                        if source_connection:
+                            info(f"Successfully created source connection (ID: {sqlconid}) from SQL code for validation")
+                            sql_validation_connection = source_connection
+                            connection_source = "source_connection_from_sql_code"
+                        else:
+                            warning(f"Failed to create source connection (ID: {sqlconid}), will fall back to other options")
+                    except Exception as src_conn_e:
+                        error(f"Error creating source connection (ID: {sqlconid}) from SQL code: {str(src_conn_e)}")
+                        # Fall through to use other connection options
+                else:
+                    info(f"SQL code {p_logic[:100]} has no source connection (SQLCONID is NULL), will use fallback connection")
         
         # Get the actual SQL logic
         if w_rec:
@@ -1223,10 +1296,83 @@ def validate_logic2(metadata_connection, p_logic, p_keyclnm, p_valclnm, target_c
         else:
             w_logic = p_logic
         
-        # Validate the SQL using target_connection (for executing SQL against source/target tables)
-        # Log which connection is being used for SQL validation
+        # Determine which connection to use for validation (priority: source > target > metadata)
+        if not sql_validation_connection:
+            if target_connection:
+                sql_validation_connection = target_connection
+                connection_source = "target_connection"
+                info(f"Using target_connection for validation (source connection not available)")
+            else:
+                sql_validation_connection = metadata_connection
+                connection_source = "metadata_connection"
+                info(f"Using metadata_connection for validation (source and target connections not available)")
+        
+        # Validate the SQL using the determined connection
         validation_db_type = _detect_db_type(sql_validation_connection)
-        info(f"validate_logic2: Using {validation_db_type} connection for SQL validation (target_connection provided: {target_connection is not None})")
+        
+        # Log which connection we're using for validation
+        info(f"validate_logic2: About to validate SQL using {validation_db_type} {connection_source}")
+        try:
+            import builtins
+            conn_module = builtins.type(sql_validation_connection).__module__
+            # Try to get database name for logging
+            try:
+                test_cursor = sql_validation_connection.cursor()
+                if validation_db_type == "POSTGRESQL":
+                    test_cursor.execute("SELECT current_database(), current_schema()")
+                else:
+                    test_cursor.execute("SELECT sys_context('userenv', 'db_name'), sys_context('userenv', 'current_schema') FROM dual")
+                db_info = test_cursor.fetchone()
+                test_cursor.close()
+                info(f"validate_logic2: Using {validation_db_type} {connection_source} (module: {conn_module}, db: {db_info}) for SQL validation")
+            except Exception as db_check_e:
+                info(f"validate_logic2: Using {validation_db_type} {connection_source} (module: {conn_module}) for SQL validation (could not get db info: {str(db_check_e)})")
+        except Exception as log_e:
+            info(f"validate_logic2: Using {validation_db_type} {connection_source} for SQL validation (could not get connection details: {str(log_e)})")
+        
+        # Diagnostic: Verify connection objects are different
+        if source_connection:
+            try:
+                # Try to extract table names from SQL to verify they exist
+                # This is a diagnostic check
+                import re
+                # Look for table references in the SQL (simple pattern matching)
+                table_pattern = r'from\s+([\w\.]+)|FROM\s+([\w\.]+)'
+                tables = re.findall(table_pattern, w_logic, re.IGNORECASE)
+                if tables:
+                    # Flatten the tuple results
+                    table_names = [t[0] or t[1] for t in tables if t[0] or t[1]]
+                    if table_names:
+                        info(f"validate_logic2: SQL references tables: {table_names}")
+                        # Try to verify at least one table exists (for PostgreSQL)
+                        if validation_db_type == "POSTGRESQL":
+                            try:
+                                check_cursor = sql_validation_connection.cursor()
+                                for table_ref in table_names[:1]:  # Check first table only
+                                    # Handle schema.table format
+                                    if '.' in table_ref:
+                                        schema, table = table_ref.split('.', 1)
+                                        check_cursor.execute("""
+                                            SELECT EXISTS (
+                                                SELECT 1 FROM information_schema.tables 
+                                                WHERE table_schema = %s AND table_name = %s
+                                            )
+                                        """, (schema, table))
+                                    else:
+                                        check_cursor.execute("""
+                                            SELECT EXISTS (
+                                                SELECT 1 FROM information_schema.tables 
+                                                WHERE table_name = %s
+                                            )
+                                        """, (table_ref,))
+                                    exists = check_cursor.fetchone()[0]
+                                    info(f"validate_logic2: Table {table_ref} exists in target database: {exists}")
+                                check_cursor.close()
+                            except Exception as check_e:
+                                info(f"validate_logic2: Could not verify table existence: {str(check_e)}")
+            except Exception as diag_e:
+                info(f"validate_logic2: Diagnostic check failed: {str(diag_e)}")
+        
         p_err = _validate_sql(sql_validation_connection, w_logic, p_keyclnm, p_valclnm, 'Y')
         
         if p_err:
@@ -1239,6 +1385,14 @@ def validate_logic2(metadata_connection, p_logic, p_keyclnm, p_valclnm, target_c
     finally:
         if cursor:
             cursor.close()
+        # Close source connection if we created it (and it's different from metadata/target)
+        if source_connection and source_connection is not metadata_connection:
+            if not target_connection or source_connection is not target_connection:
+                try:
+                    source_connection.close()
+                    info("Closed source connection created for validation")
+                except Exception as close_e:
+                    warning(f"Error closing source connection: {str(close_e)}")
 
 def validate_logic_for_mapref(metadata_connection, p_mapref, p_user=None, target_connection=None):
     """
@@ -1673,11 +1827,22 @@ def activate_deactivate_mapping(connection, p_mapref, p_stflg, p_user=None):
             # Create target connection if trgconid exists
             if trgconid:
                 try:
-                    from database.dbconnect import create_target_connection
+                    # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                    try:
+                        from backend.database.dbconnect import create_target_connection
+                    except ImportError:  # When running Flask app.py directly inside backend
+                        from database.dbconnect import create_target_connection  # type: ignore
                     target_connection = create_target_connection(trgconid)
-                    info(f"Using target connection (ID: {trgconid}) for validation")
+                    if target_connection:
+                        info(f"Successfully created target connection (ID: {trgconid}) for SQL validation")
+                    else:
+                        error(f"create_target_connection returned None for connection ID: {trgconid}")
+                        target_connection = None
+                except ImportError as import_err:
+                    error(f"Failed to import create_target_connection: {str(import_err)}")
+                    target_connection = None
                 except Exception as e:
-                    info(f"Could not create target connection (ID: {trgconid}): {str(e)}, will use metadata connection")
+                    error(f"Could not create target connection (ID: {trgconid}): {str(e)}. SQL validation will use metadata connection, which may cause errors if target tables don't exist in metadata database.")
                     target_connection = None
             
             try:

@@ -180,7 +180,9 @@ async def get_all_jobs():
                     s.FRQHH AS "frequency hour",
                     s.FRQMI AS "frequency month",
                     s.STRTDT AS "start date",
-                    s.ENDDT AS "end date"
+                    s.ENDDT AS "end date",
+                    s.LST_RUN_DT AS "last run",
+                    s.NXT_RUN_DT AS "next run"
                 FROM 
                     {dms_job_full} j
                 LEFT JOIN 
@@ -191,13 +193,16 @@ async def get_all_jobs():
                             f2.JOBFLWID,
                             MIN(s2.JOBSCHID) AS JOBSCHID, 
                             MIN(s2.DPND_JOBSCHID) AS DPND_JOBSCHID,
-                            MIN(s2.FRQCD) AS FRQCD,
-                            MIN(s2.FRQDD) AS FRQDD,
-                            MIN(s2.FRQHH) AS FRQHH,
-                            MIN(s2.FRQMI) AS FRQMI,
-                            MIN(s2.STRTDT) AS STRTDT,
-                            MIN(s2.ENDDT) AS ENDDT,
-                            MAX(s2.SCHFLG) AS SCHFLG
+                            -- Prioritize schedule with SCHFLG = 'Y' for frequency fields
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.FRQCD END), MIN(s2.FRQCD)) AS FRQCD,
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.FRQDD END), MIN(s2.FRQDD)) AS FRQDD,
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.FRQHH END), MIN(s2.FRQHH)) AS FRQHH,
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.FRQMI END), MIN(s2.FRQMI)) AS FRQMI,
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.STRTDT END), MIN(s2.STRTDT)) AS STRTDT,
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.ENDDT END), MIN(s2.ENDDT)) AS ENDDT,
+                            MAX(s2.SCHFLG) AS SCHFLG,
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.LST_RUN_DT END), MAX(s2.LST_RUN_DT)) AS LST_RUN_DT,
+                            COALESCE(MAX(CASE WHEN s2.SCHFLG = 'Y' THEN s2.NXT_RUN_DT END), MAX(s2.NXT_RUN_DT)) AS NXT_RUN_DT
                         FROM 
                             {dms_jobsch_full} s2
                         INNER JOIN
@@ -237,7 +242,9 @@ async def get_all_jobs():
                     s.FRQHH AS "frequency hour",
                     s.FRQMI AS "frequency month",
                     s.STRTDT AS "start date",
-                    s.ENDDT AS "end date"
+                    s.ENDDT AS "end date",
+                    s.LST_RUN_DT AS "last run",
+                    s.NXT_RUN_DT AS "next run"
                 FROM 
                     {schema_prefix}DMS_JOB j
                 LEFT JOIN 
@@ -254,7 +261,9 @@ async def get_all_jobs():
                             MIN(s2.FRQMI) AS FRQMI,
                             MIN(s2.STRTDT) AS STRTDT,
                             MIN(s2.ENDDT) AS ENDDT,
-                            MAX(s2.SCHFLG) AS SCHFLG
+                            MAX(s2.SCHFLG) AS SCHFLG,
+                            MAX(s2.LST_RUN_DT) AS LST_RUN_DT,
+                            MAX(s2.NXT_RUN_DT) AS NXT_RUN_DT
                         FROM 
                             {schema_prefix}DMS_JOBSCH s2
                         INNER JOIN
@@ -475,7 +484,9 @@ async def get_job_schedule_details(job_flow_id: str):
                     STFLG,
                     DPND_JOBSCHID,
                     RECCRDT,
-                    RECUPDT 
+                    RECUPDT,
+                    LST_RUN_DT,
+                    NXT_RUN_DT
                 FROM {dms_jobsch_full} 
                 WHERE CURFLG ='Y' AND JOBFLWID=%s
             """
@@ -494,7 +505,9 @@ async def get_job_schedule_details(job_flow_id: str):
                     STFLG,
                     DPND_JOBSCHID,
                     RECCRDT,
-                    RECUPDT 
+                    RECUPDT,
+                    LST_RUN_DT,
+                    NXT_RUN_DT
                 FROM DMS_JOBSCH 
                 WHERE CURFLG ='Y' AND JOBFLWID=:job_flow_id
             """
@@ -506,12 +519,37 @@ async def get_job_schedule_details(job_flow_id: str):
             job_dict: Dict[str, Any] = {}
             for i, column in enumerate(columns):
                 value = row[i]
-                if isinstance(value, (int, float)):
-                    job_dict[column] = str(value)
+                if value is None:
+                    job_dict[column] = None
+                elif isinstance(value, (int, float)):
+                    # For numeric fields like FRQHH, FRQMI, keep as number if it's a frequency component
+                    if column in ["FRQHH", "FRQMI"]:
+                        job_dict[column] = int(value) if isinstance(value, float) and value.is_integer() else value
+                    else:
+                        job_dict[column] = str(value)
                 elif hasattr(value, "isoformat"):
+                    # For date/datetime fields, convert to ISO format string
                     job_dict[column] = value.isoformat()
                 else:
-                    job_dict[column] = str(value) if value is not None else ""
+                    job_dict[column] = str(value)
+
+            # If next run date is missing but we have frequency info, compute it on the fly
+            if not job_dict.get("NXT_RUN_DT") and job_dict.get("FRQCD"):
+                try:
+                    computed_next = _calculate_next_run_time(
+                        job_dict.get("FRQCD"),
+                        job_dict.get("FRQDD"),
+                        _optional_int(job_dict.get("FRQHH")),
+                        _optional_int(job_dict.get("FRQMI")),
+                        _parse_date(job_dict.get("STRTDT") or job_dict.get("STRT_DT")),
+                        _parse_date(job_dict.get("ENDDT") or job_dict.get("END_DT")),
+                        os.getenv("DMS_TIMEZONE", "UTC"),
+                    )
+                    if computed_next:
+                        job_dict["NXT_RUN_DT"] = computed_next.isoformat()
+                except Exception as _:
+                    # Best-effort; leave as-is if calculation fails
+                    pass
             job_schedule_details.append(job_dict)
 
         return job_schedule_details
@@ -697,6 +735,153 @@ async def enable_disable_job(payload: EnableDisableJobRequest):
             conn.close()
 
 
+class ToggleJobStatusRequest(BaseModel):
+    MAPREF: str
+    STFLG: str  # 'A' for active, 'N' for inactive
+
+
+@router.post("/toggle_job_status")
+async def toggle_job_status(payload: ToggleJobStatusRequest):
+    """
+    Toggle job active/inactive status by updating STFLG in DMS_JOB, DMS_JOBFLW, and DMS_JOBSCH tables.
+    Mirrors Flask endpoint: POST /job/toggle_job_status
+    """
+    data = payload.model_dump()
+    mapref = data.get("MAPREF")
+    stflg = data.get("STFLG")
+
+    if not mapref or stflg not in ["A", "N"]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "success": False,
+                "message": "Invalid or missing parameters. MAPREF and STFLG (A or N) are required.",
+            },
+        )
+
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+        schema = os.getenv("DMS_SCHEMA", "TRG")
+
+        try:
+            # Get table references
+            if db_type == "POSTGRESQL":
+                schema_lower = schema.lower() if schema else "public"
+                dms_job_table = get_postgresql_table_name(cursor, schema_lower, "DMS_JOB")
+                dms_jobflw_table = get_postgresql_table_name(
+                    cursor, schema_lower, "DMS_JOBFLW"
+                )
+                dms_jobsch_table = get_postgresql_table_name(
+                    cursor, schema_lower, "DMS_JOBSCH"
+                )
+                dms_job_ref = (
+                    f'"{dms_job_table}"'
+                    if dms_job_table != dms_job_table.lower()
+                    else dms_job_table
+                )
+                dms_jobflw_ref = (
+                    f'"{dms_jobflw_table}"'
+                    if dms_jobflw_table != dms_jobflw_table.lower()
+                    else dms_jobflw_table
+                )
+                dms_jobsch_ref = (
+                    f'"{dms_jobsch_table}"'
+                    if dms_jobsch_table != dms_jobsch_table.lower()
+                    else dms_jobsch_table
+                )
+                schema_prefix = f"{schema_lower}." if schema else ""
+                dms_job_full = f"{schema_prefix}{dms_job_ref}"
+                dms_jobflw_full = f"{schema_prefix}{dms_jobflw_ref}"
+                dms_jobsch_full = f"{schema_prefix}{dms_jobsch_ref}"
+
+                # Update DMS_JOB
+                cursor.execute(
+                    f"""
+                    UPDATE {dms_job_full}
+                    SET stflg = %s, recupdt = CURRENT_TIMESTAMP
+                    WHERE mapref = %s AND curflg = 'Y'
+                    """,
+                    (stflg, mapref),
+                )
+
+                # Update DMS_JOBFLW
+                cursor.execute(
+                    f"""
+                    UPDATE {dms_jobflw_full}
+                    SET stflg = %s, recupdt = CURRENT_TIMESTAMP
+                    WHERE mapref = %s AND curflg = 'Y'
+                    """,
+                    (stflg, mapref),
+                )
+
+                # Update DMS_JOBSCH - update all active schedules for this mapref
+                cursor.execute(
+                    f"""
+                    UPDATE {dms_jobsch_full}
+                    SET stflg = %s, recupdt = CURRENT_TIMESTAMP
+                    WHERE mapref = %s AND curflg = 'Y'
+                    """,
+                    (stflg, mapref),
+                )
+            else:  # Oracle
+                schema_prefix = f"{schema}." if schema else ""
+                cursor.execute(
+                    f"""
+                    UPDATE {schema_prefix}DMS_JOB
+                    SET stflg = :stflg, recupdt = SYSTIMESTAMP
+                    WHERE mapref = :mapref AND curflg = 'Y'
+                    """,
+                    {"stflg": stflg, "mapref": mapref},
+                )
+                cursor.execute(
+                    f"""
+                    UPDATE {schema_prefix}DMS_JOBFLW
+                    SET stflg = :stflg, recupdt = SYSTIMESTAMP
+                    WHERE mapref = :mapref AND curflg = 'Y'
+                    """,
+                    {"stflg": stflg, "mapref": mapref},
+                )
+                # Update DMS_JOBSCH - update all active schedules for this mapref
+                cursor.execute(
+                    f"""
+                    UPDATE {schema_prefix}DMS_JOBSCH
+                    SET stflg = :stflg, recupdt = SYSTIMESTAMP
+                    WHERE mapref = :mapref AND curflg = 'Y'
+                    """,
+                    {"stflg": stflg, "mapref": mapref},
+                )
+
+            conn.commit()
+            status_text = "activated" if stflg == "A" else "deactivated"
+            return {"success": True, "message": f"Job {status_text} successfully"}
+        except Exception as exc:
+            conn.rollback()
+            error(f"Error updating job status: {exc}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "success": False,
+                    "message": f"Failed to update job status: {str(exc)}",
+                },
+            )
+        finally:
+            cursor.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        error(f"Error in toggle_job_status: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"An error occurred: {str(exc)}"},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
 # ----- Immediate / history job execution -----
 
 
@@ -708,13 +893,18 @@ class ScheduleJobImmediatelyRequest(BaseModel):
     truncateLoad: Optional[str] = "N"
 
 
-def _call_schedule_regular_job_async(p_mapref: str):
+def _call_schedule_regular_job_async(p_mapref: str, truncate_load: str = "N"):
     conn = None
     try:
         conn = create_metadata_connection()
         service = JobSchedulerService(conn)
-        request_id = service.queue_immediate_job(ImmediateJobRequest(mapref=p_mapref))
-        return True, f"Job {p_mapref} queued for immediate execution (request_id={request_id})"
+        # Pass truncate_flag in params for regular load
+        params = {"truncate_flag": truncate_load} if truncate_load == "Y" else {}
+        request_id = service.queue_immediate_job(
+            ImmediateJobRequest(mapref=p_mapref, params=params)
+        )
+        truncate_msg = " (with truncate)" if truncate_load == "Y" else ""
+        return True, f"Job {p_mapref} queued for immediate execution{truncate_msg} (request_id={request_id})"
     except SchedulerError as exc:
         return False, str(exc)
     except Exception as exc:
@@ -801,7 +991,7 @@ async def schedule_job_immediately(payload: ScheduleJobImmediatelyRequest):
                 p_mapref, start_date, end_date, truncate_load
             )
         else:
-            success, message = _call_schedule_regular_job_async(p_mapref)
+            success, message = _call_schedule_regular_job_async(p_mapref, truncate_load)
 
         return {"success": success, "message": message}
     except HTTPException:

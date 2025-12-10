@@ -630,11 +630,15 @@ def validate_logic_in_db(connection, p_logic, p_keyclnm, p_valclnm):
 
 
 
-def validate_logic2(connection, p_logic, p_keyclnm, p_valclnm):
-
+def validate_logic2(connection, p_logic, p_keyclnm, p_valclnm, target_connection=None):
+    """
+    Wrapper for validate_logic2 that supports target_connection parameter.
+    For backward compatibility, if target_connection is not provided, uses connection for both metadata and validation.
+    """
     try:
         # Call Python function instead of PL/SQL package
-        is_valid, error_message = pkgdwmapr.validate_logic2(connection, p_logic, p_keyclnm, p_valclnm)
+        # If target_connection is provided, use it for validation; otherwise use connection for both
+        is_valid, error_message = pkgdwmapr.validate_logic2(connection, p_logic, p_keyclnm, p_valclnm, target_connection)
         
         return is_valid, error_message
     

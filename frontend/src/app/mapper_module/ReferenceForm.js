@@ -1521,6 +1521,8 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
             p_logic: currentRow.logic,
             p_keyclnm: currentRow.keyColumn,
             p_valclnm: currentRow.valColumn,
+            // Send mapping reference so backend can look up target connection if needed
+            ...(formData.reference ? { mapref: formData.reference } : {}),
             // Use the selected target connection for validation when available
             ...(formData.targetConnectionId
               ? { connection_id: formData.targetConnectionId }
@@ -1583,7 +1585,7 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
         [index]: getApiErrorMessage(error, 'Error validating logic'),
       }))
     }
-  }, [isJobCreated])
+  }, [formData.reference, formData.targetConnectionId])
 
   // Add back the areAllRowsValid function
   const areAllRowsValid = () => {

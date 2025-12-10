@@ -23,6 +23,7 @@ try:
         _detect_db_type,
         get_postgresql_table_name,
     )
+    from backend.modules.jobs.scheduler_frequency import build_trigger
 except ImportError:  # Fallback for Flask-style imports
     from modules.logger import info, error, warning  # type: ignore
     from modules.common.id_provider import next_id as get_next_id  # type: ignore
@@ -30,6 +31,7 @@ except ImportError:  # Fallback for Flask-style imports
         _detect_db_type,
         get_postgresql_table_name,
     )
+    from modules.jobs.scheduler_frequency import build_trigger  # type: ignore
 import os
 
 ALLOWED_FREQUENCY_CODES = {"ID", "DL", "WK", "FN", "MN", "HY", "YR"}
@@ -137,6 +139,123 @@ def _serialize_payload(payload: Dict[str, Any]) -> str:
     return json.dumps(payload, default=str)
 
 
+def _calculate_next_run_time(
+    frequency_code: str,
+    frequency_day: Optional[str],
+    frequency_hour: Optional[int],
+    frequency_minute: Optional[int],
+    start_date: Optional[date],
+    end_date: Optional[date],
+    timezone: str = "UTC",
+) -> Optional[datetime]:
+    """
+    Calculate the next run time for a schedule using APScheduler trigger.
+    
+    Args:
+        frequency_code: Frequency code (DL, WK, FN, MN, HY, YR, ID)
+        frequency_day: Day parameter (weekday for WK/FN, day of month for MN/HY/YR)
+        frequency_hour: Hour (0-23)
+        frequency_minute: Minute (0-59)
+        start_date: Start date for the schedule
+        end_date: End date for the schedule
+        timezone: Timezone string (default: UTC)
+    
+    Returns:
+        Next run datetime or None if cannot be calculated
+    """
+    try:
+        from pytz import timezone as tz
+        from datetime import time as dt_time
+        
+        # Get timezone object
+        tz_obj = tz(timezone) if timezone else tz('UTC')
+        now = datetime.now(tz_obj)
+        
+        # Build schedule row dict for build_trigger
+        start_dt = None
+        if start_date:
+            # Combine with hour and minute if provided
+            hour = frequency_hour if frequency_hour is not None else 0
+            minute = frequency_minute if frequency_minute is not None else 0
+            start_dt = datetime.combine(start_date, dt_time(hour, minute))
+            start_dt = tz_obj.localize(start_dt) if start_dt.tzinfo is None else start_dt
+        
+        end_dt = None
+        if end_date:
+            end_dt = datetime.combine(end_date, dt_time(23, 59, 59))
+            end_dt = tz_obj.localize(end_dt) if end_dt.tzinfo is None else end_dt
+        
+        schedule_row = {
+            "FRQCD": frequency_code,
+            "FRQDD": frequency_day,
+            "FRQHH": frequency_hour,
+            "FRQMI": frequency_minute,
+            "STRTDT": start_dt,
+            "ENDDT": end_dt,
+        }
+        
+        # Build trigger
+        trigger = build_trigger(schedule_row, timezone)
+        
+        # Get next fire time from trigger
+        # APScheduler triggers have get_next_fire_time method
+        if hasattr(trigger, 'get_next_fire_time'):
+            try:
+                next_run = trigger.get_next_fire_time(None, now)
+                # Convert to naive datetime if needed (remove timezone for database storage)
+                if next_run and next_run.tzinfo:
+                    next_run = next_run.replace(tzinfo=None)
+                return next_run
+            except Exception as trigger_err:
+                debug(f"Trigger get_next_fire_time failed: {trigger_err}, trying alternative method")
+        
+        # Fallback: If start date is in the future, use it
+        if start_dt and start_dt > now:
+            return start_dt.replace(tzinfo=None) if start_dt.tzinfo else start_dt
+        
+        # If no start date or start date is in past, calculate based on frequency
+        # Fallback calculation based on frequency code
+        if start_dt:
+            # Use start date as base even if in past
+            base_dt = start_dt
+        else:
+            # Use current time as base
+            base_dt = now
+        
+        # Calculate next run based on frequency
+        from datetime import timedelta
+        base_dt_naive = base_dt.replace(tzinfo=None) if base_dt.tzinfo else base_dt
+        
+        if frequency_code == 'DL':  # Daily
+            next_run = base_dt_naive + timedelta(days=1)
+        elif frequency_code == 'WK':  # Weekly
+            next_run = base_dt_naive + timedelta(weeks=1)
+        elif frequency_code == 'FN':  # Fortnightly
+            next_run = base_dt_naive + timedelta(weeks=2)
+        elif frequency_code == 'MN':  # Monthly (approx 30 days)
+            next_run = base_dt_naive + timedelta(days=30)
+        elif frequency_code == 'HY':  # Half-yearly
+            next_run = base_dt_naive + timedelta(days=180)
+        elif frequency_code == 'YR':  # Yearly
+            next_run = base_dt_naive + timedelta(days=365)
+        elif frequency_code == 'ID':  # Interval (default to daily)
+            next_run = base_dt_naive + timedelta(days=1)
+        else:
+            # Default to daily if unknown
+            next_run = base_dt_naive + timedelta(days=1)
+        
+        # Set the time component if provided
+        if frequency_hour is not None and frequency_minute is not None:
+            next_run = next_run.replace(hour=frequency_hour, minute=frequency_minute, second=0, microsecond=0)
+        
+        return next_run
+    except Exception as e:
+        error(f"Error calculating next run time: {e}")
+        import traceback
+        debug(f"Traceback: {traceback.format_exc()}")
+        return None
+
+
 def _generate_numeric_id(cursor, sequence_name: str) -> int:
     """
     Generate surrogate numeric ID using ID provider (supports Oracle/PostgreSQL).
@@ -192,42 +311,119 @@ class JobSchedulerService:
             replaced_jobschid = None
             if active_schedule:
                 replaced_jobschid = active_schedule["JOBSCHID"]
-                cursor.execute(
-                    """
-                    UPDATE DMS_JOBSCH
-                    SET curflg = 'N', recupdt = SYSTIMESTAMP
-                    WHERE jobschid = :jobschid
-                    """,
-                    {"jobschid": replaced_jobschid},
-                )
+                # Get table reference for PostgreSQL (handles case sensitivity)
+                if self.db_type == "POSTGRESQL":
+                    schema_lower = self.schema.lower() if self.schema else 'public'
+                    dms_jobsch_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBSCH')
+                    dms_jobsch_ref = f'"{dms_jobsch_table}"' if dms_jobsch_table != dms_jobsch_table.lower() else dms_jobsch_table
+                    schema_prefix = f'{schema_lower}.' if self.schema else ''
+                    dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
+                    cursor.execute(
+                        f"""
+                        UPDATE {dms_jobsch_full}
+                        SET curflg = 'N', recupdt = CURRENT_TIMESTAMP
+                        WHERE jobschid = %s
+                        """,
+                        (replaced_jobschid,),
+                    )
+                else:  # Oracle
+                    schema_prefix = f'{self.schema}.' if self.schema else ''
+                    cursor.execute(
+                        f"""
+                        UPDATE {schema_prefix}DMS_JOBSCH
+                        SET curflg = 'N', recupdt = SYSTIMESTAMP
+                        WHERE jobschid = :jobschid
+                        """,
+                        {"jobschid": replaced_jobschid},
+                    )
 
             jobschid = _generate_numeric_id(cursor, "DMS_JOBSCHSEQ")
-            cursor.execute(
-                """
-                INSERT INTO DMS_JOBSCH (
-                    jobschid, jobflwid, mapref,
-                    frqcd, frqdd, frqhh, frqmi,
-                    strtdt, enddt, stflg,
-                    reccrdt, recupdt, curflg, schflg
-                ) VALUES (
-                    :jobschid, :jobflwid, :mapref,
-                    :frqcd, :frqdd, :frqhh, :frqmi,
-                    :strtdt, :enddt, 'N',
-                    SYSTIMESTAMP, SYSTIMESTAMP, 'Y', 'N'
-                )
-                """,
-                {
-                    "jobschid": jobschid,
-                    "jobflwid": job_flow["JOBFLWID"],
-                    "mapref": request.mapref,
-                    "frqcd": request.frequency_code,
-                    "frqdd": request.frequency_day,
-                    "frqhh": request.frequency_hour,
-                    "frqmi": request.frequency_minute,
-                    "strtdt": request.start_date,
-                    "enddt": request.end_date,
-                },
+            
+            # Get the job's current stflg status to set it in the schedule
+            # Use the job flow's stflg, defaulting to 'A' if not available
+            schedule_stflg = job_flow.get("STFLG", "A")
+            
+            # Calculate next run time
+            timezone = os.getenv('DMS_TIMEZONE', 'UTC')
+            next_run_time = _calculate_next_run_time(
+                request.frequency_code,
+                request.frequency_day,
+                request.frequency_hour,
+                request.frequency_minute,
+                request.start_date,
+                request.end_date,
+                timezone
             )
+            
+            # Get table reference for PostgreSQL (handles case sensitivity)
+            if self.db_type == "POSTGRESQL":
+                schema_lower = self.schema.lower() if self.schema else 'public'
+                dms_jobsch_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBSCH')
+                dms_jobsch_ref = f'"{dms_jobsch_table}"' if dms_jobsch_table != dms_jobsch_table.lower() else dms_jobsch_table
+                schema_prefix = f'{schema_lower}.' if self.schema else ''
+                dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
+                cursor.execute(
+                    f"""
+                    INSERT INTO {dms_jobsch_full} (
+                        jobschid, jobflwid, mapref,
+                        frqcd, frqdd, frqhh, frqmi,
+                        strtdt, enddt, stflg,
+                        reccrdt, recupdt, curflg, schflg,
+                        nxt_run_dt
+                    ) VALUES (
+                        %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'Y', 'N',
+                        %s
+                    )
+                    """,
+                    (
+                        jobschid,
+                        job_flow["JOBFLWID"],
+                        request.mapref,
+                        request.frequency_code,
+                        request.frequency_day,
+                        request.frequency_hour,
+                        request.frequency_minute,
+                        request.start_date,
+                        request.end_date,
+                        schedule_stflg,
+                        next_run_time,
+                    ),
+                )
+            else:  # Oracle
+                schema_prefix = f'{self.schema}.' if self.schema else ''
+                cursor.execute(
+                    f"""
+                    INSERT INTO {schema_prefix}DMS_JOBSCH (
+                        jobschid, jobflwid, mapref,
+                        frqcd, frqdd, frqhh, frqmi,
+                        strtdt, enddt, stflg,
+                        reccrdt, recupdt, curflg, schflg,
+                        nxt_run_dt
+                    ) VALUES (
+                        :jobschid, :jobflwid, :mapref,
+                        :frqcd, :frqdd, :frqhh, :frqmi,
+                        :strtdt, :enddt, :stflg,
+                        SYSTIMESTAMP, SYSTIMESTAMP, 'Y', 'N',
+                        :nxt_run_dt
+                    )
+                    """,
+                    {
+                        "jobschid": jobschid,
+                        "jobflwid": job_flow["JOBFLWID"],
+                        "mapref": request.mapref,
+                        "frqcd": request.frequency_code,
+                        "frqdd": request.frequency_day,
+                        "frqhh": request.frequency_hour,
+                        "frqmi": request.frequency_minute,
+                        "strtdt": request.start_date,
+                        "enddt": request.end_date,
+                        "stflg": schedule_stflg,
+                        "nxt_run_dt": next_run_time,
+                    },
+                )
 
             self.connection.commit()
             info(f"Job schedule created for {request.mapref} (jobschid={jobschid})")
@@ -257,17 +453,34 @@ class JobSchedulerService:
             if not parent_schedule or not child_schedule:
                 raise SchedulerValidationError("Both mappings must have active schedules.")
 
-            cursor.execute(
-                """
-                UPDATE DMS_JOBSCH
-                SET dpnd_jobschid = :parent_jobschid, recupdt = SYSTIMESTAMP
-                WHERE jobschid = :child_jobschid AND curflg = 'Y'
-                """,
-                {
-                    "parent_jobschid": parent_schedule["JOBSCHID"],
-                    "child_jobschid": child_schedule["JOBSCHID"],
-                },
-            )
+            # Get table reference for PostgreSQL (handles case sensitivity)
+            if self.db_type == "POSTGRESQL":
+                schema_lower = self.schema.lower() if self.schema else 'public'
+                dms_jobsch_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBSCH')
+                dms_jobsch_ref = f'"{dms_jobsch_table}"' if dms_jobsch_table != dms_jobsch_table.lower() else dms_jobsch_table
+                schema_prefix = f'{schema_lower}.' if self.schema else ''
+                dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
+                cursor.execute(
+                    f"""
+                    UPDATE {dms_jobsch_full}
+                    SET dpnd_jobschid = %s, recupdt = CURRENT_TIMESTAMP
+                    WHERE jobschid = %s AND curflg = 'Y'
+                    """,
+                    (parent_schedule["JOBSCHID"], child_schedule["JOBSCHID"]),
+                )
+            else:  # Oracle
+                schema_prefix = f'{self.schema}.' if self.schema else ''
+                cursor.execute(
+                    f"""
+                    UPDATE {schema_prefix}DMS_JOBSCH
+                    SET dpnd_jobschid = :parent_jobschid, recupdt = SYSTIMESTAMP
+                    WHERE jobschid = :child_jobschid AND curflg = 'Y'
+                    """,
+                    {
+                        "parent_jobschid": parent_schedule["JOBSCHID"],
+                        "child_jobschid": child_schedule["JOBSCHID"],
+                    },
+                )
             self.connection.commit()
             info(f"Dependency saved: {parent_mapref} -> {child_mapref}")
         except SchedulerError:
@@ -288,14 +501,66 @@ class JobSchedulerService:
             if not schedule:
                 raise SchedulerValidationError(f"No active schedule found for {mapref}.")
             desired_flag = "Y" if action == "E" else "N"
-            cursor.execute(
-                """
-                UPDATE DMS_JOBSCH
-                SET schflg = :schflg, recupdt = SYSTIMESTAMP
-                WHERE jobschid = :jobschid
-                """,
-                {"schflg": desired_flag, "jobschid": schedule["JOBSCHID"]},
-            )
+            
+            # If enabling and next run date is null, recalculate it
+            next_run_dt = None
+            if action == "E" and not schedule.get("NXT_RUN_DT"):
+                timezone = os.getenv('DMS_TIMEZONE', 'UTC')
+                next_run_dt = _calculate_next_run_time(
+                    schedule.get("FRQCD"),
+                    schedule.get("FRQDD"),
+                    schedule.get("FRQHH"),
+                    schedule.get("FRQMI"),
+                    schedule.get("STRTDT").date() if schedule.get("STRTDT") else None,
+                    schedule.get("ENDDT").date() if schedule.get("ENDDT") else None,
+                    timezone
+                )
+            
+            # Get table reference for PostgreSQL (handles case sensitivity)
+            if self.db_type == "POSTGRESQL":
+                schema_lower = self.schema.lower() if self.schema else 'public'
+                dms_jobsch_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBSCH')
+                dms_jobsch_ref = f'"{dms_jobsch_table}"' if dms_jobsch_table != dms_jobsch_table.lower() else dms_jobsch_table
+                schema_prefix = f'{schema_lower}.' if self.schema else ''
+                dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
+                if next_run_dt:
+                    cursor.execute(
+                        f"""
+                        UPDATE {dms_jobsch_full}
+                        SET schflg = %s, nxt_run_dt = %s, recupdt = CURRENT_TIMESTAMP
+                        WHERE jobschid = %s
+                        """,
+                        (desired_flag, next_run_dt, schedule["JOBSCHID"]),
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        UPDATE {dms_jobsch_full}
+                        SET schflg = %s, recupdt = CURRENT_TIMESTAMP
+                        WHERE jobschid = %s
+                        """,
+                        (desired_flag, schedule["JOBSCHID"]),
+                    )
+            else:  # Oracle
+                schema_prefix = f'{self.schema}.' if self.schema else ''
+                if next_run_dt:
+                    cursor.execute(
+                        f"""
+                        UPDATE {schema_prefix}DMS_JOBSCH
+                        SET schflg = :schflg, nxt_run_dt = :nxt_run_dt, recupdt = SYSTIMESTAMP
+                        WHERE jobschid = :jobschid
+                        """,
+                        {"schflg": desired_flag, "nxt_run_dt": next_run_dt, "jobschid": schedule["JOBSCHID"]},
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        UPDATE {schema_prefix}DMS_JOBSCH
+                        SET schflg = :schflg, recupdt = SYSTIMESTAMP
+                        WHERE jobschid = :jobschid
+                        """,
+                        {"schflg": desired_flag, "jobschid": schedule["JOBSCHID"]},
+                    )
             self.connection.commit()
             action_text = "enabled" if action == "E" else "disabled"
             info(f"Schedule {action_text} for {mapref}")
@@ -357,31 +622,68 @@ class JobSchedulerService:
     # Internal helpers
     # ------------------------------------------------------------------ #
     def _fetch_active_job_flow(self, cursor, mapref: str) -> Optional[Dict[str, Any]]:
-        cursor.execute(
-            """
-            SELECT jobflwid, jobid
-            FROM DMS_JOBFLW
-            WHERE mapref = :mapref
-              AND curflg = 'Y'
-              AND stflg = 'A'
-            """,
-            {"mapref": mapref},
-        )
+        # Get table reference for PostgreSQL (handles case sensitivity)
+        if self.db_type == "POSTGRESQL":
+            schema_lower = self.schema.lower() if self.schema else 'public'
+            dms_jobflw_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBFLW')
+            dms_jobflw_ref = f'"{dms_jobflw_table}"' if dms_jobflw_table != dms_jobflw_table.lower() else dms_jobflw_table
+            schema_prefix = f'{schema_lower}.' if self.schema else ''
+            dms_jobflw_full = f'{schema_prefix}{dms_jobflw_ref}'
+            cursor.execute(
+                f"""
+                SELECT jobflwid, jobid, stflg
+                FROM {dms_jobflw_full}
+                WHERE mapref = %s
+                  AND curflg = 'Y'
+                  AND stflg = 'A'
+                """,
+                (mapref,),
+            )
+        else:  # Oracle
+            schema_prefix = f'{self.schema}.' if self.schema else ''
+            cursor.execute(
+                f"""
+                SELECT jobflwid, jobid, stflg
+                FROM {schema_prefix}DMS_JOBFLW
+                WHERE mapref = :mapref
+                  AND curflg = 'Y'
+                  AND stflg = 'A'
+                """,
+                {"mapref": mapref},
+            )
         row = cursor.fetchone()
         if not row:
             return None
-        return {"JOBFLWID": row[0], "JOBID": row[1]}
+        return {"JOBFLWID": row[0], "JOBID": row[1], "STFLG": row[2]}
 
     def _fetch_active_schedule(self, cursor, mapref: str) -> Optional[Dict[str, Any]]:
-        cursor.execute(
-            """
-            SELECT jobschid, frqcd, frqdd, frqhh, frqmi, strtdt, enddt, schflg
-            FROM DMS_JOBSCH
-            WHERE mapref = :mapref
-              AND curflg = 'Y'
-            """,
-            {"mapref": mapref},
-        )
+        # Get table reference for PostgreSQL (handles case sensitivity)
+        if self.db_type == "POSTGRESQL":
+            schema_lower = self.schema.lower() if self.schema else 'public'
+            dms_jobsch_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBSCH')
+            dms_jobsch_ref = f'"{dms_jobsch_table}"' if dms_jobsch_table != dms_jobsch_table.lower() else dms_jobsch_table
+            schema_prefix = f'{schema_lower}.' if self.schema else ''
+            dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
+            cursor.execute(
+                f"""
+                SELECT jobschid, frqcd, frqdd, frqhh, frqmi, strtdt, enddt, schflg, nxt_run_dt
+                FROM {dms_jobsch_full}
+                WHERE mapref = %s
+                  AND curflg = 'Y'
+                """,
+                (mapref,),
+            )
+        else:  # Oracle
+            schema_prefix = f'{self.schema}.' if self.schema else ''
+            cursor.execute(
+                f"""
+                SELECT jobschid, frqcd, frqdd, frqhh, frqmi, strtdt, enddt, schflg, nxt_run_dt
+                FROM {schema_prefix}DMS_JOBSCH
+                WHERE mapref = :mapref
+                  AND curflg = 'Y'
+                """,
+                {"mapref": mapref},
+            )
         row = cursor.fetchone()
         if not row:
             return None
@@ -394,6 +696,7 @@ class JobSchedulerService:
             "STRTDT": row[5],
             "ENDDT": row[6],
             "SCHFLG": row[7],
+            "NXT_RUN_DT": row[8] if len(row) > 8 else None,
         }
 
     @staticmethod

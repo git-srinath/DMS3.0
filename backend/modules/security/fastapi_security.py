@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
 from typing import List
+import threading
 
 # Support both FastAPI (package import) and legacy Flask (relative import) contexts
 try:
@@ -41,18 +42,35 @@ except NameError:
 
 router = APIRouter(tags=["security"])
 
+# Thread-safe initialization flag
+_initialization_lock = threading.Lock()
+_table_initialized = False
 
-# Initialize table on module load
+
+# Initialize table - deferred until first use to avoid multiprocessing issues on Windows
 def _initialize_table():
-    session = Session()
-    try:
-        ensure_user_module_table(session)
-        session.commit()
-    finally:
-        session.close()
+    """Initialize the user_module table - only called when actually needed"""
+    global _table_initialized
+    if _table_initialized:
+        return
+    
+    with _initialization_lock:
+        # Double-check after acquiring lock
+        if _table_initialized:
+            return
+        
+        session = Session()
+        try:
+            ensure_user_module_table(session)
+            session.commit()
+            _table_initialized = True
+        finally:
+            session.close()
 
 
-_initialize_table()
+# Defer initialization - don't run at module import time
+# This prevents multiprocessing/connection errors when importing in FastAPI context with --reload
+# The table will be initialized on first route access instead
 
 
 # FastAPI dependency to get current user
@@ -105,6 +123,8 @@ async def list_modules(user=Depends(admin_user)):
     Returns the modules that can be assigned to users.
     Admin only.
     """
+    # Ensure table is initialized on first access
+    _initialize_table()
     return {'modules': AVAILABLE_MODULES}
 
 
@@ -114,6 +134,8 @@ async def get_user_access(
     admin_user_obj=Depends(admin_user)
 ):
     """Get user access modules (admin only)"""
+    # Ensure table is initialized on first access
+    _initialize_table()
     session = Session()
     try:
         # Validate user exists
@@ -138,6 +160,8 @@ async def update_user_access(
     admin_user_obj=Depends(admin_user)
 ):
     """Update user access modules (admin only)"""
+    # Ensure table is initialized on first access
+    _initialize_table()
     if not isinstance(payload.modules, list):
         raise HTTPException(status_code=400, detail="Modules payload must be a list")
 
@@ -206,6 +230,8 @@ async def update_user_access(
 @router.get("/my-modules")
 async def get_current_user_modules(user=Depends(get_current_user)):
     """Get current user's enabled modules"""
+    # Ensure table is initialized on first access
+    _initialize_table()
     session = Session()
     try:
         modules = get_user_module_states(session, user.user_id)
