@@ -17,8 +17,19 @@ from email import encoders
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
-from modules.logger import info, error, debug
-from modules.reports.report_service import ReportMetadataService, ReportServiceError
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.logger import info, error, debug
+    from backend.modules.reports.report_service import (
+        ReportMetadataService,
+        ReportServiceError,
+    )
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.logger import info, error, debug  # type: ignore
+    from modules.reports.report_service import (  # type: ignore
+        ReportMetadataService,
+        ReportServiceError,
+    )
 
 
 class ReportExecutorConfig:

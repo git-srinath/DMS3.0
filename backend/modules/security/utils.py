@@ -38,6 +38,13 @@ AVAILABLE_MODULES = [
         'path': '/dashboard',
         'group': 'report_management',
     },
+    {
+        'key': 'reports',
+        'title': 'Reports',
+        'description': 'Define report mappings and preview outputs.',
+        'path': '/reports',
+        'group': 'report_management',
+    },
 ]
 
 AVAILABLE_MODULE_KEYS = {module['key'] for module in AVAILABLE_MODULES}

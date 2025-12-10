@@ -1,0 +1,1 @@
+python -m backend.modules.jobs.scheduler_service

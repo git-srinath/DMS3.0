@@ -1,5 +1,8 @@
 Flask
 flask_cors
+fastapi
+uvicorn
+email-validator
 oracledb
 psycopg2-binary
 sqlalchemy

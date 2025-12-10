@@ -30,6 +30,7 @@ const InlineScheduleConfig = ({
   scheduleData = {},
   handleScheduleChange,
   handleSaveSchedule,
+  handleScheduleJob,
   darkMode,
   scheduleSaving
 }) => {
@@ -250,6 +251,39 @@ const InlineScheduleConfig = ({
           </IconButton>
         </span>
       </Tooltip>
+
+      {/* Schedule Button - Save and Enable */}
+      {handleScheduleJob && (
+        <Tooltip title="Schedule Job (Save and Enable)">
+          <span>
+            <Button
+              onClick={() => handleScheduleJob(jobId)}
+              disabled={!canSaveSchedule || scheduleSaving?.[jobId]}
+              variant="contained"
+              color="primary"
+              size="small"
+              startIcon={scheduleSaving?.[jobId] ? (
+                <CircularProgress size={14} color="inherit" />
+              ) : (
+                <ScheduleIcon fontSize="small" />
+              )}
+              sx={{
+                fontSize: '0.75rem',
+                height: '32px',
+                px: 1.5,
+                borderRadius: '4px',
+                textTransform: 'none',
+                fontWeight: 600,
+                '&.Mui-disabled': {
+                  opacity: 0.4
+                }
+              }}
+            >
+              Schedule
+            </Button>
+          </span>
+        </Tooltip>
+      )}
       
       {/* Modals */}
       <TimeParameterModal

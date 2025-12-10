@@ -9,6 +9,12 @@ import InactivityLogoutModal from '../../components/InactivityLogoutModal';
 
 const AuthContext = createContext();
 
+// Allow auth endpoints to point to FastAPI separately from the rest of the API.
+// By default this matches API_BASE_URL (Flask), but you can override with
+// NEXT_PUBLIC_AUTH_API_URL (e.g. http://localhost:8000 for FastAPI auth).
+const AUTH_API_BASE_URL =
+  process.env.NEXT_PUBLIC_AUTH_API_URL || API_BASE_URL;
+
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
@@ -49,7 +55,7 @@ export const AuthProvider = ({ children }) => {
   // Function to verify token
   const verifyToken = async (token) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/verify-token`, {
+      const response = await fetch(`${AUTH_API_BASE_URL}/auth/verify-token`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -244,17 +250,18 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (username, password, recaptchaToken) => {
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/login`, 
-        { 
-          username, 
+      const response = await axios.post(
+        `${AUTH_API_BASE_URL}/auth/login`,
+        {
+          username,
           password,
-          recaptchaToken
+          recaptchaToken,
         },
         {
           headers: {
             'Content-Type': 'application/json',
           },
-          withCredentials: true
+          withCredentials: true,
         }
       );
 
@@ -335,7 +342,7 @@ export const AuthProvider = ({ children }) => {
 
   const forgotPassword = async (email) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/forgot-password`, {
+      const response = await fetch(`${AUTH_API_BASE_URL}/auth/forgot-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -357,7 +364,7 @@ export const AuthProvider = ({ children }) => {
 
   const resetPassword = async (token, newPassword) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/reset-password`, {
+      const response = await fetch(`${AUTH_API_BASE_URL}/auth/reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -403,7 +410,7 @@ export const AuthProvider = ({ children }) => {
       }
       
       const response = await axios.post(
-        `${API_BASE_URL}/auth/change-password-after-login`,
+        `${AUTH_API_BASE_URL}/auth/change-password-after-login`,
         { new_password: newPassword },
         {
           headers: {

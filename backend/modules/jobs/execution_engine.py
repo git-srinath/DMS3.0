@@ -9,13 +9,34 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import oracledb
-from modules.common.db_table_utils import get_postgresql_table_name
 
-from database.dbconnect import create_metadata_connection
-from modules.common.id_provider import next_id as get_next_id
-from modules.logger import info, warning, error, debug
-from modules.jobs.pkgdwprc_python import JobRequestType, SchedulerRepositoryError
-from modules.jobs.scheduler_models import QueueRequest
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.common.db_table_utils import (
+        get_postgresql_table_name,
+        _detect_db_type,
+    )
+    from backend.database.dbconnect import create_metadata_connection
+    from backend.modules.common.id_provider import next_id as get_next_id
+    from backend.modules.logger import info, warning, error, debug
+    from backend.modules.jobs.pkgdwprc_python import (
+        JobRequestType,
+        SchedulerRepositoryError,
+    )
+    from backend.modules.jobs.scheduler_models import QueueRequest
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.common.db_table_utils import (  # type: ignore
+        get_postgresql_table_name,
+        _detect_db_type,
+    )
+    from database.dbconnect import create_metadata_connection  # type: ignore
+    from modules.common.id_provider import next_id as get_next_id  # type: ignore
+    from modules.logger import info, warning, error, debug  # type: ignore
+    from modules.jobs.pkgdwprc_python import (  # type: ignore
+        JobRequestType,
+        SchedulerRepositoryError,
+    )
+    from modules.jobs.scheduler_models import QueueRequest  # type: ignore
 
 
 def _read_lob(value):
@@ -86,7 +107,11 @@ class JobExecutionEngine:
             debug(f"SQLCONID from job flow: {sqlconid}")
             if sqlconid:
                 try:
-                    from database.dbconnect import create_target_connection
+                    # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                    try:
+                        from backend.database.dbconnect import create_target_connection
+                    except ImportError:  # When running Flask app.py directly inside backend
+                        from database.dbconnect import create_target_connection  # type: ignore
                     source_conn = create_target_connection(sqlconid)
                     if source_conn:
                         info(f"Using source connection (ID: {sqlconid}) for SELECT queries")
@@ -104,12 +129,15 @@ class JobExecutionEngine:
             debug(f"TRGCONID from job flow: {trgconid}")
             if trgconid:
                 try:
-                    from database.dbconnect import create_target_connection
+                    # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                    try:
+                        from backend.database.dbconnect import create_target_connection
+                    except ImportError:  # When running Flask app.py directly inside backend
+                        from database.dbconnect import create_target_connection  # type: ignore
                     target_conn = create_target_connection(trgconid)
                     if target_conn:
                         # Verify the target connection can access the schema
                         try:
-                            from modules.common.db_table_utils import _detect_db_type
                             target_db_type = _detect_db_type(target_conn)
                             test_cursor = target_conn.cursor()
                             
@@ -138,6 +166,36 @@ class JobExecutionEngine:
                     debug(f"Target connection creation traceback: {traceback.format_exc()}")
             else:
                 debug("No TRGCONID specified in job flow, using metadata connection for target operations")
+
+            # Handle truncate & load if requested
+            truncate_flag = params.get("truncate_flag", "N")
+            if truncate_flag == "Y":
+                target_schema = job_flow.get("TRGSCHM") or os.getenv("TARGET_SCHEMA") or os.getenv("DMS_SCHEMA") or ""
+                target_table = job_flow.get("TRGTBNM")
+                if target_table:
+                    target_db = target_conn if target_conn else conn
+                    try:
+                        target_db_type = _detect_db_type(target_db)
+                        t_cursor = target_db.cursor()
+                        if target_db_type == "POSTGRESQL":
+                            # Use quoted identifiers to handle case-sensitive names
+                            full_name = f'"{target_schema}"."{target_table}"' if target_schema else f'"{target_table}"'
+                            t_cursor.execute(f"TRUNCATE TABLE {full_name}")
+                        else:  # Oracle
+                            full_name = f"{target_schema}.{target_table}" if target_schema else target_table
+                            t_cursor.execute(f"TRUNCATE TABLE {full_name}")
+                        target_db.commit()
+                        info(f"[truncate] Cleared target table before load: {full_name}")
+                    except Exception as trunc_err:
+                        error(f"[truncate] Failed to truncate target table {target_schema}.{target_table}: {trunc_err}")
+                        raise
+                    finally:
+                        try:
+                            t_cursor.close()
+                        except Exception:
+                            pass
+                else:
+                    warning("[truncate] Target table name missing; skip truncate.")
 
             context = self._create_process_log(cursor, job_flow, params)
             conn.commit()
@@ -376,7 +434,6 @@ class JobExecutionEngine:
                                     debug(f"Using TARGET connection for old signature")
                                     # Verify target connection schema access
                                     try:
-                                        from modules.common.db_table_utils import _detect_db_type
                                         target_db_type = _detect_db_type(target_conn)
                                         test_cursor = target_conn.cursor()
                                         
@@ -614,7 +671,17 @@ class JobExecutionEngine:
         return {"status": "SUCCESS", "runs": runs}
 
     def _execute_report_job(self, request: QueueRequest) -> Dict[str, Any]:
-        from modules.reports.report_service import ReportMetadataService, ReportServiceError
+        # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+        try:
+            from backend.modules.reports.report_service import (
+                ReportMetadataService,
+                ReportServiceError,
+            )
+        except ImportError:  # When running Flask app.py directly inside backend
+            from modules.reports.report_service import (  # type: ignore
+                ReportMetadataService,
+                ReportServiceError,
+            )
 
         payload = request.payload or {}
         report_id = payload.get("reportId") or self._extract_report_id(request.mapref)
@@ -665,7 +732,6 @@ class JobExecutionEngine:
     # ------------------------------------------------------------------ #
     def _load_job_flow(self, cursor, mapref: str) -> Optional[Dict[str, Any]]:
         # Detect database type
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         
@@ -704,6 +770,7 @@ class JobExecutionEngine:
         if db_type == "POSTGRESQL":
             query = f"""
                 SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
+                       j.trgschm, j.trgtbnm, j.trgtbtyp,
                        (SELECT s.sqlconid 
                         FROM {dms_jobdtl_full} jd
                         LEFT JOIN {dms_maprsql_full} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
@@ -719,6 +786,7 @@ class JobExecutionEngine:
         else:
             query = f"""
                 SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
+                       j.trgschm, j.trgtbnm, j.trgtbtyp,
                        (SELECT s.sqlconid 
                         FROM {dms_jobdtl_full} jd
                         LEFT JOIN {dms_maprsql_full} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
@@ -795,10 +863,13 @@ class JobExecutionEngine:
             "MAPREF": row[2],
             "DWLOGIC": _read_lob(row[3]),
             "TRGCONID": row[4] if len(row) > 4 else None,  # Target connection ID
-            "SQLCONID": row[5] if len(row) > 5 else None,  # Source connection ID
+            "TRGSCHM": row[5] if len(row) > 5 else None,
+            "TRGTBNM": row[6] if len(row) > 6 else None,
+            "TRGTBTYP": row[7] if len(row) > 7 else None,
+            "SQLCONID": row[8] if len(row) > 8 else None,  # Source connection ID
         }
         
-        debug(f"Loaded job flow: JOBFLWID={job_flow['JOBFLWID']}, JOBID={job_flow['JOBID']}, MAPREF={job_flow['MAPREF']}, TRGCONID={job_flow['TRGCONID']}, SQLCONID={job_flow['SQLCONID']}")
+        debug(f"Loaded job flow: JOBFLWID={job_flow['JOBFLWID']}, JOBID={job_flow['JOBID']}, MAPREF={job_flow['MAPREF']}, TRGCONID={job_flow['TRGCONID']}, TRGSCHM={job_flow.get('TRGSCHM')}, TRGTBNM={job_flow.get('TRGTBNM')}, SQLCONID={job_flow['SQLCONID']}")
         logic_length = len(job_flow['DWLOGIC']) if job_flow['DWLOGIC'] else 0
         debug(f"DWLOGIC length: {logic_length} characters")
         
@@ -806,7 +877,6 @@ class JobExecutionEngine:
 
     def _create_process_log(self, cursor, job_flow: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
         # Detect database type
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         schema = (os.getenv("DMS_SCHEMA", "")).strip()
@@ -1017,7 +1087,6 @@ class JobExecutionEngine:
 
     def _finalize_success(self, cursor, job_flow, context, result):
         # Detect database type for table reference
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         schema = (os.getenv("DMS_SCHEMA", "")).strip()
@@ -1074,6 +1143,85 @@ class JobExecutionEngine:
         if existing_logs:
             return
 
+        # Update last run time and recalculate next run time for the schedule
+        mapref = job_flow.get("MAPREF")
+        if mapref:
+            try:
+                # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                try:
+                    from backend.modules.jobs.pkgdwprc_python import JobSchedulerService, _calculate_next_run_time
+                    from backend.modules.jobs.scheduler_frequency import build_trigger
+                except ImportError:
+                    from modules.jobs.pkgdwprc_python import JobSchedulerService, _calculate_next_run_time  # type: ignore
+                    from modules.jobs.scheduler_frequency import build_trigger  # type: ignore
+                
+                # Get schedule info to recalculate next run
+                schedule_service = JobSchedulerService(connection)
+                schedule = schedule_service._fetch_active_schedule(cursor, mapref)
+                if schedule:
+                    # Update last run time
+                    now = datetime.now()
+                    timezone = os.getenv('DMS_TIMEZONE', 'UTC')
+                    
+                    # Recalculate next run time
+                    next_run_time = _calculate_next_run_time(
+                        schedule.get("FRQCD"),
+                        schedule.get("FRQDD"),
+                        schedule.get("FRQHH"),
+                        schedule.get("FRQMI"),
+                        schedule.get("STRTDT").date() if schedule.get("STRTDT") else None,
+                        schedule.get("ENDDT").date() if schedule.get("ENDDT") else None,
+                        timezone
+                    )
+                    
+                    # Update schedule with last run and next run times
+                    if db_type == "POSTGRESQL":
+                        schema_lower = schema.lower() if schema else 'public'
+                        dms_jobsch_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBSCH')
+                        dms_jobsch_ref = f'"{dms_jobsch_table}"' if dms_jobsch_table != dms_jobsch_table.lower() else dms_jobsch_table
+                        schema_prefix = f'{schema_lower}.' if schema else ''
+                        dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
+                        try:
+                            # Try unquoted column names (standard lowercase)
+                            cursor.execute(
+                                f"""
+                                UPDATE {dms_jobsch_full}
+                                SET lst_run_dt = CURRENT_TIMESTAMP,
+                                    nxt_run_dt = %s,
+                                    recupdt = CURRENT_TIMESTAMP
+                                WHERE jobschid = %s
+                                """,
+                                (next_run_time, schedule["JOBSCHID"]),
+                            )
+                        except Exception:
+                            # Fallback for quoted/uppercase column names
+                            cursor.execute(
+                                f"""
+                                UPDATE {dms_jobsch_full}
+                                SET "LST_RUN_DT" = CURRENT_TIMESTAMP,
+                                    "NXT_RUN_DT" = %s,
+                                    "RECUPDT" = CURRENT_TIMESTAMP
+                                WHERE "JOBSCHID" = %s
+                                """,
+                                (next_run_time, schedule["JOBSCHID"]),
+                            )
+                    else:  # Oracle
+                        schema_prefix = f"{schema}." if schema else ""
+                        cursor.execute(
+                            f"""
+                            UPDATE {schema_prefix}DMS_JOBSCH
+                            SET lst_run_dt = SYSTIMESTAMP,
+                                nxt_run_dt = :nxt_run_dt,
+                                recupdt = SYSTIMESTAMP
+                            WHERE jobschid = :jobschid
+                            """,
+                            {"nxt_run_dt": next_run_time, "jobschid": schedule["JOBSCHID"]},
+                        )
+                    debug(f"Updated schedule last run and next run times for {mapref}")
+            except Exception as schedule_update_err:
+                # Don't fail the job if schedule update fails
+                warning(f"Failed to update schedule run times for {mapref}: {schedule_update_err}")
+
         joblogid = _generate_numeric_id(cursor, "DMS_JOBLOGSEQ")
         
         if db_type == "POSTGRESQL":
@@ -1127,12 +1275,17 @@ class JobExecutionEngine:
                 },
             )
 
+        # Ensure all updates (prclog, jobsch last/next run, joblog) are persisted
+        try:
+            cursor.connection.commit()
+        except Exception as commit_err:
+            warning(f"Failed to commit schedule/job log updates: {commit_err}")
+
     def _finalize_failure(self, cursor, context, message: str):
         if not context:
             return
         
         # Detect database type for table reference
-        from modules.common.db_table_utils import _detect_db_type
         connection = cursor.connection
         db_type = _detect_db_type(connection)
         schema = (os.getenv("DMS_SCHEMA", "")).strip()

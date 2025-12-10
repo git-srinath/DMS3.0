@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from modules.jobs.pkgdwprc_python import JobRequestType
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.jobs.pkgdwprc_python import JobRequestType
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.jobs.pkgdwprc_python import JobRequestType  # type: ignore
 
 
 @dataclass

@@ -15,8 +15,12 @@ import hashlib
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 import traceback
-from modules.logger import info, error
-from modules.common.id_provider import next_id as get_next_id
+try:
+    from backend.modules.logger import info, error
+    from backend.modules.common.id_provider import next_id as get_next_id
+except ImportError:  # Fallback for Flask-style imports
+    from modules.logger import info, error  # type: ignore
+    from modules.common.id_provider import next_id as get_next_id  # type: ignore
 
 # Optional Oracle driver: allow scheduler to run even if oracledb is not installed.
 # Oracle-specific features will check for this at runtime.
@@ -242,7 +246,11 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
         # Get target connection for table operations
         if p_trgconid:
             try:
-                from database.dbconnect import create_target_connection
+                # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                try:
+                    from backend.database.dbconnect import create_target_connection
+                except ImportError:  # When running Flask app.py directly inside backend
+                    from database.dbconnect import create_target_connection  # type: ignore
                 target_connection = create_target_connection(p_trgconid)
                 if target_connection is None:
                     raise Exception(f"Failed to create target connection for CONID {p_trgconid}")
@@ -1017,7 +1025,11 @@ def create_job_flow(connection, p_mapref: str):
         
         # Generate complete Python code using the code builder
         info(f"[DEBUG create_job_flow] About to import build_job_flow_code")
-        from modules.jobs.pkgdwjob_create_job_flow import build_job_flow_code
+        # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+        try:
+            from backend.modules.jobs.pkgdwjob_create_job_flow import build_job_flow_code
+        except ImportError:  # When running Flask app.py directly inside backend
+            from modules.jobs.pkgdwjob_create_job_flow import build_job_flow_code  # type: ignore
         info(f"[DEBUG create_job_flow] Successfully imported build_job_flow_code")
         
         info(f"[DEBUG create_job_flow] About to call build_job_flow_code with parameters:")

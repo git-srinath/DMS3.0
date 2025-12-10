@@ -1,4 +1,4 @@
-from .security import security_bp
-
-__all__ = ['security_bp']
+# Security module package
+# Flask blueprint removed - using FastAPI only
+__all__ = []
 

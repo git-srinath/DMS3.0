@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/app/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, FileSpreadsheet, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, History } from 'lucide-react';
 import CustomDbIcon from './CustomDbIcon';
 import CustomParameterIcon from './CustomParameterIcon';
@@ -143,9 +143,34 @@ const SidebarItem = ({ icon, text, active = false, expanded = true, href }) => {
 
 const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
   const { darkMode } = useTheme();
-  const { user } = useAuth();
+  const { user, moduleAccess } = useAuth();
   const pathname = usePathname();
   const isAdmin = user?.role === 'ADMIN';
+  
+  // Get enabled module keys
+  const moduleAccessLoading = moduleAccess?.loading ?? true;
+  const accessibleModuleKeys = moduleAccess?.enabledKeys;
+  const accessibleModuleKeysSet = useMemo(() => {
+    if (!Array.isArray(accessibleModuleKeys)) {
+      return null;
+    }
+    return new Set(accessibleModuleKeys);
+  }, [accessibleModuleKeys]);
+  
+  // Function to check if a sidebar item should be visible
+  const isItemVisible = (item) => {
+    if (!item) return false;
+    // Always show items without accessKey (Home, DB Connections, Parameters, Reports, Report Runs, User Profile)
+    if (!item.accessKey) return true;
+    // Check admin-only items
+    if (item.requiresAdmin && !isAdmin) return false;
+    // If module access is still loading, show the item (to avoid flickering)
+    if (moduleAccessLoading) return true;
+    // If we don't have the set yet, show the item
+    if (!accessibleModuleKeysSet) return true;
+    // Check if the access key is in the enabled keys
+    return accessibleModuleKeysSet.has(item.accessKey);
+  };
 
   return (
     <motion.div 
@@ -197,6 +222,8 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
 
       {/* Main Navigation */}
       <nav className="mt-4 px-1 space-y-0.5">
+        {/* Home - always visible */}
+        {isItemVisible({}) && (
         <SidebarItem 
           icon={<LayoutDashboard />} 
           text="Home" 
@@ -204,6 +231,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/home"
         />
+        )}
+        
+        {/* DB Connections - always visible (no accessKey) */}
+        {isItemVisible({}) && (
         <SidebarItem
           icon={<CustomDbIcon size={18} />}
           text="DB Connections"
@@ -211,7 +242,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/register_db_connections"
         />
+        )}
 
+        {/* Manage SQL - requires 'manage_sql' access */}
+        {isItemVisible({ accessKey: 'manage_sql' }) && (
         <SidebarItem 
           icon={<Code />} 
           text="Manage SQL" 
@@ -219,7 +253,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/manage_sql"
         />
+        )}
 
+        {/* Mapper Module - requires 'data_mapper' access */}
+        {isItemVisible({ accessKey: 'data_mapper' }) && (
         <SidebarItem 
           icon={<Briefcase />} 
           text="Mapper Module" 
@@ -227,7 +264,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/mapper_module"
         /> 
+        )}
 
+        {/* Jobs - requires 'jobs' access */}
+        {isItemVisible({ accessKey: 'jobs' }) && (
         <SidebarItem 
           icon={<FileSpreadsheet />} 
           text="Jobs" 
@@ -235,7 +275,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/jobs"
         /> 
+        )}
 
+        {/* Reports - requires 'reports' access */}
+        {isItemVisible({ accessKey: 'reports' }) && (
         <SidebarItem 
           icon={<FileText />} 
           text="Reports" 
@@ -243,7 +286,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/reports"
         /> 
+        )}
 
+        {/* Report Runs - requires 'reports' access (same as Reports) */}
+        {isItemVisible({ accessKey: 'reports' }) && (
         <SidebarItem 
           icon={<History />} 
           text="Report Runs" 
@@ -251,7 +297,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/report_runs"
         /> 
+        )}
 
+        {/* Logs & Status - requires 'job_status_and_logs' access */}
+        {isItemVisible({ accessKey: 'job_status_and_logs' }) && (
         <SidebarItem 
           icon={<ActivitySquare />} 
           text="Logs & Status" 
@@ -259,7 +308,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/job_status_and_logs"
         />
+        )}
 
+        {/* Dashboard - requires 'dashboard' access */}
+        {isItemVisible({ accessKey: 'dashboard' }) && (
         <SidebarItem 
           icon={<LineChart />} 
           text="Dashboard" 
@@ -267,8 +319,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/dashboard"
         />
-
+        )}
   
+        {/* Parameters - always visible (no accessKey) */}
+        {isItemVisible({}) && (
         <SidebarItem
           icon={<CustomParameterIcon size={18} />}
           text="Parameters"
@@ -276,10 +330,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/type_mapper"
         />
+        )}
 
-
-
-        {isAdmin && (
+        {/* Security - admin only */}
+        {isItemVisible({ requiresAdmin: true }) && (
           <SidebarItem
             icon={<ShieldCheck />}
             text="Security"
@@ -289,6 +343,8 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           />
         )}
 
+        {/* Admin - admin only */}
+        {isItemVisible({ requiresAdmin: true }) && (
         <SidebarItem 
           icon={<Settings />} 
           text="Admin" 
@@ -296,7 +352,10 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/admin"
         />  
+        )}
 
+        {/* User Profile - always visible */}
+        {isItemVisible({}) && (
         <SidebarItem 
           icon={<UserCog />} 
           text="User Profile" 
@@ -304,6 +363,7 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
           expanded={sidebarOpen}
           href="/profile"
         />
+        )}
 
       </nav>
 

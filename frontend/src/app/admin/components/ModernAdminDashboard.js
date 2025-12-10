@@ -3,11 +3,10 @@ import { Box, useTheme, alpha, Typography, Container, CircularProgress, Table, T
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../config';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import axios from 'axios';
 import { message } from 'antd';
 // Import components
-import TabsLayout from './TabsLayout';
 import MetricsSection from './MetricsSection';
 import UsersTable from './UsersTable';
 import LicenseManager from './LicenseManager';
@@ -42,7 +41,33 @@ const tabContentVariants = {
   exit: { opacity: 0, y: -15 }
 };
 
-const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useTheme();  const [activeTab, setActiveTab] = useState(initialActiveTab);
+const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {
+  const theme = useTheme();
+  const router = useRouter();
+  const pathname = usePathname();
+  
+  // Sync activeTab with current route (matching TabsLayout tabRoutes order)
+  const getActiveTabFromPath = () => {
+    // Tab order matches TabsLayout: Users(0), DB Connections(1), Roles(2), Audit Logs(3), License(4), Notifications(5), About(6)
+    if (pathname?.startsWith('/admin/users')) return 0;
+    if (pathname?.startsWith('/register_db_connections')) return 1;
+    if (pathname?.startsWith('/admin/roles')) return 2;
+    if (pathname?.startsWith('/admin/audit-logs')) return 3;
+    if (pathname?.startsWith('/admin/license')) return 4;
+    if (pathname?.startsWith('/admin/notifications')) return 5;
+    if (pathname?.startsWith('/admin/about')) return 6;
+    // Default to Users tab if on /admin without specific path
+    if (pathname?.startsWith('/admin')) return 0;
+    return initialActiveTab;
+  };
+  
+  const [activeTab, setActiveTab] = useState(getActiveTabFromPath());
+  
+  // Update activeTab when route changes
+  useEffect(() => {
+    const tab = getActiveTabFromPath();
+    setActiveTab(tab);
+  }, [pathname]);
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [modules, setModules] = useState([]);
@@ -58,7 +83,6 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
   const [isLoadingModules, setIsLoadingModules] = useState(false);
   const [auditLogsLoading, setAuditLogsLoading] = useState(false);
   const { user, loading, handleTokenExpiration } = useAuth();
-  const router = useRouter();
   
   // Access control hook
   const { 
@@ -116,7 +140,8 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
         }
       });
 
-      setUsers(response.data);
+      const data = Array.isArray(response.data) ? response.data : [];
+      setUsers(data);
     } catch (err) {
       // Only show error message if it's not an access control issue
       if (err.response?.status !== 403) {
@@ -142,7 +167,8 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
         }
       });
 
-      setRoles(response.data);
+      const data = Array.isArray(response.data) ? response.data : [];
+      setRoles(data);
     } catch (err) {
       // Only show error message if it's not an access control issue
       if (err.response?.status !== 403) {
@@ -167,9 +193,8 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
         }
       });
 
-      if (response.data) {
-        setModules(response.data);
-      }
+      const data = Array.isArray(response.data) ? response.data : [];
+      setModules(data);
     } catch (err) {
       // Only show error message if it's not an access control issue
       if (err.response?.status !== 403) {
@@ -193,9 +218,8 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
         }
       });
 
-      if (response.data) {
-        setPendingApprovals(response.data);
-      }
+      const data = Array.isArray(response.data) ? response.data : [];
+      setPendingApprovals(data);
     } catch (err) {
       // Only show error message if it's not an access control issue
       if (err.response?.status !== 403) {
@@ -218,8 +242,10 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
         }
       });
 
+      const data = Array.isArray(response.data) ? response.data : [];
+
       // Transform the data
-      const transformedLogs = response.data.map(log => ({
+      const transformedLogs = data.map(log => ({
         ...log,
         timestamp: log.login_timestamp,
         details: `${log.login_type} attempt from IP: ${log.ip_address}`,
@@ -790,7 +816,26 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
           </motion.div>
         );
       
-      case 1: // Roles
+      case 1: // Database Connection - navigates to separate page, so show nothing here
+        return (
+          <motion.div
+            key="db-connection-tab"
+            variants={tabContentVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={{ duration: 0.3 }}
+            style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 160px)' }}
+          >
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+              <Typography variant="body1" color="text.secondary">
+                Database Connection management is available at the separate page.
+              </Typography>
+            </Box>
+          </motion.div>
+        );
+      
+      case 2: // Roles
         return (
           <motion.div
             key="roles-tab"
@@ -805,7 +850,7 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
           </motion.div>
         );
       
-      case 2: // Audit Logs
+      case 3: // Audit Logs
         return (
           <motion.div
             key="audit-tab"
@@ -943,7 +988,7 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
           </motion.div>
         );
       
-      case 3: // License
+      case 4: // License
         return (
           <motion.div
             key="license-tab"
@@ -957,7 +1002,7 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
           </motion.div>
         );
       
-      case 4: // Notifications
+      case 5: // Notifications
         return (
           <motion.div
             key="notifications-tab"
@@ -971,7 +1016,7 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
           </motion.div>
         );
       
-      case 5: // About
+      case 6: // About
         return (
           <motion.div
             key="about-tab"
@@ -1041,13 +1086,6 @@ const ModernAdminDashboard = ({ initialActiveTab = 0 }) => {  const theme = useT
           backdropFilter: 'blur(10px)',
         }}
       >
-        {/* Tabs */}
-        <TabsLayout 
-          activeTab={activeTab} 
-          handleTabChange={handleTabChange} 
-          isMobile={false} 
-        />
-        
         {/* Main content area */}
         <Container maxWidth={false} sx={{ py: 1, px: { xs: 1, md: 2 } }}>
           <AnimatePresence mode="wait">

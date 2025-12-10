@@ -129,6 +129,7 @@ const Page = () => {
     },
     {
       title: 'Reports',
+      accessKey: 'reports',
       path: '/reports',
       gradient: 'linear-gradient(135deg, #4ADE80 0%, #16A34A 100%)',
       description: 'Define report mappings and preview outputs.',
@@ -137,6 +138,7 @@ const Page = () => {
     },
     {
       title: 'Report Runs',
+      accessKey: 'reports', // share same security toggle as Reports
       path: '/report_runs',
       gradient: 'linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)',
       description: 'Monitor report output history and statuses.',

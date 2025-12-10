@@ -8,7 +8,18 @@ This is extracted from pkgdms_job_python.py for better maintainability.
 import os
 from typing import Dict, List, Tuple
 from datetime import datetime
-from modules.common.db_table_utils import _detect_db_type, get_postgresql_table_name
+
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.common.db_table_utils import (
+        _detect_db_type,
+        get_postgresql_table_name,
+    )
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.common.db_table_utils import (  # type: ignore
+        _detect_db_type,
+        get_postgresql_table_name,
+    )
 
 
 def _get_postgresql_table_name(cursor, schema_name: str, table_name: str) -> str:
@@ -69,9 +80,9 @@ def build_job_flow_code(
                             """
         progress_update_query = """
                                 UPDATE {table_prefix}DMS_PRCLOG
-                                SET SRCROWS = %s,
-                                    TRGROWS = %s,
-                                    RECUPDT = CURRENT_TIMESTAMP
+                                SET srcrows = %s,
+                                    trgrows = %s,
+                                    recupdt = CURRENT_TIMESTAMP
                                 WHERE sessionid = %s
                                   AND prcid = %s
                             """
@@ -290,7 +301,10 @@ import oracledb
 import hashlib
 from datetime import datetime
 from typing import Dict, List, Any, Optional
-from modules.common.id_provider import next_id as get_next_id
+try:
+    from backend.modules.common.id_provider import next_id as get_next_id
+except ImportError:  # Fallback for Flask-style imports
+    from modules.common.id_provider import next_id as get_next_id  # type: ignore
 
 # Job configuration
 MAPREF = "{mapref}"
@@ -807,15 +821,33 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
         def check_stop_request():
             \"\"\"Check if a stop request exists for this job in DMS_PRCREQ\"\"\"
             try:
-                metadata_cursor.execute("""
-                    SELECT COUNT(*) 
-                    FROM DMS_PRCREQ 
-                    WHERE mapref = :mapref 
-                      AND request_type = 'STOP' 
-                      AND status IN ('NEW', 'CLAIMED')
-                """, {{
-                    'mapref': MAPREF
-                }})
+                # Detect database type for correct parameter binding
+                try:
+                    from backend.modules.common.db_table_utils import _detect_db_type
+                except ImportError:  # When running Flask app.py directly inside backend
+                    from modules.common.db_table_utils import _detect_db_type  # type: ignore
+                metadata_db_type = _detect_db_type(metadata_connection)
+                
+                if metadata_db_type == "POSTGRESQL":
+                    # PostgreSQL uses %s for parameter binding
+                    metadata_cursor.execute("""
+                        SELECT COUNT(*) 
+                        FROM DMS_PRCREQ 
+                        WHERE mapref = %s 
+                          AND request_type = 'STOP' 
+                          AND status IN ('NEW', 'CLAIMED')
+                    """, (MAPREF,))
+                else:  # Oracle
+                    # Oracle uses :param for parameter binding
+                    metadata_cursor.execute("""
+                        SELECT COUNT(*) 
+                        FROM DMS_PRCREQ 
+                        WHERE mapref = :mapref 
+                          AND request_type = 'STOP' 
+                          AND status IN ('NEW', 'CLAIMED')
+                    """, {{
+                        'mapref': MAPREF
+                    }})
                 stop_count = metadata_cursor.fetchone()[0]
                 return stop_count > 0
             except Exception as e:
@@ -915,16 +947,6 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                         break
                 raw_src_dict = dict(zip(source_columns, src_row))
                 src_dict = map_row_to_target_columns(raw_src_dict)
-                
-                # Debug: Log column mapping for first row of first batch
-                if batch_num == 1 and len(rows_to_insert) + len(rows_to_update_scd1) + len(rows_to_update_scd2) == 0:
-                    print(f"DEBUG: First row column mapping - Source columns: {{list(raw_src_dict.keys())[:5]}}..., Target columns: {{list(src_dict.keys())[:5]}}...")
-                    # Show a sample of mapped values for key columns
-                    sample_cols = PK_COLUMNS[:3] if PK_COLUMNS else list(src_dict.keys())[:3]
-                    for col in sample_cols:
-                        src_val = raw_src_dict.get(COLUMN_SOURCE_MAPPING.get(col, col), 'NOT_FOUND')
-                        tgt_val = src_dict.get(col, 'NOT_FOUND')
-                        print(f"DEBUG: Column {{col}} - Source value: {{src_val}}, Mapped value: {{tgt_val}}")
                 
                 # Build primary key for target lookup
                 # Map PK_COLUMNS (target column names) to source column names using PK_SOURCE_MAPPING
@@ -1136,18 +1158,23 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
             # Update DMS_PRCLOG progress before checkpoint handling
             try:
                 # Detect database type for query syntax
-                from modules.common.db_table_utils import _detect_db_type
+                # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                try:
+                    from backend.modules.common.db_table_utils import _detect_db_type
+                except ImportError:  # When running Flask app.py directly inside backend
+                    from modules.common.db_table_utils import _detect_db_type  # type: ignore
                 import os
                 metadata_db_type = _detect_db_type(metadata_connection)
                 schema = (os.getenv("DMS_SCHEMA", "")).strip()
                 schema_prefix = f"{{schema}}." if schema else ""
                 
                 if metadata_db_type == "POSTGRESQL":
+                    # PostgreSQL column names are lowercase
                     metadata_cursor.execute(f"""
                         UPDATE {{schema_prefix}}DMS_PRCLOG
-                        SET SRCROWS = %s,
-                            TRGROWS = %s,
-                            RECUPDT = CURRENT_TIMESTAMP
+                        SET srcrows = %s,
+                            trgrows = %s,
+                            recupdt = CURRENT_TIMESTAMP
                         WHERE sessionid = %s
                           AND prcid = %s
                     """, (
@@ -1206,7 +1233,11 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                         
                         if checkpoint_value:
                             # Detect database type for query syntax
-                            from modules.common.db_table_utils import _detect_db_type
+                            # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                            try:
+                                from backend.modules.common.db_table_utils import _detect_db_type
+                            except ImportError:  # When running Flask app.py directly inside backend
+                                from modules.common.db_table_utils import _detect_db_type  # type: ignore
                             import os
                             metadata_db_type = _detect_db_type(metadata_connection)
                             schema = (os.getenv("DMS_SCHEMA", "")).strip()
@@ -1240,7 +1271,11 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                         # Update checkpoint to row count
                         total_processed = total_fetched
                         # Detect database type for query syntax
-                        from modules.common.db_table_utils import _detect_db_type
+                        # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                        try:
+                            from backend.modules.common.db_table_utils import _detect_db_type
+                        except ImportError:  # When running Flask app.py directly inside backend
+                            from modules.common.db_table_utils import _detect_db_type  # type: ignore
                         import os
                         metadata_db_type = _detect_db_type(metadata_connection)
                         schema = (os.getenv("DMS_SCHEMA", "")).strip()
@@ -1348,7 +1383,11 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
         # Mark checkpoint as COMPLETED on successful finish (using metadata connection)
         if CHECKPOINT_ENABLED:
             # Detect database type for query syntax
-            from modules.common.db_table_utils import _detect_db_type
+            # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+            try:
+                from backend.modules.common.db_table_utils import _detect_db_type
+            except ImportError:  # When running Flask app.py directly inside backend
+                from modules.common.db_table_utils import _detect_db_type  # type: ignore
             import os
             metadata_db_type = _detect_db_type(metadata_connection)
             schema = (os.getenv("DMS_SCHEMA", "")).strip()

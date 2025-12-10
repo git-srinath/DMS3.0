@@ -5,7 +5,11 @@ import threading
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-from modules.logger import debug, warning, info, error
+# Support both FastAPI (package import) and legacy Flask (relative import) contexts
+try:
+    from backend.modules.logger import debug, warning, info, error
+except ImportError:  # When running Flask app.py directly inside backend
+    from modules.logger import debug, warning, info, error
 
 
 CONFIG_PARAM_TYPE = "DMSCONFIG"
