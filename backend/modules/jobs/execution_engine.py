@@ -1108,6 +1108,85 @@ class JobExecutionEngine:
         if existing_logs:
             return
 
+        # Update last run time and recalculate next run time for the schedule
+        mapref = job_flow.get("MAPREF")
+        if mapref:
+            try:
+                # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+                try:
+                    from backend.modules.jobs.pkgdwprc_python import JobSchedulerService, _calculate_next_run_time
+                    from backend.modules.jobs.scheduler_frequency import build_trigger
+                except ImportError:
+                    from modules.jobs.pkgdwprc_python import JobSchedulerService, _calculate_next_run_time  # type: ignore
+                    from modules.jobs.scheduler_frequency import build_trigger  # type: ignore
+                
+                # Get schedule info to recalculate next run
+                schedule_service = JobSchedulerService(connection)
+                schedule = schedule_service._fetch_active_schedule(cursor, mapref)
+                if schedule:
+                    # Update last run time
+                    now = datetime.now()
+                    timezone = os.getenv('DMS_TIMEZONE', 'UTC')
+                    
+                    # Recalculate next run time
+                    next_run_time = _calculate_next_run_time(
+                        schedule.get("FRQCD"),
+                        schedule.get("FRQDD"),
+                        schedule.get("FRQHH"),
+                        schedule.get("FRQMI"),
+                        schedule.get("STRTDT").date() if schedule.get("STRTDT") else None,
+                        schedule.get("ENDDT").date() if schedule.get("ENDDT") else None,
+                        timezone
+                    )
+                    
+                    # Update schedule with last run and next run times
+                    if db_type == "POSTGRESQL":
+                        schema_lower = schema.lower() if schema else 'public'
+                        dms_jobsch_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_JOBSCH')
+                        dms_jobsch_ref = f'"{dms_jobsch_table}"' if dms_jobsch_table != dms_jobsch_table.lower() else dms_jobsch_table
+                        schema_prefix = f'{schema_lower}.' if schema else ''
+                        dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
+                        try:
+                            # Try unquoted column names (standard lowercase)
+                            cursor.execute(
+                                f"""
+                                UPDATE {dms_jobsch_full}
+                                SET lst_run_dt = CURRENT_TIMESTAMP,
+                                    nxt_run_dt = %s,
+                                    recupdt = CURRENT_TIMESTAMP
+                                WHERE jobschid = %s
+                                """,
+                                (next_run_time, schedule["JOBSCHID"]),
+                            )
+                        except Exception:
+                            # Fallback for quoted/uppercase column names
+                            cursor.execute(
+                                f"""
+                                UPDATE {dms_jobsch_full}
+                                SET "LST_RUN_DT" = CURRENT_TIMESTAMP,
+                                    "NXT_RUN_DT" = %s,
+                                    "RECUPDT" = CURRENT_TIMESTAMP
+                                WHERE "JOBSCHID" = %s
+                                """,
+                                (next_run_time, schedule["JOBSCHID"]),
+                            )
+                    else:  # Oracle
+                        schema_prefix = f"{schema}." if schema else ""
+                        cursor.execute(
+                            f"""
+                            UPDATE {schema_prefix}DMS_JOBSCH
+                            SET lst_run_dt = SYSTIMESTAMP,
+                                nxt_run_dt = :nxt_run_dt,
+                                recupdt = SYSTIMESTAMP
+                            WHERE jobschid = :jobschid
+                            """,
+                            {"nxt_run_dt": next_run_time, "jobschid": schedule["JOBSCHID"]},
+                        )
+                    debug(f"Updated schedule last run and next run times for {mapref}")
+            except Exception as schedule_update_err:
+                # Don't fail the job if schedule update fails
+                warning(f"Failed to update schedule run times for {mapref}: {schedule_update_err}")
+
         joblogid = _generate_numeric_id(cursor, "DMS_JOBLOGSEQ")
         
         if db_type == "POSTGRESQL":
@@ -1160,6 +1239,12 @@ class JobExecutionEngine:
                     "sessionid": context["SESSIONID"],
                 },
             )
+
+        # Ensure all updates (prclog, jobsch last/next run, joblog) are persisted
+        try:
+            cursor.connection.commit()
+        except Exception as commit_err:
+            warning(f"Failed to commit schedule/job log updates: {commit_err}")
 
     def _finalize_failure(self, cursor, context, message: str):
         if not context:
