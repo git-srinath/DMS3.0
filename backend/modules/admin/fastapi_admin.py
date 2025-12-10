@@ -9,18 +9,15 @@ import re
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Support both FastAPI (package import) and legacy Flask (relative import) contexts
-try:
-    from backend.modules.login.fastapi_login import get_user_from_token
-    from backend.modules.login.login import hash_password, generate_salt, is_valid_password
-    from backend.database.dbconnect import sqlite_engine
-    from backend.modules.logger import info, error
-except ImportError:  # When running Flask app.py directly inside backend
-    from modules.login.login import hash_password, generate_salt, is_valid_password  # type: ignore
-    from sqlalchemy import create_engine  # type: ignore
-    engine = create_engine(os.getenv('SQLITE_DATABASE_URL'))  # type: ignore
-    Session = sessionmaker(bind=engine)  # type: ignore
-    from modules.logger import info, error  # type: ignore
+# FastAPI imports
+from backend.modules.login.fastapi_login import (
+    get_user_from_token,
+    hash_password,
+    generate_salt,
+    is_valid_password
+)
+from backend.database.dbconnect import sqlite_engine
+from backend.modules.logger import info, error
 
 load_dotenv()
 

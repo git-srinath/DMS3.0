@@ -1,3 +1,4 @@
-from flask import Blueprint
-
-from .crud_dbconnections import crud_dbconnections_bp
+"""
+DB Connections package initializer (FastAPI only).
+Flask blueprint removed after migration.
+"""

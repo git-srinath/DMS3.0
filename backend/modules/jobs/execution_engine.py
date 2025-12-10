@@ -167,6 +167,36 @@ class JobExecutionEngine:
             else:
                 debug("No TRGCONID specified in job flow, using metadata connection for target operations")
 
+            # Handle truncate & load if requested
+            truncate_flag = params.get("truncate_flag", "N")
+            if truncate_flag == "Y":
+                target_schema = job_flow.get("TRGSCHM") or os.getenv("TARGET_SCHEMA") or os.getenv("DMS_SCHEMA") or ""
+                target_table = job_flow.get("TRGTBNM")
+                if target_table:
+                    target_db = target_conn if target_conn else conn
+                    try:
+                        target_db_type = _detect_db_type(target_db)
+                        t_cursor = target_db.cursor()
+                        if target_db_type == "POSTGRESQL":
+                            # Use quoted identifiers to handle case-sensitive names
+                            full_name = f'"{target_schema}"."{target_table}"' if target_schema else f'"{target_table}"'
+                            t_cursor.execute(f"TRUNCATE TABLE {full_name}")
+                        else:  # Oracle
+                            full_name = f"{target_schema}.{target_table}" if target_schema else target_table
+                            t_cursor.execute(f"TRUNCATE TABLE {full_name}")
+                        target_db.commit()
+                        info(f"[truncate] Cleared target table before load: {full_name}")
+                    except Exception as trunc_err:
+                        error(f"[truncate] Failed to truncate target table {target_schema}.{target_table}: {trunc_err}")
+                        raise
+                    finally:
+                        try:
+                            t_cursor.close()
+                        except Exception:
+                            pass
+                else:
+                    warning("[truncate] Target table name missing; skip truncate.")
+
             context = self._create_process_log(cursor, job_flow, params)
             conn.commit()
 
@@ -740,6 +770,7 @@ class JobExecutionEngine:
         if db_type == "POSTGRESQL":
             query = f"""
                 SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
+                       j.trgschm, j.trgtbnm, j.trgtbtyp,
                        (SELECT s.sqlconid 
                         FROM {dms_jobdtl_full} jd
                         LEFT JOIN {dms_maprsql_full} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
@@ -755,6 +786,7 @@ class JobExecutionEngine:
         else:
             query = f"""
                 SELECT f.jobflwid, f.jobid, f.mapref, f.dwlogic, j.trgconid,
+                       j.trgschm, j.trgtbnm, j.trgtbtyp,
                        (SELECT s.sqlconid 
                         FROM {dms_jobdtl_full} jd
                         LEFT JOIN {dms_maprsql_full} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
@@ -831,10 +863,13 @@ class JobExecutionEngine:
             "MAPREF": row[2],
             "DWLOGIC": _read_lob(row[3]),
             "TRGCONID": row[4] if len(row) > 4 else None,  # Target connection ID
-            "SQLCONID": row[5] if len(row) > 5 else None,  # Source connection ID
+            "TRGSCHM": row[5] if len(row) > 5 else None,
+            "TRGTBNM": row[6] if len(row) > 6 else None,
+            "TRGTBTYP": row[7] if len(row) > 7 else None,
+            "SQLCONID": row[8] if len(row) > 8 else None,  # Source connection ID
         }
         
-        debug(f"Loaded job flow: JOBFLWID={job_flow['JOBFLWID']}, JOBID={job_flow['JOBID']}, MAPREF={job_flow['MAPREF']}, TRGCONID={job_flow['TRGCONID']}, SQLCONID={job_flow['SQLCONID']}")
+        debug(f"Loaded job flow: JOBFLWID={job_flow['JOBFLWID']}, JOBID={job_flow['JOBID']}, MAPREF={job_flow['MAPREF']}, TRGCONID={job_flow['TRGCONID']}, TRGSCHM={job_flow.get('TRGSCHM')}, TRGTBNM={job_flow.get('TRGTBNM')}, SQLCONID={job_flow['SQLCONID']}")
         logic_length = len(job_flow['DWLOGIC']) if job_flow['DWLOGIC'] else 0
         debug(f"DWLOGIC length: {logic_length} characters")
         

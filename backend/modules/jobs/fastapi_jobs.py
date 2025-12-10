@@ -82,6 +82,50 @@ def _parse_datetime(value: Optional[str]):
             ) from exc
 
 
+def _check_job_already_running(connection, p_mapref: str) -> bool:
+    """
+    Return True if a job is already running (status IP or CLAIMED in last 24h).
+    Replaces the old Flask helper removed during migration.
+    """
+    cursor = None
+    try:
+        cursor = connection.cursor()
+        db_type = _detect_db_type(connection)
+        schema = (os.getenv("DMS_SCHEMA", "")).strip()
+
+        if db_type == "POSTGRESQL":
+            schema_lower = schema.lower() if schema else "public"
+            dms_prclog_ref = get_postgresql_table_name(cursor, schema_lower, "DMS_PRCLOG")
+            # Quote if created with uppercase
+            dms_prclog_ref = f'"{dms_prclog_ref}"' if dms_prclog_ref != dms_prclog_ref.lower() else dms_prclog_ref
+            schema_prefix = f"{schema_lower}." if schema else ""
+            dms_prclog_full = f"{schema_prefix}{dms_prclog_ref}"
+            sql = f"""
+            SELECT COUNT(*) FROM {dms_prclog_full}
+            WHERE mapref = %s
+              AND status IN ('IP', 'CLAIMED')
+              AND strtdt > CURRENT_TIMESTAMP - INTERVAL '24 hours'
+            """
+            cursor.execute(sql, (p_mapref,))
+        else:
+            schema_prefix = f"{schema}." if schema else ""
+            sql = f"""
+            SELECT COUNT(*) FROM {schema_prefix}DMS_PRCLOG
+            WHERE mapref = :p_mapref
+              AND status IN ('IP', 'CLAIMED')
+              AND strtdt > SYSTIMESTAMP - INTERVAL '24' HOUR
+            """
+            cursor.execute(sql, {"p_mapref": p_mapref})
+
+        count = cursor.fetchone()[0]
+        return count > 0
+    except Exception as e:
+        error(f"Error checking if job is running: {e}")
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+
 # ----- Simple job endpoints used by frontend -----
 
 
@@ -975,12 +1019,7 @@ async def schedule_job_immediately(payload: ScheduleJobImmediatelyRequest):
     conn = None
     try:
         conn = create_metadata_connection()
-        # Reuse check_job_already_running from original module
-        from backend.modules.jobs.jobs import (  # type: ignore
-            check_job_already_running,
-        )
-
-        if check_job_already_running(conn, p_mapref):
+        if _check_job_already_running(conn, p_mapref):
             raise HTTPException(
                 status_code=400,
                 detail={"success": False, "message": f"{p_mapref} : Job is already running"},

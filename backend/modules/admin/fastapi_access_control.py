@@ -9,7 +9,6 @@ try:
     from backend.modules.login.fastapi_login import get_user_from_token
     from backend.database.dbconnect import sqlite_engine
 except ImportError:  # When running Flask app.py directly inside backend
-    from modules.login.login import token_required  # type: ignore
     from sqlalchemy import create_engine  # type: ignore
     engine = create_engine(os.getenv('SQLITE_DATABASE_URL'))  # type: ignore
     Session = sessionmaker(bind=engine)  # type: ignore

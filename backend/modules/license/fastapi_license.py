@@ -5,40 +5,16 @@ from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
 
-# Support both FastAPI (package import) and legacy Flask (relative import) contexts
-# Try FastAPI package import first
-try:
-    from backend.modules.license.license_manager import LicenseManager
-    from backend.modules.login.fastapi_login import get_user_from_token
-    from backend.database.dbconnect import sqlite_engine
-    from backend.modules.logger import info, warning, error
-    _fastapi_context = True
-except ImportError:
-    # If package import fails, try relative import (works in both contexts)
-    from .license_manager import LicenseManager  # type: ignore
-    # Try to determine context by checking if we can import FastAPI-specific modules
-    try:
-        from backend.modules.login.fastapi_login import get_user_from_token
-        from backend.database.dbconnect import sqlite_engine
-        from backend.modules.logger import info, warning, error
-        _fastapi_context = True
-    except ImportError:
-        # Flask context fallback
-        from modules.login.login import hash_password  # type: ignore
-        from modules.logger import info, warning, error  # type: ignore
-        from sqlalchemy import create_engine  # type: ignore
-        engine = create_engine(os.getenv('SQLITE_DATABASE_URL'))  # type: ignore
-        Session = sessionmaker(bind=engine)  # type: ignore
-        _fastapi_context = False
+# FastAPI imports
+from backend.modules.license.license_manager import LicenseManager
+from backend.modules.login.fastapi_login import get_user_from_token
+from backend.database.dbconnect import sqlite_engine
+from backend.modules.logger import info, warning, error
 
 load_dotenv()
 
 # Database setup
-if _fastapi_context:
-    Session = sessionmaker(bind=sqlite_engine)
-else:
-    # Fallback for Flask context - already set up above
-    pass
+Session = sessionmaker(bind=sqlite_engine)
 
 # Initialize license manager
 license_manager = LicenseManager()
@@ -70,11 +46,7 @@ def check_admin_permission(user_id: int) -> bool:
 def verify_admin_password(user_id: int, password: str) -> bool:
     """Verify user password"""
     try:
-        # Import hash_password function
-        try:
-            from backend.modules.login.fastapi_login import hash_password
-        except ImportError:
-            from modules.login.login import hash_password  # type: ignore
+        from backend.modules.login.fastapi_login import hash_password
         
         session = Session()
         try:

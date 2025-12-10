@@ -18,7 +18,6 @@ try:
         get_user_module_states,
     )
 except ImportError:  # When running Flask app.py directly inside backend
-    from modules.login.login import token_required  # type: ignore
     from modules.security.utils import (  # type: ignore
         AVAILABLE_MODULES,
         AVAILABLE_MODULE_KEYS,
