@@ -56,6 +56,7 @@ class JobRequestType(str, Enum):
     REPORT = "REPORT"
     STOP = "STOP"
     REFRESH_SCHEDULE = "REFRESH_SCHEDULE"
+    FILE_UPLOAD = "FILE_UPLOAD"
 
 
 @dataclass(frozen=True)
@@ -604,6 +605,18 @@ class JobSchedulerService:
         return self._insert_queue_request(
             mapref=mapref,
             request_type=JobRequestType.REPORT,
+            payload=normalized_payload,
+        )
+
+    def queue_file_upload_request(self, flupldref: str, payload: Optional[Dict[str, Any]] = None) -> str:
+        if not flupldref:
+            raise SchedulerValidationError("File upload reference is required.")
+        normalized_payload = payload.copy() if payload else {}
+        normalized_payload["flupldref"] = flupldref
+        mapref = f"FLUPLD:{flupldref}"
+        return self._insert_queue_request(
+            mapref=mapref,
+            request_type=JobRequestType.FILE_UPLOAD,
             payload=normalized_payload,
         )
 

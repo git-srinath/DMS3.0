@@ -169,7 +169,9 @@ def get_metadata_table_refs(cursor, schema_name: str, db_type: str = None):
         'DMS_MAPERR', 'DMS_DBCONDTLS',
         # Report module metadata tables
         'DMS_RPRT_DEF', 'DMS_RPRT_FLD', 'DMS_RPRT_FRML', 'DMS_RPRT_LYOT',
-        'DMS_RPRT_SCHD', 'DMS_RPRT_RUN', 'DMS_RPRT_OTPT', 'DMS_RPRT_PRVW_CCH'
+        'DMS_RPRT_SCHD', 'DMS_RPRT_RUN', 'DMS_RPRT_OTPT', 'DMS_RPRT_PRVW_CCH',
+        # File upload execution / schedule metadata tables
+        'DMS_FLUPLD_RUN', 'DMS_FLUPLD_ERR', 'DMS_FLUPLD_SCHD',
     ]
     
     refs = {}

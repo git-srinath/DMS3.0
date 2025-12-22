@@ -27,6 +27,8 @@ import {
   Description,
   EventNote,
   History as HistoryIcon,
+  Folder as FolderIcon,
+  Archive as ArchiveIcon,
 } from '@mui/icons-material'
 
 const Page = () => {
@@ -83,6 +85,35 @@ const Page = () => {
       description: 'Map and Transform Data Elements.',
       icon: <Storage sx={{ fontSize: '2rem', color: '#fff' }} />,
       delay: 0.2,
+    },
+    {
+      title: 'File Upload',
+      accessKey: null,
+      path: '/file_upload_module',
+      gradient: 'linear-gradient(135deg, #06B6D4 0%, #0891B2 100%)',
+      description: 'Upload files and load data into database tables.',
+      icon: <Description sx={{ fontSize: '2rem', color: '#fff' }} />,
+      delay: 0.25,
+    },
+    {
+      title: 'Upload History',
+      accessKey: null,
+      path: '/file_upload_history',
+      gradient: 'linear-gradient(135deg, #0ea5e9 0%, #0369a1 100%)',
+      description: 'View historical file upload executions and audit trail.',
+      icon: <ArchiveIcon sx={{ fontSize: '2rem', color: '#fff' }} />,
+      delay: 0.28,
+      disabled: false,
+    },
+    {
+      title: 'File Templates',
+      accessKey: null,
+      path: null, // Placeholder for future implementation
+      gradient: 'linear-gradient(135deg, #22c55e 0%, #15803d 100%)',
+      description: 'Manage reusable upload templates (coming soon).',
+      icon: <FolderIcon sx={{ fontSize: '2rem', color: '#fff' }} />,
+      delay: 0.3,
+      disabled: true,
     },
     {
       title: 'Register DB Connections',
@@ -179,6 +210,11 @@ const Page = () => {
     'Data Mapper',
     'Jobs',
   ];
+  const fileManagementTitles = [
+    'File Upload',
+    'Upload History',
+    'File Templates',
+  ];
   const essentialsTitles = [
     'Parameters',
     'Register DB Connections',
@@ -203,6 +239,7 @@ const Page = () => {
       .filter((card) => isCardVisible(card));
 
   const dataManagementCards = mapCardsByTitles(dataManagementTitles);
+  const fileManagementCards = mapCardsByTitles(fileManagementTitles);
   const essentialsCards = mapCardsByTitles(essentialsTitles);
   const adminCards = mapCardsByTitles(adminTitles);
   const reportCards = mapCardsByTitles(reportTitles);
@@ -364,6 +401,12 @@ const Page = () => {
               bg: darkMode ? 'rgba(23,39,59,0.87)' : '#f2f7fd',
               order: { xs: 1, md: 1 },
             }, {
+              title: 'File Management',
+              color: darkMode ? '#06b6d4' : '#0e7490',
+              cards: fileManagementCards,
+              bg: darkMode ? 'rgba(8, 47, 73, 0.7)' : '#e0f7ff',
+              order: { xs: 2, md: 1 },
+            }, {
               title: 'Reports',
               color: darkMode ? '#34d399' : '#15803d',
               cards: reportCards,
@@ -374,13 +417,13 @@ const Page = () => {
               color: darkMode ? '#d946ef' : '#9d174d',
               cards: adminCards,
               bg: darkMode ? 'rgba(34,17,56,0.91)' : '#fff0fc',
-              order: { xs: 3, md: 2 },
+              order: { xs: 4, md: 3 },
             }, {
               title: 'Logs/Status and Dashboard',
               color: darkMode ? '#7dd3fc' : '#2563eb',
               cards: logsStatusDashboardCards,
               bg: darkMode ? 'rgba(26,38,45,0.90)' : '#e9f5fc',
-              order: { xs: 4, md: 3 },
+              order: { xs: 5, md: 4 },
             }].filter((group) => group.cards.length > 0).map((group) => (
               <Grid
                 item
@@ -436,7 +479,11 @@ const Page = () => {
                               maxWidth: { xs: '100%', md: 210 },
                               margin: '0 auto',
                             }}
-                            onClick={() => router.push(card.path)}
+                            onClick={() => {
+                              if (!card.disabled && card.path) {
+                                router.push(card.path)
+                              }
+                            }}
                           >
                             <Box sx={{ position: 'absolute', inset: 0, background: card.gradient, opacity: 0.97, zIndex: 0, borderRadius: '7px' }}></Box>
                             <Box sx={{ position: 'relative', zIndex: 2, width: '100%' }}>
@@ -458,7 +505,7 @@ const Page = () => {
                                   textShadow: '0 0.5px 2px rgba(0,0,0,0.08)',
                                 }}
                               >
-                                {card.title}
+                                {card.title}{card.disabled ? ' (Coming Soon)' : ''}
                               </Typography>
                               <Typography
                                 variant="caption"
