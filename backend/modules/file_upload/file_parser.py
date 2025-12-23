@@ -11,6 +11,9 @@ from .parsers.csv_parser import CSVParser
 from .parsers.excel_parser import ExcelParser
 from .parsers.json_parser import JSONParser
 from .parsers.parquet_parser import ParquetParser
+from .parsers.xml_parser import XMLParser
+from .parsers.pdf_parser import PDFParser
+from .parsers.google_sheets_parser import GoogleSheetsParser
 
 
 class FileParserManager:
@@ -23,7 +26,11 @@ class FileParserManager:
             ExcelParser(),
             JSONParser(),
             ParquetParser(),
+            XMLParser(),
+            PDFParser(),
         ]
+        # Google Sheets parser requires credentials, so it's added conditionally
+        # Users can add it manually if needed via add_parser() method
     
     def get_parser(self, file_path: str) -> Optional[BaseFileParser]:
         """
@@ -61,6 +68,8 @@ class FileParserManager:
             '.xml': 'XML',
             '.parquet': 'PARQUET',
             '.parq': 'PARQUET',
+            '.pdf': 'PDF',
+            '.gsheet': 'GOOGLE_SHEETS',
         }
         return ext_map.get(ext, 'UNKNOWN')
     
@@ -146,4 +155,22 @@ class FileParserManager:
         info = parser.get_file_info(file_path, options)
         info["file_type"] = self.detect_file_type(file_path)
         return info
+    
+    def add_parser(self, parser: BaseFileParser):
+        """
+        Add a custom parser to the manager.
+        
+        Args:
+            parser: Parser instance to add
+        """
+        self.parsers.append(parser)
+    
+    def remove_parser(self, parser_type: type):
+        """
+        Remove a parser by type.
+        
+        Args:
+            parser_type: Parser class type to remove
+        """
+        self.parsers = [p for p in self.parsers if not isinstance(p, parser_type)]
 

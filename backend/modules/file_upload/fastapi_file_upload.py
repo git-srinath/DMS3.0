@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from datetime import date
 
-from backend.database.dbconnect import create_metadata_connection
+from backend.database.dbconnect import create_metadata_connection, create_target_connection
 from backend.modules.common.db_table_utils import _detect_db_type
 from backend.modules.helper_functions import _get_table_ref
 from backend.modules.logger import info, error, warning
@@ -28,7 +28,8 @@ from .file_upload_service import (
     activate_deactivate_file_upload,
     get_file_upload_details,
 )
-from .file_upload_executor import FileUploadExecutor, LoadMode
+from .file_upload_executor import FileUploadExecutor, LoadMode, get_file_upload_config
+from .table_creator import _check_table_exists
 
 router = APIRouter(tags=["file_upload"])
 
@@ -592,6 +593,78 @@ async def get_columns(flupldref: str = PathParam(..., description="File upload r
                 pass
 
 
+@router.get("/check-table-exists/{flupldref}")
+async def check_table_exists(flupldref: str = PathParam(..., description="File upload reference")):
+    """
+    Check if the target table already exists in the database.
+    Returns true if table exists, false otherwise.
+    """
+    metadata_conn = None
+    target_conn = None
+    try:
+        metadata_conn = create_metadata_connection()
+        config = get_file_upload_config(metadata_conn, flupldref)
+        
+        if not config:
+            raise HTTPException(
+                status_code=404,
+                detail=f"File upload configuration not found: {flupldref}"
+            )
+        
+        trgconid = config.get('trgconid')
+        trgschm = config.get('trgschm', '')
+        trgtblnm = config.get('trgtblnm', '')
+        
+        if not trgconid or not trgtblnm:
+            # If no target connection or table name, table doesn't exist
+            return {
+                "success": True,
+                "table_exists": False,
+                "message": "Target connection or table name not configured"
+            }
+        
+        # Connect to target database
+        target_conn = create_target_connection(trgconid)
+        if not target_conn:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to connect to target database (connection ID: {trgconid})"
+            )
+        
+        # Check if table exists
+        cursor = target_conn.cursor()
+        db_type = _detect_db_type(target_conn)
+        table_exists = _check_table_exists(cursor, db_type, trgschm, trgtblnm)
+        cursor.close()
+        
+        return {
+            "success": True,
+            "table_exists": table_exists,
+            "schema": trgschm,
+            "table": trgtblnm
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"Error checking table existence: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error checking table existence: {str(e)}"
+        )
+    finally:
+        if metadata_conn:
+            try:
+                metadata_conn.close()
+            except Exception:
+                pass
+        if target_conn:
+            try:
+                target_conn.close()
+            except Exception:
+                pass
+
+
 class DeleteFileUploadRequest(BaseModel):
     """Request model for deleting file upload."""
     flupldref: str
@@ -812,13 +885,13 @@ async def list_all_file_upload_runs(
         param_idx = 1
         
         if flupldref:
-            # Partial match on flupldref (reference, not description)
-            search_pattern = f"%{flupldref}%"
+            # Exact match on flupldref (reference, not description)
+            # Use exact match for better performance and accuracy
             if db_type == "POSTGRESQL":
-                where_conditions.append("LOWER(r.flupldref) LIKE LOWER(%s)")
+                where_conditions.append("r.flupldref = %s")
             else:
-                where_conditions.append(f"LOWER(r.flupldref) LIKE LOWER(:{param_idx})")
-            params.append(search_pattern)
+                where_conditions.append(f"r.flupldref = :{param_idx}")
+            params.append(flupldref)
             param_idx += 1
         
         if status:
@@ -984,6 +1057,7 @@ async def get_file_upload_errors(
             """
             params.extend([limit, offset])
             cursor.execute(sql, tuple(params))
+            rows_to_process = cursor.fetchall()
         else:
             table_name = _get_table_ref(cursor, db_type, "DMS_FLUPLD_ERR")
             if db_type == "ORACLE":
@@ -995,6 +1069,7 @@ async def get_file_upload_errors(
                     ora_params.append(val)
                     idx += 1
                 where_clause_oracle = " AND ".join(sql_filters)
+                # Oracle: fetch all and apply limit/offset in Python (same pattern as /runs endpoint)
                 sql = f"""
                     SELECT errid, flupldref, runid, rwndx, rwdtjsn, rrcd, rrmssg, crtdby, crtdt
                     FROM {table_name}
@@ -1002,17 +1077,36 @@ async def get_file_upload_errors(
                     ORDER BY rwndx
                 """
                 cursor.execute(sql, ora_params)
+                all_rows = cursor.fetchall()
+                # Apply limit/offset manually for Oracle
+                if offset > 0 or limit < len(all_rows):
+                    rows_to_process = all_rows[offset:offset + limit]
+                else:
+                    rows_to_process = all_rows
             else:
                 sql = f"""
                     SELECT errid, flupldref, runid, rwndx, rwdtjsn, rrcd, rrmssg, crtdby, crtdt
                     FROM {table_name}
                     WHERE {where_clause}
                     ORDER BY rwndx
+                    LIMIT %s OFFSET %s
                 """
+                params.extend([limit, offset])
                 cursor.execute(sql, tuple(params))
+                rows_to_process = cursor.fetchall()
 
         columns = [desc[0].lower() for desc in cursor.description]
-        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        rows = []
+        for row in rows_to_process:
+            row_dict = dict(zip(columns, row))
+            # Ensure rwdtjsn is always a string (JSONB columns may return as dict/object)
+            if 'rwdtjsn' in row_dict and row_dict['rwdtjsn'] is not None:
+                if isinstance(row_dict['rwdtjsn'], (dict, list)):
+                    import json
+                    row_dict['rwdtjsn'] = json.dumps(row_dict['rwdtjsn'], default=str)
+                elif not isinstance(row_dict['rwdtjsn'], str):
+                    row_dict['rwdtjsn'] = str(row_dict['rwdtjsn'])
+            rows.append(row_dict)
 
         return {
             "success": True,

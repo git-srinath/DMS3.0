@@ -25,6 +25,15 @@ import {
   Tooltip,
   Grid,
   Collapse,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
+  TableContainer,
+  LinearProgress,
+  alpha,
+  useTheme as useMuiTheme,
 } from "@mui/material";
 import {
   Refresh,
@@ -43,6 +52,7 @@ import { API_BASE_URL } from "@/app/config";
 
 const FileUploadHistoryPage = () => {
   const { darkMode } = useTheme();
+  const muiTheme = useMuiTheme();
 
   const [runs, setRuns] = useState([]);
   const [uploads, setUploads] = useState([]);
@@ -62,6 +72,13 @@ const FileUploadHistoryPage = () => {
   // Sorting state
   const [orderBy, setOrderBy] = useState("strttm");
   const [order, setOrder] = useState("desc");
+
+  // Error dialog state
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
+  const [selectedRun, setSelectedRun] = useState(null);
+  const [errorRows, setErrorRows] = useState([]);
+  const [loadingErrors, setLoadingErrors] = useState(false);
+  const [errorFilterCode, setErrorFilterCode] = useState("");
 
   const fetchUploads = async () => {
     try {
@@ -142,6 +159,56 @@ const FileUploadHistoryPage = () => {
   const getUploadName = (flupldref) => {
     const upload = uploads.find((u) => u.flupldref === flupldref);
     return upload ? upload.fluplddesc || upload.flupldref : flupldref;
+  };
+
+  const handleFailedCountClick = (run) => {
+    if (run.rwsfld > 0) {
+      setSelectedRun(run);
+      setShowErrorDialog(true);
+      setErrorRows([]);
+      setErrorFilterCode("");
+      // Fetch errors for this run
+      fetchErrorRows(run.flupldref, run.runid, "");
+    }
+  };
+
+  const fetchErrorRows = async (flupldref, runid, errorCode) => {
+    if (!flupldref || !runid) {
+      setErrorRows([]);
+      return;
+    }
+
+    setLoadingErrors(true);
+    try {
+      const token = localStorage.getItem("token");
+      const params = new URLSearchParams();
+      params.append("runid", runid.toString());
+      if (errorCode) {
+        params.append("error_code", errorCode);
+      }
+
+      const response = await axios.get(
+        `${API_BASE_URL}/file-upload/errors/${encodeURIComponent(flupldref)}?${params.toString()}`,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (response.data?.success && Array.isArray(response.data.data)) {
+        setErrorRows(response.data.data);
+      } else {
+        setErrorRows([]);
+      }
+    } catch (error) {
+      console.error("Error fetching file upload errors:", error);
+      showNotification("Failed to fetch error rows", "error");
+      setErrorRows([]);
+    } finally {
+      setLoadingErrors(false);
+    }
   };
 
   const formatDateTime = (dt) => {
@@ -553,7 +620,22 @@ const FileUploadHistoryPage = () => {
                   </TableCell>
                   <TableCell align="right">
                     {run.rwsfld > 0 ? (
-                      <Chip size="small" color="error" variant="outlined" label={run.rwsfld} />
+                      <Tooltip title="Click to view error details">
+                        <Chip
+                          size="small"
+                          color="error"
+                          variant="outlined"
+                          label={run.rwsfld}
+                          onClick={() => handleFailedCountClick(run)}
+                          sx={{
+                            cursor: "pointer",
+                            "&:hover": {
+                              backgroundColor: "error.main",
+                              color: "error.contrastText",
+                            },
+                          }}
+                        />
+                      </Tooltip>
                     ) : (
                       "-"
                     )}
@@ -577,6 +659,160 @@ const FileUploadHistoryPage = () => {
           {notification.message}
         </Alert>
       </Snackbar>
+
+      {/* Error Details Dialog */}
+      <Dialog
+        open={showErrorDialog}
+        onClose={() => {
+          setShowErrorDialog(false);
+          setSelectedRun(null);
+          setErrorRows([]);
+        }}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>
+          Error Rows: {selectedRun?.flupldref} (Run #{selectedRun?.runid})
+        </DialogTitle>
+        <DialogContent>
+          {!selectedRun ? (
+            <DialogContentText>No run selected.</DialogContentText>
+          ) : (
+            <Box sx={{ py: 1 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 2,
+                  mb: 2,
+                  alignItems: "center",
+                }}
+              >
+                <TextField
+                  size="small"
+                  label="Error Code"
+                  value={errorFilterCode}
+                  onChange={(e) => setErrorFilterCode(e.target.value)}
+                  onBlur={() => {
+                    if (selectedRun) {
+                      fetchErrorRows(selectedRun.flupldref, selectedRun.runid, errorFilterCode);
+                    }
+                  }}
+                />
+
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => {
+                    if (selectedRun) {
+                      fetchErrorRows(selectedRun.flupldref, selectedRun.runid, errorFilterCode);
+                    }
+                  }}
+                  disabled={loadingErrors}
+                >
+                  Refresh Errors
+                </Button>
+              </Box>
+
+              {loadingErrors ? (
+                <Box sx={{ py: 2 }}>
+                  <LinearProgress />
+                </Box>
+              ) : errorRows.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No error rows found for this run.
+                </Typography>
+              ) : (
+                <TableContainer
+                  component={Paper}
+                  sx={{
+                    maxHeight: 400,
+                    mt: 1,
+                  }}
+                >
+                  <Table size="small" stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Row #</TableCell>
+                        <TableCell>Error Code</TableCell>
+                        <TableCell>Error Message</TableCell>
+                        <TableCell>Row Data (JSON)</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {errorRows.map((row) => (
+                        <TableRow key={row.errid}>
+                          <TableCell>{(row.rwndx ?? 0) + 1}</TableCell>
+                          <TableCell>
+                            {row.rrcd ? (
+                              <Chip
+                                label={row.rrcd}
+                                size="small"
+                                color="error"
+                                variant="outlined"
+                              />
+                            ) : (
+                              "-"
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Tooltip title={row.rrmssg}>
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  maxWidth: 320,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {row.rrmssg}
+                              </Typography>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell>
+                            <Box
+                              sx={{
+                                maxWidth: 360,
+                                maxHeight: 80,
+                                overflow: "auto",
+                                fontFamily: "monospace",
+                                fontSize: "0.75rem",
+                                backgroundColor: darkMode
+                                  ? alpha(muiTheme.palette.background.paper, 0.6)
+                                  : alpha(muiTheme.palette.grey[200], 0.6),
+                                p: 0.5,
+                                borderRadius: 1,
+                              }}
+                            >
+                              {row.rwdtjsn
+                                ? typeof row.rwdtjsn === "string"
+                                  ? row.rwdtjsn
+                                  : JSON.stringify(row.rwdtjsn, null, 2)
+                                : "-"}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setShowErrorDialog(false);
+              setSelectedRun(null);
+              setErrorRows([]);
+            }}
+          >
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

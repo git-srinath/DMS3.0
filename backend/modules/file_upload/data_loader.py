@@ -5,7 +5,7 @@ Handles data loading with different strategies: INSERT, TRUNCATE_LOAD, UPSERT.
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, date
 from backend.modules.common.db_table_utils import _detect_db_type
 from backend.modules.file_upload.table_creator import _quote_identifier
 from backend.modules.logger import info, error, warning
@@ -58,10 +58,11 @@ def load_data(
     cursor = connection.cursor()
     db_type = _detect_db_type(connection)
     
-    # Build target columns list and audit column mapping
+    # Build target columns list, audit column mapping, and column type mapping
     target_columns = []
     primary_key_columns = []
     audit_columns = {}  # Map audit column names to their types
+    column_types = {}  # Map column names to their data types
     
     for col in column_mappings:
         trg_col = col.get('trgclnm', '').strip()
@@ -69,6 +70,11 @@ def load_data(
             continue
             
         target_columns.append(trg_col)
+        
+        # Track column data type
+        trgcldtyp = col.get('trgcldtyp', '').strip().upper() if col.get('trgcldtyp') else ''
+        if trgcldtyp:
+            column_types[trg_col] = trgcldtyp
         
         # Track primary keys for UPSERT
         if col.get('trgkyflg') == 'Y':
@@ -137,12 +143,12 @@ def load_data(
             if load_mode == LoadMode.UPSERT:
                 result = _upsert_batch(
                     cursor, db_type, schema, table, batch_df, target_columns,
-                    primary_key_columns, audit_columns, username
+                    primary_key_columns, audit_columns, username, column_types
                 )
             else:
                 result = _insert_batch(
                     cursor, db_type, schema, table, batch_df, target_columns,
-                    audit_columns, username
+                    audit_columns, username, column_types
                 )
             
             all_rows_successful += result['rows_successful']
@@ -190,12 +196,19 @@ def _truncate_table(cursor, db_type: str, schema: str, table: str):
     cursor.execute(sql)
 
 
-def _normalize_db_value(value: Any) -> Any:
+def _normalize_db_value(value: Any, column_type: Optional[str] = None, db_type: str = "ORACLE") -> Any:
     """
     Normalize Python / pandas / numpy values to types supported by DB drivers.
 
     In particular, Oracle (python-oracledb) does not accept numpy scalar types
     like np.int64 directly; they must be converted to built‑in Python types.
+    
+    Also handles string dates/timestamps conversion for Oracle DATE/TIMESTAMP columns.
+    
+    Args:
+        value: Value to normalize
+        column_type: Optional column data type (e.g., 'DATE', 'TIMESTAMP') to help with conversion
+        db_type: Database type ('ORACLE', 'POSTGRESQL', etc.)
     """
     # Treat pandas NA/NaT as None
     if value is None or (isinstance(value, float) and pd.isna(value)):
@@ -204,6 +217,31 @@ def _normalize_db_value(value: Any) -> Any:
     # pandas Timestamp -> builtin datetime
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
+
+    # Handle string dates/timestamps for Oracle DATE/TIMESTAMP columns
+    if isinstance(value, str) and value.strip() and column_type:
+        col_type_upper = column_type.upper()
+        # Check if this column should be a date or timestamp
+        is_date_type = any(term in col_type_upper for term in ['DATE', 'TIMESTAMP'])
+        
+        if is_date_type:
+            try:
+                # Try to parse the string as a date/timestamp using pandas
+                # pandas.to_datetime handles many formats automatically
+                parsed = pd.to_datetime(value, errors='raise', infer_datetime_format=True)
+                if isinstance(parsed, pd.Timestamp):
+                    dt = parsed.to_pydatetime()
+                    # For DATE columns (without time), return only the date part
+                    if 'DATE' in col_type_upper and 'TIMESTAMP' not in col_type_upper:
+                        # Check if the original value looks like date-only (no time component)
+                        if ':' not in value and 'T' not in value:
+                            return dt.date()
+                    return dt
+            except (ValueError, TypeError) as e:
+                # If parsing fails, log warning but return original value
+                # This will cause an error that will be caught and logged properly
+                warning(f"Could not parse date string '{value}' for column type '{column_type}': {str(e)}")
+                return value
 
     # numpy scalar types -> builtin Python types
     if isinstance(value, (np.integer,)):
@@ -224,7 +262,8 @@ def _insert_batch(
     batch_df: pd.DataFrame,
     target_columns: List[str],
     audit_columns: Dict[str, str],
-    username: Optional[str]
+    username: Optional[str],
+    column_types: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """
     Insert a batch of rows using a clean, direct approach.
@@ -449,7 +488,12 @@ def _insert_batch(
             
             # Execute insert
             # Normalize values to DB‑friendly Python types (e.g. np.int64 -> int)
-            normalized_values = [_normalize_db_value(v) for v in values]
+            # Also convert string dates to datetime objects based on column types
+            normalized_values = []
+            for idx, v in enumerate(values):
+                col_name = target_columns[idx] if idx < len(target_columns) else None
+                col_type = column_types.get(col_name) if column_types and col_name else None
+                normalized_values.append(_normalize_db_value(v, col_type, db_type))
 
             if db_type == "ORACLE":
                 cursor.execute(insert_sql, normalized_values)
@@ -495,7 +539,8 @@ def _upsert_batch(
     target_columns: List[str],
     primary_key_columns: List[str],
     audit_columns: Dict[str, str],
-    username: Optional[str]
+    username: Optional[str],
+    column_types: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """Upsert a batch of rows (update if exists, insert if not)."""
     if not primary_key_columns:
@@ -563,7 +608,7 @@ def _upsert_batch(
         # MySQL, MS SQL Server: ON DUPLICATE KEY UPDATE or MERGE
         # For now, fall back to insert (can be enhanced later)
         warning(f"UPSERT not fully supported for {db_type}, falling back to INSERT")
-        return _insert_batch(cursor, db_type, schema, table, batch_df, target_columns, audit_columns, username)
+        return _insert_batch(cursor, db_type, schema, table, batch_df, target_columns, audit_columns, username, column_types)
     
     rows_successful = 0
     rows_failed = 0
@@ -606,7 +651,12 @@ def _upsert_batch(
                     # Use positional access (columns are now in same order as target_columns)
                     col_idx = target_columns.index(trg_col)
                     val = batch_df.iloc[row_idx, col_idx]
-                    values.append(val if not pd.isna(val) else None)
+                    if pd.isna(val):
+                        values.append(None)
+                    else:
+                        # Normalize value (convert string dates, etc.)
+                        col_type = column_types.get(trg_col) if column_types else None
+                        values.append(_normalize_db_value(val, col_type, db_type))
             
             # Execute upsert
             if db_type == "ORACLE":
