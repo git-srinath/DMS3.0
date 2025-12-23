@@ -10,3 +10,12 @@ python-dotenv
 pandas
 openpyxl
 APScheduler
+pyarrow
+# File upload parsers (optional - parsers will work with fallbacks if not installed)
+lxml
+pdfplumber
+tabula-py
+# Google Sheets API (optional - requires credentials setup)
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

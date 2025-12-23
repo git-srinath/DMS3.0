@@ -33,6 +33,7 @@ try:
         JobRequestType,
         JobSchedulerService,
         ImmediateJobRequest,
+        _calculate_next_run_time,
     )
     from backend.modules.jobs.scheduler_models import SchedulerConfig, QueueRequest
     from backend.modules.jobs.execution_engine import JobExecutionEngine
@@ -47,6 +48,7 @@ except ImportError:  # When running Flask app.py directly inside backend
             JobRequestType,
             JobSchedulerService,
             ImmediateJobRequest,
+            _calculate_next_run_time,
         )
         from modules.jobs.scheduler_models import SchedulerConfig, QueueRequest  # type: ignore
         from modules.jobs.execution_engine import JobExecutionEngine  # type: ignore
@@ -519,6 +521,7 @@ class SchedulerService:
             error(f"[_sync_schedules] Unexpected error during schedule sync: {e}\nTraceback: {traceback.format_exc()}")
 
         self._sync_report_schedules()
+        self._sync_flupld_schedules()
 
     def _sync_report_schedules(self) -> None:
         with self._db_cursor() as cursor:
@@ -591,6 +594,141 @@ class SchedulerService:
                 info(f"Queued report schedule {schedule_id} for report {report_id}")
             except Exception as exc:
                 error(f"Failed to process report schedule {schedule_id} (report {report_id}): {exc}")
+
+    def _sync_flupld_schedules(self) -> None:
+        """Sync file upload schedules from DMS_FLUPLD_SCHD and queue executions when due."""
+        with self._db_cursor() as cursor:
+            connection = cursor.connection
+            db_type = _detect_db_type(connection)
+            schema = os.getenv('DMS_SCHEMA', 'TRG')
+
+            if db_type == "POSTGRESQL":
+                schema_lower = schema.lower() if schema else 'public'
+                dms_flupld_schd_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_FLUPLD_SCHD')
+                dms_flupld_schd_ref = f'"{dms_flupld_schd_table}"' if dms_flupld_schd_table != dms_flupld_schd_table.lower() else dms_flupld_schd_table
+                schema_prefix = f'{schema_lower}.' if schema else ''
+                dms_flupld_schd_full = f'{schema_prefix}{dms_flupld_schd_ref}'
+                cursor.execute(
+                    f"""
+                    SELECT schdid, flupldref, frqncy, tm_prm, nxt_run_dt, lst_run_dt, stts
+                    FROM {dms_flupld_schd_full}
+                    WHERE UPPER(COALESCE(stts, '')) = 'ACTIVE'
+                    """
+                )
+            else:
+                schema_prefix = f'{schema}.' if schema else ''
+                cursor.execute(
+                    f"""
+                    SELECT schdid, flupldref, frqncy, tm_prm, nxt_run_dt, lst_run_dt, stts
+                    FROM {schema_prefix}DMS_FLUPLD_SCHD
+                    WHERE UPPER(COALESCE(stts, '')) = 'ACTIVE'
+                    """
+                )
+            rows = cursor.fetchall()
+            columns = [col[0] for col in cursor.description]
+
+        # Use scheduler timezone and make sure comparisons are tz-aware
+        now = datetime.now(self.scheduler.timezone)
+        schedules = [{columns[i].upper(): row[i] for i in range(len(columns))} for row in rows]
+        for sched in schedules:
+            next_run = sched.get("NXT_RUN_DT") or now
+            if isinstance(next_run, datetime):
+                # If DB datetime is naive, assume scheduler timezone
+                if next_run.tzinfo is None:
+                    next_run = next_run.replace(tzinfo=self.scheduler.timezone)
+            else:
+                next_run = now
+            if next_run > now:
+                continue
+            flupldref = sched.get("FLUPLDREF")
+            schedule_id = sched.get("SCHDID")
+            frqncy = sched.get("FRQNCY", "DL")
+            tm_prm = sched.get("TM_PRM") or ""
+            
+            info(f"[_sync_flupld_schedules] Processing schedule {schedule_id} for {flupldref}: frqncy={frqncy}, tm_prm={tm_prm}")
+            
+            # Parse tm_prm to extract frequency_day, hour, minute
+            # Format: DL_10:30, WK_MON_10:30, MN_15_10:30, etc.
+            freq_day = None
+            hour = 0
+            minute = 0
+            if tm_prm:
+                parts = tm_prm.split("_")
+                info(f"[_sync_flupld_schedules] Parsed tm_prm parts: {parts}")
+                if len(parts) >= 2:
+                    # Last part is always HH:MM
+                    time_part = parts[-1]
+                    if ":" in time_part:
+                        try:
+                            hour_str, minute_str = time_part.split(":")
+                            hour = int(hour_str)
+                            minute = int(minute_str)
+                            info(f"[_sync_flupld_schedules] Extracted time: hour={hour}, minute={minute}")
+                        except (ValueError, IndexError) as e:
+                            warning(f"[_sync_flupld_schedules] Failed to parse time part '{time_part}': {e}")
+                    # For WK, FN: second part is day (MON, TUE, etc.)
+                    # For MN, HY, YR: second part is day of month (1-31)
+                    if len(parts) >= 3 and frqncy in ("WK", "FN"):
+                        freq_day = parts[1]
+                        info(f"[_sync_flupld_schedules] Extracted weekday: {freq_day}")
+                    elif len(parts) >= 3 and frqncy in ("MN", "HY", "YR"):
+                        try:
+                            freq_day = str(int(parts[1]))  # Day of month as string
+                            info(f"[_sync_flupld_schedules] Extracted day of month: {freq_day}")
+                        except ValueError as e:
+                            warning(f"[_sync_flupld_schedules] Failed to parse day of month '{parts[1]}': {e}")
+            else:
+                info(f"[_sync_flupld_schedules] No tm_prm provided, using defaults: hour=0, minute=0")
+            
+            # Get start/end dates from schedule (if stored, otherwise use defaults)
+            # Note: DMS_FLUPLD_SCHD doesn't have strtdt/enddt columns in the current schema
+            # We'll use None for now, which means no date restrictions
+            strtdt = None
+            enddt = None
+            
+            try:
+                self._queue_file_upload_request(flupldref, payload={"load_mode": "INSERT"})
+                info(f"[_sync_flupld_schedules] Queued file upload request for {flupldref} (schedule {schedule_id})")
+                
+                # Calculate next run time
+                # Convert timezone object to string if needed
+                tz = self.scheduler.timezone
+                if hasattr(tz, 'zone'):
+                    tz_str = tz.zone
+                elif isinstance(tz, str):
+                    tz_str = tz
+                else:
+                    tz_str = str(tz)
+                
+                info(f"[_sync_flupld_schedules] Calculating next run for schedule {schedule_id}: frqncy={frqncy}, freq_day={freq_day}, hour={hour}, minute={minute}, timezone={tz_str}")
+                
+                next_dt = _calculate_next_run_time(
+                    frequency_code=frqncy,
+                    frequency_day=freq_day,
+                    frequency_hour=hour,
+                    frequency_minute=minute,
+                    start_date=strtdt,
+                    end_date=enddt,
+                    timezone=tz_str,
+                )
+                
+                if next_dt is None:
+                    warning(f"[_sync_flupld_schedules] Could not calculate next run time for schedule {schedule_id} ({flupldref})")
+                    status = "PAUSED"
+                else:
+                    info(f"[_sync_flupld_schedules] Calculated next run time for schedule {schedule_id}: {next_dt}")
+                    status = "ACTIVE"
+                
+                # Convert now to naive datetime for database storage
+                last_run_naive = now.replace(tzinfo=None) if now.tzinfo else now
+                next_run_naive = next_dt.replace(tzinfo=None) if next_dt and next_dt.tzinfo else next_dt
+                
+                info(f"[_sync_flupld_schedules] Updating schedule {schedule_id}: lst_run_dt={last_run_naive}, nxt_run_dt={next_run_naive}, stts={status}")
+                self._update_file_upload_schedule(schedule_id, last_run=last_run_naive, next_run=next_run_naive, status=status)
+                info(f"[_sync_flupld_schedules] Successfully updated schedule {schedule_id} for {flupldref}")
+            except Exception as exc:
+                import traceback
+                error(f"[_sync_flupld_schedules] Failed to process file upload schedule {schedule_id} ({flupldref}): {exc}\nTraceback: {traceback.format_exc()}")
 
     def _poll_queue(self) -> None:
         """
@@ -741,6 +879,9 @@ class SchedulerService:
             if request.request_type.value == "REPORT":
                 info(f"[_execute_request] Executing REPORT request for {request.mapref}")
                 result = self._execute_report_request(request)
+            elif request.request_type.value == "FILE_UPLOAD":
+                info(f"[_execute_request] Executing FILE_UPLOAD request for {request.mapref}")
+                result = self._execute_file_upload_request(request)
             else:
                 info(f"[_execute_request] Executing job flow for {request.mapref} using execution engine")
                 result = self.engine.execute(request)
@@ -793,6 +934,39 @@ class SchedulerService:
         result = executor.execute_report(report_id=report_id, payload=payload)
         
         info(f"[SchedulerService] Report {report_id} executed successfully: {result}")
+        return result
+
+    def _execute_file_upload_request(self, request: QueueRequest) -> Dict[str, Any]:
+        """Execute a FILE_UPLOAD type request using the FileUploadExecutor."""
+        # Support both FastAPI (package import) and legacy Flask (relative import) contexts
+        try:
+            from backend.modules.file_upload.file_upload_executor import FileUploadExecutor
+        except ImportError:  # When running Flask app.py directly inside backend
+            from modules.file_upload.file_upload_executor import FileUploadExecutor  # type: ignore
+
+        payload = request.payload or {}
+        flupldref = payload.get("flupldref")
+        
+        if not flupldref:
+            # Try to extract from mapref (format: "FLUPLD:ReportData")
+            if request.mapref and request.mapref.startswith("FLUPLD:"):
+                flupldref = request.mapref.split(":", 1)[1]
+        
+        if not flupldref:
+            raise ValueError("File upload reference not found in request payload or mapref")
+        
+        load_mode = payload.get("load_mode", "INSERT")
+        username = "system"  # Scheduled executions run as system
+        
+        executor = FileUploadExecutor()
+        result = executor.execute(
+            flupldref=flupldref,
+            file_path=None,  # Use file path from configuration
+            load_mode=load_mode,
+            username=username
+        )
+        
+        info(f"[SchedulerService] File upload {flupldref} executed successfully: {result}")
         return result
 
     def _mark_request_complete(self, request: QueueRequest, status: str, payload: Dict[str, Any]) -> None:
@@ -996,6 +1170,72 @@ class SchedulerService:
         if freq == "YEARLY":
             return reference + timedelta(days=365), "ACTIVE"
         return reference + timedelta(days=1), "ACTIVE"
+
+    def _queue_file_upload_request(self, flupldref: str, payload: Optional[Dict[str, Any]] = None) -> None:
+        connection = None
+        try:
+            connection = create_metadata_connection()
+            service = JobSchedulerService(connection)
+            service.queue_file_upload_request(flupldref=flupldref, payload=payload)
+        except Exception as exc:
+            error(f"Failed to enqueue file upload {flupldref}: {exc}")
+            raise
+        finally:
+            if connection:
+                connection.close()
+
+    def _update_file_upload_schedule(self, schedule_id: int, last_run: datetime, next_run: Optional[datetime], status: Optional[str]):
+        try:
+            with self._db_cursor() as cursor:
+                connection = cursor.connection
+                db_type = _detect_db_type(connection)
+                schema = os.getenv('DMS_SCHEMA', 'TRG')
+                if db_type == "POSTGRESQL":
+                    schema_lower = schema.lower() if schema else 'public'
+                    dms_flupld_schd_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_FLUPLD_SCHD')
+                    dms_flupld_schd_ref = f'"{dms_flupld_schd_table}"' if dms_flupld_schd_table != dms_flupld_schd_table.lower() else dms_flupld_schd_table
+                    schema_prefix = f'{schema_lower}.' if schema else ''
+                    dms_flupld_schd_full = f'{schema_prefix}{dms_flupld_schd_ref}'
+                    info(f"[_update_file_upload_schedule] Updating PostgreSQL table {dms_flupld_schd_full} for schedule {schedule_id}")
+                    cursor.execute(
+                        f"""
+                        UPDATE {dms_flupld_schd_full}
+                        SET lst_run_dt = %s,
+                            nxt_run_dt = %s,
+                            stts = %s
+                        WHERE schdid = %s
+                        """,
+                        (last_run, next_run, status or "ACTIVE", schedule_id),
+                    )
+                    rows_updated = cursor.rowcount
+                    info(f"[_update_file_upload_schedule] PostgreSQL UPDATE affected {rows_updated} row(s)")
+                else:
+                    schema_prefix = f'{schema}.' if schema else ''
+                    info(f"[_update_file_upload_schedule] Updating Oracle table {schema_prefix}DMS_FLUPLD_SCHD for schedule {schedule_id}")
+                    cursor.execute(
+                        f"""
+                        UPDATE {schema_prefix}DMS_FLUPLD_SCHD
+                        SET lst_run_dt = :last_run,
+                            nxt_run_dt = :next_run,
+                            stts = :status
+                        WHERE schdid = :schdid
+                        """,
+                        {
+                            "last_run": last_run,
+                            "next_run": next_run,
+                            "status": status or "ACTIVE",
+                            "schdid": schedule_id,
+                        },
+                    )
+                    rows_updated = cursor.rowcount
+                    info(f"[_update_file_upload_schedule] Oracle UPDATE affected {rows_updated} row(s)")
+                
+                cursor.connection.commit()
+                info(f"[_update_file_upload_schedule] Successfully committed update for schedule {schedule_id}")
+        except Exception as exc:
+            import traceback
+            error(f"[_update_file_upload_schedule] Failed to update schedule {schedule_id}: {exc}\nTraceback: {traceback.format_exc()}")
+            raise
 
     def _enqueue_child_jobs(self, parent_mapref: str) -> None:
         with self._db_cursor() as cursor:
