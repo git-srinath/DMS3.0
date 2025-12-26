@@ -267,9 +267,7 @@ class SchedulerService:
                             """
                         )
                         query_success = True
-                        info("[_sync_schedules] Query succeeded with uppercase column names")
                     except Exception as e:
-                        info(f"[_sync_schedules] Uppercase query failed: {e}, trying lowercase...")
                         # If uppercase fails, try lowercase (columns created without quotes)
                         try:
                             cursor.execute(
@@ -281,7 +279,6 @@ class SchedulerService:
                                 """
                             )
                             query_success = True
-                            info("[_sync_schedules] Query succeeded with lowercase column names")
                         except Exception as e2:
                             error(f"[_sync_schedules] Both queries failed. Uppercase error: {e}, Lowercase error: {e2}")
                             return
@@ -752,8 +749,6 @@ class SchedulerService:
                     schema_prefix = f'{schema_lower}.' if schema else ''
                     dms_prcreq_full = f'{schema_prefix}{dms_prcreq_ref}'
                     
-                    debug(f"[_poll_queue] PostgreSQL table: {dms_prcreq_full}")
-                    
                     # PostgreSQL: Use LIMIT instead of FETCH FIRST
                     # Try uppercase column names first, fallback to lowercase
                     try:
@@ -766,9 +761,8 @@ class SchedulerService:
                             LIMIT 25
                             """
                         )
-                        debug("[_poll_queue] Query succeeded with uppercase column names")
                     except Exception as e:
-                        debug(f"[_poll_queue] Uppercase query failed: {e}, trying lowercase...")
+                        # Fallback to lowercase column names if uppercase fails
                         cursor.execute(
                             f"""
                             SELECT request_id, mapref, request_type, payload
@@ -778,7 +772,6 @@ class SchedulerService:
                             LIMIT 25
                             """
                         )
-                        debug("[_poll_queue] Query succeeded with lowercase column names")
                 else:  # Oracle
                     schema_prefix = f'{schema}.' if schema else ''
                     cursor.execute(

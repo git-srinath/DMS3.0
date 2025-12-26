@@ -3,6 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 import os
+import sys
+
+# Fix for Windows multiprocessing issues with uvicorn reloader
+# This prevents BrokenPipeError on Windows when using --reload
+if sys.platform == 'win32':
+    import multiprocessing
+    multiprocessing.set_start_method('spawn', force=True)
 
 from backend.modules.login.fastapi_login import router as auth_router
 from backend.modules.type_mapping.fastapi_parameter_mapping import (
@@ -37,6 +44,9 @@ from backend.modules.admin.fastapi_admin import (
 )
 from backend.modules.security.fastapi_security import (
     router as security_router,
+)
+from backend.modules.file_upload.fastapi_file_upload import (
+    router as file_upload_router,
 )
 
 load_dotenv()
@@ -106,6 +116,7 @@ app.include_router(dashboard_router, prefix="/dashboard")
 app.include_router(access_control_router, prefix="/access-control")
 app.include_router(admin_router, prefix="/admin")
 app.include_router(security_router, prefix="/security")
+app.include_router(file_upload_router, prefix="/file-upload")
 
 
 # Ensure required directories exist (mirrors Flask app.py behavior)
@@ -118,5 +129,4 @@ os.makedirs("data/templates", exist_ok=True)
 #       uvicorn backend.fastapi_app:app --reload --host 0.0.0.0 --port 8000
 # - Routers for each module (auth, admin, mapper, jobs, etc.) will be added and
 #   included here in later phases of the migration plan.
-
 

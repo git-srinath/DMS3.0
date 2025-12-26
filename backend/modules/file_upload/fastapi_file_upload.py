@@ -161,7 +161,7 @@ async def upload_file(
 
 @router.get("/get-all-uploads")
 async def get_all_uploads():
-    """Get all file upload configurations."""
+    """Get all file upload configurations with schedule information."""
     conn = None
     try:
         conn = create_metadata_connection()
@@ -170,27 +170,74 @@ async def get_all_uploads():
         
         table_name = _get_table_name(cursor, db_type, "DMS_FLUPLD")
         
-        if db_type == "POSTGRESQL":
-            query = f"""
-                SELECT flupldid, flupldref, fluplddesc, flnm, fltyp, trgconid, 
-                       trgschm, trgtblnm, trnctflg, stflg, crtdt, lstrundt, nxtrundt
-                FROM {table_name}
-                WHERE curflg = 'Y'
-                ORDER BY flupldref
-            """
-            cursor.execute(query)
-        else:  # Oracle, etc.
-            query = f"""
-                SELECT flupldid, flupldref, fluplddesc, flnm, fltyp, trgconid, 
-                       trgschm, trgtblnm, trnctflg, stflg, crtdt, lstrundt, nxtrundt
-                FROM {table_name}
-                WHERE curflg = 'Y'
-                ORDER BY flupldref
-            """
-            cursor.execute(query)
+        # Try to include schedule info, fallback if schedule table doesn't exist
+        include_schedule = True
+        try:
+            schedule_table = _get_table_ref(cursor, db_type, "DMS_FLUPLD_SCHD")
+        except Exception:
+            include_schedule = False
+            warning("DMS_FLUPLD_SCHD table not found, schedule information will not be included")
+        
+        if include_schedule:
+            try:
+                if db_type == "POSTGRESQL":
+                    query = f"""
+                        SELECT u.flupldid, u.flupldref, u.fluplddesc, u.flnm, u.fltyp, u.trgconid, 
+                               u.trgschm, u.trgtblnm, u.trnctflg, u.stflg, u.crtdt, u.lstrundt, u.nxtrundt,
+                               s.schdid, s.frqncy, s.stts as schd_stts, s.nxt_run_dt as schd_nxt_run_dt
+                        FROM {table_name} u
+                        LEFT JOIN {schedule_table} s ON u.flupldref = s.flupldref AND s.curflg = 'Y' AND s.stts = 'ACTIVE'
+                        WHERE u.curflg = 'Y'
+                        ORDER BY u.flupldref
+                    """
+                    cursor.execute(query)
+                else:  # Oracle, etc.
+                    query = f"""
+                        SELECT u.FLUPLDID, u.FLUPLDREF, u.FLUPLDDESC, u.FLNM, u.FLTYP, u.TRGCONID, 
+                               u.TRGSCHM, u.TRGTBLNM, u.TRNCTFLG, u.STFLG, u.CRTDT, u.LSTRUNDT, u.NXTRUNDT,
+                               s.SCHDID, s.FRQNCY, s.STTS as SCHD_STTS, s.NXT_RUN_DT as SCHD_NXT_RUN_DT
+                        FROM {table_name} u
+                        LEFT JOIN {schedule_table} s ON u.FLUPLDREF = s.FLUPLDREF AND s.CURFLG = 'Y' AND s.STTS = 'ACTIVE'
+                        WHERE u.CURFLG = 'Y'
+                        ORDER BY u.FLUPLDREF
+                    """
+                    cursor.execute(query)
+            except Exception as join_error:
+                # If JOIN fails (e.g., table doesn't exist), fallback to query without schedule
+                warning(f"Failed to join schedule table: {str(join_error)}, falling back to query without schedule")
+                include_schedule = False
+        
+        if not include_schedule:
+            # Fallback query without schedule join
+            if db_type == "POSTGRESQL":
+                query = f"""
+                    SELECT flupldid, flupldref, fluplddesc, flnm, fltyp, trgconid, 
+                           trgschm, trgtblnm, trnctflg, stflg, crtdt, lstrundt, nxtrundt
+                    FROM {table_name}
+                    WHERE curflg = 'Y'
+                    ORDER BY flupldref
+                """
+                cursor.execute(query)
+            else:  # Oracle, etc.
+                query = f"""
+                    SELECT FLUPLDID, FLUPLDREF, FLUPLDDESC, FLNM, FLTYP, TRGCONID, 
+                           TRGSCHM, TRGTBLNM, TRNCTFLG, STFLG, CRTDT, LSTRUNDT, NXTRUNDT
+                    FROM {table_name}
+                    WHERE CURFLG = 'Y'
+                    ORDER BY FLUPLDREF
+                """
+                cursor.execute(query)
         
         columns = [desc[0].lower() for desc in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        
+        # Add null schedule fields if schedule table wasn't included
+        if not include_schedule:
+            for row in rows:
+                row['schdid'] = None
+                row['frqncy'] = None
+                row['schd_stts'] = None
+                row['schd_nxt_run_dt'] = None
         
         cursor.close()
         return {"success": True, "data": rows}

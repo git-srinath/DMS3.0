@@ -543,6 +543,8 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                   <TableCell sx={{ fontWeight: 600 }} align="center">File Type</TableCell>
                   <TableCell sx={{ fontWeight: 600 }} align="center">Target Table</TableCell>
                   <TableCell sx={{ fontWeight: 600 }} align="center">Active?</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }} align="center">Schedule</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }} align="center">Next Run</TableCell>
                   <TableCell sx={{ fontWeight: 600 }} align="center">Last Run</TableCell>
                   <TableCell sx={{ fontWeight: 600 }} align="center">Actions</TableCell>
                 </TableRow>
@@ -550,7 +552,7 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
               <TableBody>
                 {filteredUploads.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
+                    <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
                       <Typography variant="body2" color="text.secondary">
                         {allUploads.length === 0
                           ? 'No upload configurations found. Click "New Upload" to create one.'
@@ -594,6 +596,31 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                           inputProps={{ 'aria-label': 'Active?' }}
                           onChange={() => handleToggleStatus(upload)}
                         />
+                      </TableCell>
+                      <TableCell align="center">
+                        {upload.schdid ? (
+                          <Tooltip title={`Schedule: ${upload.frqncy || 'N/A'} - Status: ${upload.schd_stts || 'N/A'}`}>
+                            <Chip
+                              size="small"
+                              label={upload.schd_stts === 'ACTIVE' ? 'Scheduled' : 'Paused'}
+                              color={upload.schd_stts === 'ACTIVE' ? 'success' : 'default'}
+                              variant="outlined"
+                            />
+                          </Tooltip>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">-</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="center">
+                        {upload.schd_nxt_run_dt ? (
+                          <Tooltip title={new Date(upload.schd_nxt_run_dt).toLocaleString()}>
+                            <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
+                              {new Date(upload.schd_nxt_run_dt).toLocaleString()}
+                            </Typography>
+                          </Tooltip>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">-</Typography>
+                        )}
                       </TableCell>
                       <TableCell align="center">
                         {upload.lstrundt

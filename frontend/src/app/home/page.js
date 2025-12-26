@@ -27,7 +27,6 @@ import {
   Description,
   EventNote,
   History as HistoryIcon,
-  Folder as FolderIcon,
   Archive as ArchiveIcon,
 } from '@mui/icons-material'
 
@@ -104,16 +103,6 @@ const Page = () => {
       icon: <ArchiveIcon sx={{ fontSize: '2rem', color: '#fff' }} />,
       delay: 0.28,
       disabled: false,
-    },
-    {
-      title: 'File Templates',
-      accessKey: null,
-      path: null, // Placeholder for future implementation
-      gradient: 'linear-gradient(135deg, #22c55e 0%, #15803d 100%)',
-      description: 'Manage reusable upload templates (coming soon).',
-      icon: <FolderIcon sx={{ fontSize: '2rem', color: '#fff' }} />,
-      delay: 0.3,
-      disabled: true,
     },
     {
       title: 'Register DB Connections',
@@ -213,7 +202,6 @@ const Page = () => {
   const fileManagementTitles = [
     'File Upload',
     'Upload History',
-    'File Templates',
   ];
   const essentialsTitles = [
     'Parameters',

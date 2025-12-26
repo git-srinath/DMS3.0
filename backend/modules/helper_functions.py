@@ -7,8 +7,9 @@ try:
     from backend.modules.logger import logger, info, warning, error
     from backend.modules.mapper import pkgdwmapr_python as pkgdwmapr
 except ImportError:  # When running Flask app.py directly inside backend
-    from modules.logger import logger, info, warning, error
-    from modules.mapper import pkgdwmapr_python as pkgdwmapr
+    from modules.logger import logger, info, warning, error  # type: ignore
+    from modules.mapper import pkgdwmapr_python as pkgdwmapr  # type: ignore
+
 dotenv.load_dotenv()
 
 ORACLE_SCHEMA = os.getenv("DMS_SCHEMA")

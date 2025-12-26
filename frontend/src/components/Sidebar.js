@@ -7,9 +7,10 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/app/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, FileSpreadsheet, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, History } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, History, Upload } from 'lucide-react';
 import CustomDbIcon from './CustomDbIcon';
 import CustomParameterIcon from './CustomParameterIcon';
+import CustomJobsIcon from './CustomJobsIcon';
 
 const SidebarItem = ({ icon, text, active = false, expanded = true, href }) => {
   const { darkMode } = useTheme();
@@ -269,11 +270,22 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
         {/* Jobs - requires 'jobs' access */}
         {isItemVisible({ accessKey: 'jobs' }) && (
         <SidebarItem 
-          icon={<FileSpreadsheet />} 
+          icon={<CustomJobsIcon size={18} />} 
           text="Jobs" 
           active={pathname === '/jobs'} 
           expanded={sidebarOpen}
           href="/jobs"
+        /> 
+        )}
+
+        {/* File Upload - always visible (no accessKey) */}
+        {isItemVisible({}) && (
+        <SidebarItem 
+          icon={<Upload />} 
+          text="File Upload" 
+          active={pathname === '/file_upload_module' || pathname?.startsWith('/file_upload_module')} 
+          expanded={sidebarOpen}
+          href="/file_upload_module"
         /> 
         )}
 

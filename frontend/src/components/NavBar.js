@@ -52,7 +52,11 @@ const getPageTitle = (pathname) => {
     case '/report_scheduler':
         return 'Report Scheduler';
     case '/report_runs':
-        return 'Report Runs';
+      return 'Report Runs';
+    case '/file_upload_module':
+      return 'File Upload';
+    case '/file_upload_history':
+      return 'Upload History';
     default:
       return 'Menu';
   }
@@ -79,6 +83,10 @@ const getIcon = (pathname) => {
     case '/report_scheduler':
       return <EventNoteOutlined className="w-4 h-4" />;
     case '/report_runs':
+      return <HistoryOutlined className="w-4 h-4" />;
+    case '/file_upload_module':
+      return <DescriptionOutlined className="w-4 h-4" />;
+    case '/file_upload_history':
       return <HistoryOutlined className="w-4 h-4" />;
     default:
       return null;
