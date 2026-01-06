@@ -120,20 +120,20 @@ def create_metadata_connection():
     """
     # Import logger inside the function to avoid circular imports
     try:
-        from backend.modules.logger import info, error
+        from backend.modules.logger import info, error, debug
     except ImportError:
-        from modules.logger import info, error
+        from modules.logger import info, error, debug
     
     # Check environment variable each time to ensure we get the current value
     current_db_type = os.getenv("DB_TYPE", "ORACLE").upper()
     
-    info(f"[create_metadata_connection] DB_TYPE from environment: {current_db_type}")
+    debug(f"[create_metadata_connection] DB_TYPE from environment: {current_db_type}")
     
     if current_db_type == "POSTGRESQL":
-        info("[create_metadata_connection] Creating PostgreSQL connection")
+        debug("[create_metadata_connection] Creating PostgreSQL connection")
         return create_postgresql_connection()
     else:
-        info("[create_metadata_connection] Creating Oracle connection")
+        debug("[create_metadata_connection] Creating Oracle connection")
         return create_oracle_connection()
 
 def create_oracle_connection():
@@ -383,7 +383,7 @@ def create_target_connection(connection_id):
                     dsn=f"{dbhost}:{dbport}/{dbsrvnm}"
                 )
         
-        info(f"Target connection '{connm}' (ID: {connection_id}, Type: {target_db_type}) established successfully")
+        debug(f"Target connection '{connm}' (ID: {connection_id}, Type: {target_db_type}) established successfully")
         return target_conn
         
     except Exception as e:

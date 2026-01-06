@@ -1607,7 +1607,29 @@ const JobsPage = () => {
       }
     } catch (err) {
       console.error('Error executing job:', err);
-      setError(err.response?.data?.message || 'Failed to execute job. Please try again.');
+      // FastAPI HTTPException returns error in detail field
+      let errorMessage = 'Failed to execute job. Please try again.';
+      if (err.response?.data) {
+        // Check for detail.message (when detail is an object)
+        if (err.response.data.detail?.message) {
+          errorMessage = err.response.data.detail.message;
+        }
+        // Check for detail as string
+        else if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+        // Check for message directly
+        else if (err.response.data.message) {
+          errorMessage = err.response.data.message;
+        }
+        // Check for error field
+        else if (err.response.data.error) {
+          errorMessage = err.response.data.error;
+        }
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      setError(errorMessage);
     } finally {
       // Reset the executing state in the dialog if callback is provided
       if (resetExecutingState && typeof resetExecutingState === 'function') {

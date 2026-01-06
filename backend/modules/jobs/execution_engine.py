@@ -238,7 +238,6 @@ class JobExecutionEngine:
             )
             
             debug(f"Code type detection - Python: {is_python}, PL/SQL: {is_plsql}")
-            debug(f"First 500 chars of code: {code[:500]}")
             
             # Default to Python if unclear (new code is Python)
             if is_plsql:
@@ -337,7 +336,6 @@ class JobExecutionEngine:
                     raise RuntimeError(f"Syntax error in generated code for {mapref}: {e}") from e
                 except Exception as e:
                     error(f"Error executing generated code for {mapref}: {type(e).__name__}: {e}")
-                    error(f"First 500 chars of code:\n{code[:500]}")
                     import traceback
                     error(f"Traceback:\n{traceback.format_exc()}")
                     raise RuntimeError(f"Error executing generated code for {mapref}: {e}") from e
@@ -422,7 +420,7 @@ class JobExecutionEngine:
                             sys.stdout = stdout_capture
                             
                             # Log to captured output (will be visible in logs)
-                            print(f"[EXECUTION ENGINE] About to call execute_job for {mapref}")
+                            debug(f"[EXECUTION ENGINE] About to call execute_job for {mapref}")
                             
                             # Determine which connection(s) to use based on function signature
                             if param_count == 2:
@@ -711,20 +709,147 @@ class JobExecutionEngine:
     def _handle_stop_request(self, request: QueueRequest) -> Dict[str, Any]:
         """
         Handle stop request for a running job.
+        Updates DMS_PRCLOG status to 'STOPPED' for stalled jobs that aren't actively processing.
         The actual cancellation happens in the generated job code which checks for stop requests
-        during batch processing. This handler just acknowledges the request.
+        during batch processing.
         """
         info(
             f"Stop request received for {request.mapref} (request_id={request.request_id})"
         )
         
-        # The stop request stays in DMS_PRCREQ with status 'CLAIMED' until the running job
-        # acknowledges it and marks it as DONE. The generated job code polls for stop requests
-        # and performs the actual cancellation.
+        # Extract start_timestamp from payload to match the job
+        start_timestamp = None
+        force = "N"
+        if request.payload:
+            import json
+            if isinstance(request.payload, str):
+                payload = json.loads(request.payload)
+            else:
+                payload = request.payload
+            
+            if "start_timestamp" in payload:
+                from datetime import datetime
+                start_timestamp = datetime.fromisoformat(payload["start_timestamp"].replace("Z", "+00:00"))
+            force = payload.get("force", "N")
+        
+        # Update DMS_PRCLOG status to 'STOPPED' for matching job
+        # This handles stalled jobs that aren't actively processing
+        try:
+            with self._db_connection() as (conn, cursor):
+                db_type = _detect_db_type(conn)
+                schema = os.getenv("DMS_SCHEMA", "TRG")
+                
+                if db_type == "POSTGRESQL":
+                    from backend.modules.common.db_table_utils import get_postgresql_table_name
+                    schema_lower = schema.lower() if schema else "public"
+                    dms_prclog_table = get_postgresql_table_name(cursor, schema_lower, "DMS_PRCLOG")
+                    dms_prclog_ref = f'"{dms_prclog_table}"' if dms_prclog_table != dms_prclog_table.lower() else dms_prclog_table
+                    schema_prefix = f"{schema_lower}." if schema else ""
+                    dms_prclog_full = f"{schema_prefix}{dms_prclog_ref}"
+                    
+                    # Update status to FL (failed) for jobs matching mapref and start timestamp
+                    # DMS_PRCLOG.status is 2 characters, so use 'FL' instead of 'STOPPED'
+                    if start_timestamp:
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prclog_full}
+                            SET status = 'FL',
+                                enddt = CURRENT_TIMESTAMP,
+                                recupdt = CURRENT_TIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = %s
+                              AND status IN ('IP', 'CLAIMED')
+                              AND strtdt >= %s - INTERVAL '1 hour'
+                              AND strtdt <= %s + INTERVAL '1 hour'
+                            """,
+                            (request.mapref, start_timestamp, start_timestamp),
+                        )
+                    else:
+                        # If no timestamp, update most recent running job
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prclog_full}
+                            SET status = 'FL',
+                                enddt = CURRENT_TIMESTAMP,
+                                recupdt = CURRENT_TIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = %s
+                              AND status IN ('IP', 'CLAIMED')
+                              AND prcid = (
+                                  SELECT prcid
+                                  FROM {dms_prclog_full}
+                                  WHERE mapref = %s
+                                    AND status IN ('IP', 'CLAIMED')
+                                  ORDER BY strtdt DESC
+                                  LIMIT 1
+                              )
+                            """,
+                            (request.mapref, request.mapref),
+                        )
+                else:  # Oracle
+                    schema_prefix = f"{schema}." if schema else ""
+                    if start_timestamp:
+                        cursor.execute(
+                            f"""
+                            UPDATE {schema_prefix}DMS_PRCLOG
+                            SET status = 'FL',
+                                enddt = SYSTIMESTAMP,
+                                recupdt = SYSTIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = :mapref
+                              AND status IN ('IP', 'CLAIMED')
+                              AND strtdt >= :start_ts - INTERVAL '1' HOUR
+                              AND strtdt <= :start_ts + INTERVAL '1' HOUR
+                            """,
+                            {
+                                "mapref": request.mapref,
+                                "start_ts": start_timestamp,
+                            },
+                        )
+                    else:
+                        # If no timestamp, update most recent running job
+                        cursor.execute(
+                            f"""
+                            UPDATE {schema_prefix}DMS_PRCLOG
+                            SET status = 'FL',
+                                enddt = SYSTIMESTAMP,
+                                recupdt = SYSTIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = :mapref
+                              AND status IN ('IP', 'CLAIMED')
+                              AND prcid = (
+                                  SELECT prcid
+                                  FROM (
+                                      SELECT prcid
+                                      FROM {schema_prefix}DMS_PRCLOG
+                                      WHERE mapref = :mapref2
+                                        AND status IN ('IP', 'CLAIMED')
+                                      ORDER BY strtdt DESC
+                                  )
+                                  WHERE ROWNUM = 1
+                              )
+                            """,
+                            {
+                                "mapref": request.mapref,
+                                "mapref2": request.mapref,
+                            },
+                        )
+                
+                rows_updated = cursor.rowcount
+                conn.commit()
+                
+                if rows_updated > 0:
+                    info(f"Updated {rows_updated} job record(s) to FL status for {request.mapref}")
+                else:
+                    warning(f"No running job found to stop for {request.mapref} (may have already completed or stopped)")
+        
+        except Exception as e:
+            error(f"Error updating DMS_PRCLOG status for stop request: {e}", exc_info=True)
+            # Don't fail the stop request if status update fails
         
         return {
-            "status": "ACKNOWLEDGED",
-            "message": f"Stop request acknowledged for {request.mapref}. Job will stop at next batch boundary.",
+            "status": "FL",
+            "message": f"Stop request processed for {request.mapref}. Job status updated to FL (failed).",
         }
 
     # ------------------------------------------------------------------ #

@@ -16,10 +16,10 @@ from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 import traceback
 try:
-    from backend.modules.logger import info, error
+    from backend.modules.logger import info, error, debug
     from backend.modules.common.id_provider import next_id as get_next_id
 except ImportError:  # Fallback for Flask-style imports
-    from modules.logger import info, error  # type: ignore
+    from modules.logger import info, error, debug  # type: ignore
     from modules.common.id_provider import next_id as get_next_id  # type: ignore
 
 # Optional Oracle driver: allow scheduler to run even if oracledb is not installed.
@@ -926,10 +926,10 @@ def create_update_job(connection, p_mapref: str) -> Optional[int]:
         
         if w_stat == 'Y':
             # Create job flow
-            info(f"[DEBUG create_update_job] About to call create_job_flow for mapref: {p_mapref}")
+            debug(f"[DEBUG create_update_job] About to call create_job_flow for mapref: {p_mapref}")
             try:
                 create_job_flow(connection, p_mapref)
-                info(f"[DEBUG create_update_job] Successfully completed create_job_flow for mapref: {p_mapref}")
+                debug(f"[DEBUG create_update_job] Successfully completed create_job_flow for mapref: {p_mapref}")
             except Exception as flow_err:
                 error(f"[DEBUG create_update_job] ERROR in create_job_flow for mapref: {p_mapref}")
                 error(f"[DEBUG create_update_job] Error type: {type(flow_err).__name__}")
@@ -1024,18 +1024,18 @@ def create_job_flow(connection, p_mapref: str):
         jobid, mapref, trgschm, trgtbnm, trgtbtyp, tbnam, blkprcrows, chkpntstrtgy, chkpntclnm, chkpntenbld = job_row
         
         # Generate complete Python code using the code builder
-        info(f"[DEBUG create_job_flow] About to import build_job_flow_code")
+        debug(f"[DEBUG create_job_flow] About to import build_job_flow_code")
         # Support both FastAPI (package import) and legacy Flask (relative import) contexts
         try:
             from backend.modules.jobs.pkgdwjob_create_job_flow import build_job_flow_code
         except ImportError:  # When running Flask app.py directly inside backend
             from modules.jobs.pkgdwjob_create_job_flow import build_job_flow_code  # type: ignore
-        info(f"[DEBUG create_job_flow] Successfully imported build_job_flow_code")
+        debug(f"[DEBUG create_job_flow] Successfully imported build_job_flow_code")
         
-        info(f"[DEBUG create_job_flow] About to call build_job_flow_code with parameters:")
-        info(f"  mapref={mapref}, jobid={jobid}, trgschm={trgschm}, trgtbnm={trgtbnm}")
-        info(f"  trgtbtyp={trgtbtyp}, tbnam={tbnam}, blkprcrows={blkprcrows}, w_limit={w_limit}")
-        info(f"  chkpntstrtgy={chkpntstrtgy}, chkpntclnm={chkpntclnm}, chkpntenbld={chkpntenbld}")
+        debug(f"[DEBUG create_job_flow] About to call build_job_flow_code with parameters:")
+        debug(f"  mapref={mapref}, jobid={jobid}, trgschm={trgschm}, trgtbnm={trgtbnm}")
+        debug(f"  trgtbtyp={trgtbtyp}, tbnam={tbnam}, blkprcrows={blkprcrows}, w_limit={w_limit}")
+        debug(f"  chkpntstrtgy={chkpntstrtgy}, chkpntclnm={chkpntclnm}, chkpntenbld={chkpntenbld}")
         
         try:
             python_code = build_job_flow_code(
@@ -1052,7 +1052,7 @@ def create_job_flow(connection, p_mapref: str):
                 chkpntclnm=chkpntclnm,
                 chkpntenbld=chkpntenbld
             )
-            info(f"[DEBUG create_job_flow] Successfully generated {len(python_code)} characters of Python code")
+            debug(f"[DEBUG create_job_flow] Successfully generated {len(python_code)} characters of Python code")
         except Exception as code_gen_err:
             error(f"[DEBUG create_job_flow] ERROR in build_job_flow_code for mapref: {mapref}")
             error(f"[DEBUG create_job_flow] Error type: {type(code_gen_err).__name__}")

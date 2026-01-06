@@ -60,29 +60,29 @@ def _detect_db_type(cursor) -> str:
     Returns:
         'ORACLE' or 'POSTGRESQL'
     """
-    info("_detect_db_type: Starting detection")
+    debug("_detect_db_type: Starting detection")
     global _DB_TYPE_CACHE
     if _DB_TYPE_CACHE:
-        info(f"_detect_db_type: Using cached type: {_DB_TYPE_CACHE}")
+        debug(f"_detect_db_type: Using cached type: {_DB_TYPE_CACHE}")
         return _DB_TYPE_CACHE
     
     # Check if lock is already held (to avoid deadlock)
     lock_held = _CONFIG_LOCK.locked()
-    info(f"_detect_db_type: Lock already held: {lock_held}")
+    debug(f"_detect_db_type: Lock already held: {lock_held}")
     
     if lock_held:
         # Lock is already held by caller, don't try to acquire it again
-        info("_detect_db_type: Lock already held, skipping lock acquisition")
+        debug("_detect_db_type: Lock already held, skipping lock acquisition")
         # Just check cache and do detection without lock
         if _DB_TYPE_CACHE:
             return _DB_TYPE_CACHE
     else:
-        info("_detect_db_type: No cache, acquiring lock...")
+        debug("_detect_db_type: No cache, acquiring lock...")
         _CONFIG_LOCK.acquire()
         try:
-            info("_detect_db_type: Lock acquired")
+            debug("_detect_db_type: Lock acquired")
             if _DB_TYPE_CACHE:
-                info(f"_detect_db_type: Type cached by another thread: {_DB_TYPE_CACHE}")
+                debug(f"_detect_db_type: Type cached by another thread: {_DB_TYPE_CACHE}")
                 return _DB_TYPE_CACHE
         except:
             _CONFIG_LOCK.release()
@@ -90,37 +90,37 @@ def _detect_db_type(cursor) -> str:
     
     try:
         # Check connection module type
-        info("_detect_db_type: Checking connection module type...")
+        debug("_detect_db_type: Checking connection module type...")
         connection = getattr(cursor, "connection", None)
         if connection:
             module_name = type(connection).__module__
-            info(f"_detect_db_type: Connection module: {module_name}")
+            debug(f"_detect_db_type: Connection module: {module_name}")
             if "oracledb" in module_name or "cx_Oracle" in module_name:
                 _DB_TYPE_CACHE = "ORACLE"
-                info(f"_detect_db_type: Detected ORACLE from module")
+                debug(f"_detect_db_type: Detected ORACLE from module")
                 return _DB_TYPE_CACHE
             if "psycopg" in module_name or "pg8000" in module_name:
                 _DB_TYPE_CACHE = "POSTGRESQL"
-                info(f"_detect_db_type: Detected POSTGRESQL from module")
+                debug(f"_detect_db_type: Detected POSTGRESQL from module")
                 return _DB_TYPE_CACHE
         
         # Fallback: try database-specific query
-        info("_detect_db_type: Module detection failed, trying query-based detection...")
+        debug("_detect_db_type: Module detection failed, trying query-based detection...")
         try:
             # Try Oracle-specific query
-            info("_detect_db_type: Trying Oracle query (SELECT 1 FROM dual)...")
+            debug("_detect_db_type: Trying Oracle query (SELECT 1 FROM dual)...")
             cursor.execute("SELECT 1 FROM dual")
             _DB_TYPE_CACHE = "ORACLE"
-            info(f"_detect_db_type: Detected ORACLE from query")
+            debug(f"_detect_db_type: Detected ORACLE from query")
             return _DB_TYPE_CACHE
         except Exception as e:
-            info(f"_detect_db_type: Oracle query failed: {str(e)}")
+            debug(f"_detect_db_type: Oracle query failed: {str(e)}")
             try:
                 # Try PostgreSQL-specific query
-                info("_detect_db_type: Trying PostgreSQL query (SELECT version())...")
+                debug("_detect_db_type: Trying PostgreSQL query (SELECT version())...")
                 cursor.execute("SELECT version()")
                 _DB_TYPE_CACHE = "POSTGRESQL"
-                info(f"_detect_db_type: Detected POSTGRESQL from query")
+                debug(f"_detect_db_type: Detected POSTGRESQL from query")
                 return _DB_TYPE_CACHE
             except Exception as e2:
                 error(f"_detect_db_type: Both queries failed. Oracle: {str(e)}, PostgreSQL: {str(e2)}")
@@ -129,7 +129,7 @@ def _detect_db_type(cursor) -> str:
                 )
     finally:
         if not lock_held:
-            info("_detect_db_type: Releasing lock")
+            debug("_detect_db_type: Releasing lock")
             _CONFIG_LOCK.release()
 
 
@@ -203,16 +203,16 @@ def _load_config(cursor) -> _IdConfig:
     Load ID generation configuration from DMS_PARAMS table.
     Supports both Oracle and PostgreSQL parameter binding.
     """
-    info("_load_config: Function entry - starting")
+    debug("_load_config: Function entry - starting")
     overrides: Dict[str, str] = {}
     default_mode = DEFAULT_MODE
     block_size = DEFAULT_BLOCK_SIZE
-    info("_load_config: Initialized default values")
+    debug("_load_config: Initialized default values")
     
     try:
-        info("_load_config: About to call _detect_db_type...")
+        debug("_load_config: About to call _detect_db_type...")
         db_type = _detect_db_type(cursor)
-        info(f"_load_config: Database type detected: {db_type}")
+        debug(f"_load_config: Database type detected: {db_type}")
         
         # For PostgreSQL, ensure clean transaction state
         if db_type == "POSTGRESQL":
@@ -222,7 +222,7 @@ def _load_config(cursor) -> _IdConfig:
                     # Rollback any failed transaction to ensure clean state
                     if not getattr(connection, 'autocommit', False):
                         connection.rollback()
-                        info("_load_config: Rolled back any failed transaction for clean state")
+                        debug("_load_config: Rolled back any failed transaction for clean state")
                 except Exception:
                     pass  # Ignore rollback errors
     except Exception as e:
@@ -233,7 +233,7 @@ def _load_config(cursor) -> _IdConfig:
 
     # Use database-specific parameter binding
     try:
-        info(f"_load_config: Preparing to query DMS_PARAMS with PRTYP={CONFIG_PARAM_TYPE}")
+        debug(f"_load_config: Preparing to query DMS_PARAMS with PRTYP={CONFIG_PARAM_TYPE}")
         if db_type == "ORACLE":
             query = """
                 SELECT PRCD, PRVAL
@@ -251,7 +251,7 @@ def _load_config(cursor) -> _IdConfig:
                 "block_key": GLOBAL_BLOCK_SIZE_KEY,
                 "override_prefix": f"{OVERRIDE_PREFIX}%",
             }
-            info(f"_load_config: Executing Oracle query with params: {params}")
+            debug(f"_load_config: Executing Oracle query with params: {params}")
             cursor.execute(query, params)
         elif db_type == "POSTGRESQL":
             query = """
@@ -270,17 +270,17 @@ def _load_config(cursor) -> _IdConfig:
                 GLOBAL_BLOCK_SIZE_KEY,
                 f"{OVERRIDE_PREFIX}%",
             )
-            info(f"_load_config: Executing PostgreSQL query")
-            info(f"_load_config: Query parameters: PRTYP={CONFIG_PARAM_TYPE}, mode_key={GLOBAL_MODE_KEY}, block_key={GLOBAL_BLOCK_SIZE_KEY}")
-            info(f"_load_config: About to call cursor.execute()...")
+            debug(f"_load_config: Executing PostgreSQL query")
+            debug(f"_load_config: Query parameters: PRTYP={CONFIG_PARAM_TYPE}, mode_key={GLOBAL_MODE_KEY}, block_key={GLOBAL_BLOCK_SIZE_KEY}")
+            debug(f"_load_config: About to call cursor.execute()...")
             cursor.execute(query, params)
-            info(f"_load_config: cursor.execute() completed successfully")
+            debug(f"_load_config: cursor.execute() completed successfully")
         else:
             raise IdProviderError(f"Unsupported database type for config loading: {db_type}")
         
-        info(f"_load_config: About to call cursor.fetchall()...")
+        debug(f"_load_config: About to call cursor.fetchall()...")
         rows = cursor.fetchall()
-        info(f"_load_config: fetchall() completed. Loaded {len(rows)} config rows from DMS_PARAMS")
+        debug(f"_load_config: fetchall() completed. Loaded {len(rows)} config rows from DMS_PARAMS")
         
         for prcd, prval in rows:
             key = (prcd or "").upper()
