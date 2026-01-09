@@ -47,6 +47,8 @@ from backend.modules.jobs.pkgdwprc_python import (
     SchedulerRepositoryError,
     SchedulerError,
 )
+from backend.modules.helper_functions import _get_table_ref
+from fastapi.responses import JSONResponse
 
 
 router = APIRouter(tags=["jobs"])
@@ -1637,4 +1639,220 @@ async def get_error_details(job_id: str):
             conn.close()
 
 
+@router.get("/scheduler-status")
+async def get_scheduler_status():
+    """
+    Get current scheduler status and summary of active jobs.
+    
+    Returns:
+        JSONResponse with scheduler status, active job counts by type, and recent activity
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+        schema = os.getenv('DMS_SCHEMA', 'TRG')
+        
+        # Get table reference (pass schema for explicit handling)
+        table_name = _get_table_ref(cursor, db_type, "DMS_PRCREQ", schema_name=schema)
+        
+        debug(f"[scheduler-status] Database type: {db_type}, Schema: {schema}, Table: {table_name}")
+        
+        # Query for active jobs (NEW, QUEUED, PROCESSING, CLAIMED)
+        # All column names are lowercase in metadata database
+        if db_type == "POSTGRESQL":
+            status_query = f"""
+                SELECT 
+                    CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END as request_type,
+                    UPPER(status) as status,
+                    COUNT(*) as count
+                FROM {table_name}
+                WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED')
+                GROUP BY CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END, UPPER(status)
+            """
+        else:  # Oracle
+            status_query = f"""
+                SELECT 
+                    CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END as request_type,
+                    UPPER(status) as status,
+                    COUNT(*) as count
+                FROM {table_name}
+                WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED')
+                GROUP BY CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END, UPPER(status)
+            """
+        
+        debug(f"[scheduler-status] Executing status query: {status_query}")
+        cursor.execute(status_query)
+        
+        # Fetch status results
+        status_rows = cursor.fetchall()
+        status_columns = [desc[0].lower() for desc in cursor.description]
+        
+        debug(f"[scheduler-status] Status query returned {len(status_rows)} rows")
+        debug(f"[scheduler-status] Status columns: {status_columns}")
+        if status_rows:
+            for idx, row in enumerate(status_rows):
+                row_dict = dict(zip(status_columns, row))
+                debug(f"[scheduler-status] Row {idx}: {row_dict}")
+        else:
+            debug(f"[scheduler-status] No status rows returned - no active jobs found")
+        
+        # Initialize counters
+        job_counts = {
+            'FILE_UPLOAD': {'NEW': 0, 'QUEUED': 0, 'PROCESSING': 0, 'CLAIMED': 0, 'total': 0},
+            'REPORT': {'NEW': 0, 'QUEUED': 0, 'PROCESSING': 0, 'CLAIMED': 0, 'total': 0},
+            'JOBS': {'NEW': 0, 'QUEUED': 0, 'PROCESSING': 0, 'CLAIMED': 0, 'total': 0},
+        }
+        
+        total_active = 0
+        for row in status_rows:
+            row_dict = dict(zip(status_columns, row))
+            
+            # Request type is determined in the SQL query using CASE statement
+            req_type = (row_dict.get('request_type', '') or '').upper().strip()
+            status = (row_dict.get('status', '') or '').upper().strip()
+            count = int(row_dict.get('count', 0) or 0)
+            
+            debug(f"[scheduler-status] Processing: req_type={req_type}, status={status}, count={count}")
+            
+            if req_type in job_counts:
+                job_counts[req_type][status] = count
+                job_counts[req_type]['total'] += count
+                total_active += count
+            else:
+                debug(f"[scheduler-status] Unknown request_type: {req_type}, skipping")
+        
+        debug(f"[scheduler-status] Total active jobs: {total_active}")
+        debug(f"[scheduler-status] File upload counts: {job_counts['FILE_UPLOAD']}")
+        
+        # Get recent activity (last 10 jobs) - using lowercase column names
+        if db_type == "POSTGRESQL":
+            recent_query = f"""
+                SELECT 
+                    request_id,
+                    mapref,
+                    status,
+                    requested_at
+                FROM {table_name}
+                WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED', 'DONE', 'FAILED')
+                ORDER BY requested_at DESC
+                LIMIT 10
+            """
+        else:  # Oracle
+            recent_query = f"""
+                SELECT 
+                    request_id,
+                    mapref,
+                    status,
+                    requested_at
+                FROM (
+                    SELECT 
+                        request_id,
+                        mapref,
+                        status,
+                        requested_at
+                    FROM {table_name}
+                    WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED', 'DONE', 'FAILED')
+                    ORDER BY requested_at DESC
+                )
+                WHERE ROWNUM <= 10
+            """
+        
+        debug(f"[scheduler-status] Executing recent activity query")
+        cursor.execute(recent_query)
+        recent_rows = cursor.fetchall()
+        recent_columns = [desc[0].lower() for desc in cursor.description]
+        
+        debug(f"[scheduler-status] Recent activity query returned {len(recent_rows)} rows")
+        
+        recent_jobs = []
+        for row in recent_rows:
+            row_dict = dict(zip(recent_columns, row))
+            mapref = (row_dict.get('mapref', '') or '').strip()
+            # Determine request_type from mapref pattern
+            if mapref.startswith('FLUPLD:'):
+                req_type = 'FILE_UPLOAD'
+            elif mapref.startswith('REPORT:'):
+                req_type = 'REPORT'
+            else:
+                req_type = 'JOBS'
+            
+            recent_jobs.append({
+                'request_id': row_dict.get('request_id', ''),
+                'mapref': mapref,
+                'request_type': req_type,
+                'status': row_dict.get('status', ''),
+                'requested_at': str(row_dict.get('requested_at', '')) if row_dict.get('requested_at') else None
+            })
+        
+        # Determine scheduler status
+        scheduler_status = "WAITING" if total_active == 0 else "PROCESSING"
+        
+        # Calculate summary
+        file_upload_active = job_counts['FILE_UPLOAD']['total']
+        report_active = job_counts['REPORT']['total']
+        mapper_active = job_counts.get('JOBS', {'total': 0})['total']
+        
+        debug(f"[scheduler-status] Returning: scheduler_status={scheduler_status}, total_active={total_active}")
+        debug(f"[scheduler-status] file_uploads: active={file_upload_active}, processing={job_counts['FILE_UPLOAD']['PROCESSING'] + job_counts['FILE_UPLOAD']['CLAIMED']}")
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "scheduler_status": scheduler_status,
+                "total_active_jobs": total_active,
+                "job_counts": {
+                    "file_uploads": {
+                        "active": file_upload_active,
+                        "new": job_counts['FILE_UPLOAD']['NEW'],
+                        "queued": job_counts['FILE_UPLOAD']['QUEUED'],
+                        "processing": job_counts['FILE_UPLOAD']['PROCESSING'] + job_counts['FILE_UPLOAD']['CLAIMED']
+                    },
+                    "reports": {
+                        "active": report_active,
+                        "new": job_counts['REPORT']['NEW'],
+                        "queued": job_counts['REPORT']['QUEUED'],
+                        "processing": job_counts['REPORT']['PROCESSING'] + job_counts['REPORT']['CLAIMED']
+                    },
+                    "mapper_jobs": {
+                        "active": mapper_active,
+                        "new": job_counts.get('JOBS', {'NEW': 0})['NEW'],
+                        "queued": job_counts.get('JOBS', {'QUEUED': 0})['QUEUED'],
+                        "processing": job_counts.get('JOBS', {'PROCESSING': 0})['PROCESSING'] + job_counts.get('JOBS', {'CLAIMED': 0})['CLAIMED']
+                    }
+                },
+                "recent_activity": recent_jobs
+            }
+        )
+    
+    except Exception as e:
+        error(f"Error getting scheduler status: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting scheduler status: {str(e)}"
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
