@@ -79,6 +79,7 @@ const FileUploadHistoryPage = () => {
   const [errorRows, setErrorRows] = useState([]);
   const [loadingErrors, setLoadingErrors] = useState(false);
   const [errorFilterCode, setErrorFilterCode] = useState("");
+  const [activeJobs, setActiveJobs] = useState({}); // Map of flupldref -> [{ request_id, status }]
 
   const fetchUploads = async () => {
     try {
@@ -257,6 +258,50 @@ const FileUploadHistoryPage = () => {
     }
   }, []);
 
+  // Fetch all active jobs periodically to show progress
+  const fetchActiveJobs = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await axios.get(`${API_BASE_URL}/file-upload/active-jobs`, {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.data.success) {
+        const jobs = response.data.active_jobs || {};
+        console.log('[ActiveJobs History] Fetched active jobs:', jobs);
+        console.log('[ActiveJobs History] Number of active jobs:', Object.keys(jobs).length);
+        setActiveJobs(jobs);
+      } else {
+        console.warn('[ActiveJobs History] API returned success=false:', response.data);
+      }
+    } catch (error) {
+      // Log error details for debugging
+      console.error("[ActiveJobs History] Error fetching active jobs:", error);
+      if (error.response) {
+        console.error("[ActiveJobs History] Response status:", error.response.status);
+        console.error("[ActiveJobs History] Response data:", error.response.data);
+      }
+    }
+  };
+
+  // Poll for active jobs every 3 seconds
+  useEffect(() => {
+    // Fetch immediately
+    fetchActiveJobs();
+
+    // Then poll every 3 seconds
+    const activeJobsInterval = setInterval(() => {
+      fetchActiveJobs();
+    }, 3000);
+
+    return () => {
+      clearInterval(activeJobsInterval);
+    };
+  }, []);
+
   useEffect(() => {
     fetchRuns();
   }, [selectedFlupldref, status, targetConnectionId, loadMode, fileType, fileName, startDate, limit]);
@@ -428,6 +473,76 @@ const FileUploadHistoryPage = () => {
         </Stack>
       </Stack>
 
+      {/* Active Jobs Progress Section - Prominent Display */}
+      {(() => {
+        // More robust check - handle null/undefined and ensure we have actual jobs
+        if (!activeJobs || typeof activeJobs !== 'object') {
+          console.log('[ActiveJobs Banner History] activeJobs is invalid:', activeJobs)
+          return false
+        }
+        
+        const activeJobsCount = Object.keys(activeJobs).length
+        // Also check if any job arrays have items
+        const hasValidJobs = Object.values(activeJobs).some(jobs => Array.isArray(jobs) && jobs.length > 0)
+        
+        if (activeJobsCount > 0 || hasValidJobs) {
+          console.log('[ActiveJobs Banner History] Showing banner. Count:', activeJobsCount, 'Has valid jobs:', hasValidJobs, 'activeJobs:', activeJobs)
+        } else {
+          console.log('[ActiveJobs Banner History] No active jobs found. activeJobs:', activeJobs)
+        }
+        
+        return activeJobsCount > 0 && hasValidJobs
+      })() && (
+        <Box
+          sx={{
+            mb: 2,
+            p: 2.5,
+            borderRadius: 2,
+            backgroundColor: darkMode
+              ? alpha(muiTheme.palette.info.main, 0.2)
+              : alpha(muiTheme.palette.info.main, 0.1),
+            border: `2px solid ${alpha(muiTheme.palette.info.main, 0.4)}`,
+            boxShadow: darkMode ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.1)',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
+            <CircularProgress size={20} thickness={4} sx={{ color: muiTheme.palette.info.main }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, color: muiTheme.palette.info.main }}>
+              Active File Uploads ({Object.keys(activeJobs).length})
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+            {Object.entries(activeJobs).map(([flupldref, jobs]) => {
+              const job = jobs[0] // Get first active job
+              const status = job?.status || 'UNKNOWN'
+              const statusLabel = status === 'PROCESSING' ? 'Processing...' : status === 'NEW' ? 'Waiting...' : status === 'QUEUED' ? 'Queued' : status === 'CLAIMED' ? 'Processing...' : status
+              const statusColor = status === 'PROCESSING' ? 'warning' : 'info'
+              const upload = uploads.find(u => u.flupldref === flupldref)
+              const displayName = upload?.fluplddesc || upload?.flupldref || flupldref
+              
+              return (
+                <Chip
+                  key={flupldref}
+                  label={`${displayName}: ${statusLabel}`}
+                  size="medium"
+                  color={statusColor}
+                  sx={{
+                    animation: status === 'PROCESSING' ? 'pulse 2s infinite' : 'none',
+                    '@keyframes pulse': {
+                      '0%, 100%': { opacity: 1 },
+                      '50%': { opacity: 0.6 },
+                    },
+                    fontWeight: 600,
+                    fontSize: '0.875rem',
+                    height: '32px',
+                  }}
+                />
+              )
+            })}
+          </Box>
+        </Box>
+      )}
+
       {/* Filters Section */}
       <Collapse in={showFilters}>
         <Paper
@@ -580,14 +695,40 @@ const FileUploadHistoryPage = () => {
                 <TableRow key={run.runid}>
                   <TableCell align="right">{run.runid}</TableCell>
                   <TableCell>
-                    <Tooltip title={getUploadName(run.flupldref)}>
-                      <Typography
-                        variant="body2"
-                        sx={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}
-                      >
-                        {run.flupldref}
-                      </Typography>
-                    </Tooltip>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                      <Tooltip title={getUploadName(run.flupldref)}>
+                        <Typography
+                          variant="body2"
+                          sx={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}
+                        >
+                          {run.flupldref}
+                        </Typography>
+                      </Tooltip>
+                      {/* Show running indicator if there's an active job for this upload */}
+                      {(() => {
+                        const activeJob = activeJobs[run.flupldref]?.[0]; // Get first active job
+                        if (activeJob && (activeJob.status === "QUEUED" || activeJob.status === "PROCESSING" || activeJob.status === "NEW" || activeJob.status === "CLAIMED")) {
+                          return (
+                            <Chip
+                              icon={activeJob.status === "PROCESSING" ? <CircularProgress size={14} thickness={4} sx={{ color: 'inherit' }} /> : null}
+                              label={activeJob.status === "PROCESSING" ? "Processing..." : activeJob.status === "NEW" ? "Waiting..." : "Queued"}
+                              size="small"
+                              color={activeJob.status === "PROCESSING" ? "warning" : "info"}
+                              sx={{
+                                animation: activeJob.status === "PROCESSING" ? "pulse 2s infinite" : "none",
+                                "@keyframes pulse": {
+                                  "0%, 100%": { opacity: 1 },
+                                  "50%": { opacity: 0.6 },
+                                },
+                                fontWeight: 600,
+                                border: activeJob.status === "PROCESSING" ? `2px solid ${muiTheme.palette.warning.main}` : 'none',
+                              }}
+                            />
+                          );
+                        }
+                        return null;
+                      })()}
+                    </Box>
                   </TableCell>
                   <TableCell>
                     {run.flnm ? (

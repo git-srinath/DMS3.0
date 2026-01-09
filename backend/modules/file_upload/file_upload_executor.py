@@ -331,8 +331,11 @@ class FileUploadExecutor:
                     row_data[trg_col] = default_val
             
             # Add audit columns if they exist in target columns (only if not already set)
+            # Support both Oracle-style (CRTDBY, CRTDDT) and standard (CREATED_BY, CREATED_DATE) naming
             current_time = datetime.now()
             username = getattr(self, '_current_username', 'SYSTEM')
+            
+            # Oracle-style names
             if 'CRTDBY' in all_target_columns and (row_data.get('CRTDBY') is None or (isinstance(row_data.get('CRTDBY'), float) and pd.isna(row_data.get('CRTDBY')))):
                 row_data['CRTDBY'] = username
             if 'CRTDDT' in all_target_columns and (row_data.get('CRTDDT') is None or (isinstance(row_data.get('CRTDDT'), float) and pd.isna(row_data.get('CRTDDT')))):
@@ -341,6 +344,16 @@ class FileUploadExecutor:
                 row_data['UPDTBY'] = username
             if 'UPDTDT' in all_target_columns and (row_data.get('UPDTDT') is None or (isinstance(row_data.get('UPDTDT'), float) and pd.isna(row_data.get('UPDTDT')))):
                 row_data['UPDTDT'] = current_time
+            
+            # Standard names
+            if 'CREATED_BY' in all_target_columns and (row_data.get('CREATED_BY') is None or (isinstance(row_data.get('CREATED_BY'), float) and pd.isna(row_data.get('CREATED_BY')))):
+                row_data['CREATED_BY'] = username
+            if 'CREATED_DATE' in all_target_columns and (row_data.get('CREATED_DATE') is None or (isinstance(row_data.get('CREATED_DATE'), float) and pd.isna(row_data.get('CREATED_DATE')))):
+                row_data['CREATED_DATE'] = current_time
+            if 'UPDATED_BY' in all_target_columns and (row_data.get('UPDATED_BY') is None or (isinstance(row_data.get('UPDATED_BY'), float) and pd.isna(row_data.get('UPDATED_BY')))):
+                row_data['UPDATED_BY'] = username
+            if 'UPDATED_DATE' in all_target_columns and (row_data.get('UPDATED_DATE') is None or (isinstance(row_data.get('UPDATED_DATE'), float) and pd.isna(row_data.get('UPDATED_DATE')))):
+                row_data['UPDATED_DATE'] = current_time
             
             # Append row data to list
             rows_data.append(row_data)

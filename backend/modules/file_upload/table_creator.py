@@ -47,8 +47,28 @@ def create_table_if_not_exists(
         primary_keys = []
         existing_column_names = set()  # Track all column names that already exist
         
-        # Process user-defined column mappings
+        # Separate audit columns from regular columns to ensure audit columns are added last
+        audit_columns = []
+        regular_columns = []
+        
         for col in column_mappings:
+            trgclnm = col.get('trgclnm', '').strip()
+            if not trgclnm:
+                continue
+            
+            isaudit = col.get('isaudit', 'N')
+            audttyp = col.get('audttyp', '').strip().upper() if col.get('audttyp') else ''
+            # Also check if column name matches standard audit column names
+            audit_column_names = ['CRTDBY', 'CRTDDT', 'UPDTBY', 'UPDTDT']
+            is_audit_col = (isaudit == 'Y' or audttyp) or (trgclnm.upper() in audit_column_names)
+            
+            if is_audit_col:
+                audit_columns.append(col)
+            else:
+                regular_columns.append(col)
+        
+        # Process regular columns first
+        for col in regular_columns:
             trgclnm = col.get('trgclnm', '').strip()
             if not trgclnm:
                 continue
@@ -65,7 +85,14 @@ def create_table_if_not_exists(
             
             # Get database-specific data type directly from DMS_PARAMS (metadata database)
             # Query DMS_PARAMS for the exact PRCD value
-            db_specific_type = _get_datatype_from_params(cursor, db_type, trgcldtyp, metadata_connection) if trgcldtyp else _get_default_type(db_type)
+            prval_from_params = _get_datatype_from_params(cursor, db_type, trgcldtyp, metadata_connection) if trgcldtyp else None
+            
+            # Convert PRVAL to target database type if needed
+            if prval_from_params:
+                # Check if PRVAL is already appropriate for target database, or convert it
+                db_specific_type = _convert_datatype_for_target_db(prval_from_params, db_type, trgcldtyp)
+            else:
+                db_specific_type = None
             
             # If not found in DMS_PARAMS, try the dtype_map (cached) and then parsing
             if not db_specific_type or db_specific_type == trgcldtyp:
@@ -78,6 +105,44 @@ def create_table_if_not_exists(
             col_defs.append(col_def)
             
             # Track primary keys
+            if trgkyflg == 'Y':
+                primary_keys.append((trgkyseq or 0, trgclnm))
+        
+        # Process audit columns last (after regular columns)
+        for col in audit_columns:
+            trgclnm = col.get('trgclnm', '').strip()
+            if not trgclnm:
+                continue
+            
+            # Track existing column names (case-insensitive for comparison)
+            existing_column_names.add(trgclnm.upper())
+                
+            trgcldtyp = col.get('trgcldtyp', '').strip()
+            trgkyflg = col.get('trgkyflg', 'N')
+            trgkyseq = col.get('trgkyseq')
+            isrqrd = col.get('isrqrd', 'N')
+            
+            # Get database-specific data type directly from DMS_PARAMS (metadata database)
+            prval_from_params = _get_datatype_from_params(cursor, db_type, trgcldtyp, metadata_connection) if trgcldtyp else None
+            
+            # Convert PRVAL to target database type if needed
+            if prval_from_params:
+                # Check if PRVAL is already appropriate for target database, or convert it
+                db_specific_type = _convert_datatype_for_target_db(prval_from_params, db_type, trgcldtyp)
+            else:
+                db_specific_type = None
+            
+            # If not found in DMS_PARAMS, try the dtype_map (cached) and then parsing
+            if not db_specific_type or db_specific_type == trgcldtyp:
+                db_specific_type = _resolve_single_data_type(trgcldtyp, db_type, dtype_map) if trgcldtyp else _get_default_type(db_type)
+            
+            # Build column definition
+            col_def = f"{_quote_identifier(trgclnm, db_type)} {db_specific_type}"
+            if isrqrd == 'Y':
+                col_def += " NOT NULL"
+            col_defs.append(col_def)
+            
+            # Track primary keys (though audit columns typically shouldn't be primary keys)
             if trgkyflg == 'Y':
                 primary_keys.append((trgkyseq or 0, trgclnm))
         
@@ -299,7 +364,35 @@ def _quote_identifier(name: str, db_type: str) -> str:
     if db_type == "POSTGRESQL":
         return f'"{name.lower()}"'
     elif db_type == "ORACLE":
-        return name.upper()
+        # Oracle: use uppercase and quote when necessary (reserved words, special chars)
+        import re
+
+        name_upper = name.upper()
+
+        # Basic pattern for unquoted identifiers: start with letter or underscore, then letters/digits/underscore
+        is_simple_identifier = re.match(r'^[A-Z_][A-Z0-9_]*$', name_upper) is not None
+
+        # Minimal reserved keyword set – extend as needed
+        reserved_keywords = {
+            "DATE",
+            "NUMBER",
+            "VARCHAR2",
+            "TIMESTAMP",
+            "USER",
+            "SESSION",
+            "LEVEL",
+            "ROWID",
+            "UID",
+            "SYSDATE",
+            "DOMAIN",
+            "VALUE",
+        }
+
+        # Quote if it's not a simple identifier or if it's a reserved keyword
+        if (not is_simple_identifier) or (name_upper in reserved_keywords):
+            return f'"{name_upper}"'
+
+        return name_upper
     else:
         return name
 
@@ -329,7 +422,12 @@ def _resolve_single_data_type(generic_type: str, db_type: str, dtype_map: Dict[s
     
     # First, try exact match in dtype_map
     if generic_type_upper in dtype_map:
-        return dtype_map[generic_type_upper]
+        base_type = dtype_map[generic_type_upper]
+        # Convert to target database format
+        converted = _convert_datatype_for_target_db(base_type, db_type, generic_type_upper)
+        if converted:
+            return converted
+        return base_type
     
     # Try to parse patterns like "String20", "String5", "Integer10", etc.
     
@@ -345,6 +443,10 @@ def _resolve_single_data_type(generic_type: str, db_type: str, dtype_map: Dict[s
                 base_type = re.sub(r'\(\d+\)', f'({size})', base_type)
             else:
                 base_type = f"{base_type}({size})"
+            # Convert to target database format
+            converted = _convert_datatype_for_target_db(base_type, db_type, f"STRING{size}")
+            if converted:
+                return converted
             return base_type
         else:
             # Fallback: construct directly
@@ -409,11 +511,35 @@ def _resolve_single_data_type(generic_type: str, db_type: str, dtype_map: Dict[s
     if generic_type_upper in date_types:
         base_type = dtype_map.get(generic_type_upper)
         if base_type:
+            # Convert to target database format
+            converted = _convert_datatype_for_target_db(base_type, db_type, generic_type_upper)
+            if converted:
+                return converted
             return base_type
         else:
             if db_type == "ORACLE" and generic_type_upper == "TIMESTAMP":
                 return "TIMESTAMP(6)"
+            elif db_type == "POSTGRESQL" and generic_type_upper == "TIMESTAMP":
+                return "TIMESTAMP"
             return generic_type_upper
+    
+    # Pattern: TEXT (PostgreSQL) -> CLOB (Oracle) or TEXT (PostgreSQL)
+    if generic_type_upper == "TEXT":
+        if db_type == "ORACLE":
+            return "CLOB"
+        elif db_type == "POSTGRESQL":
+            return "TEXT"
+        else:
+            return "TEXT"
+    
+    # Pattern: NUMBER (Oracle) -> DECIMAL (PostgreSQL) or NUMBER (Oracle)
+    if generic_type_upper == "NUMBER":
+        if db_type == "ORACLE":
+            return "NUMBER(18,2)"  # Default precision and scale
+        elif db_type == "POSTGRESQL":
+            return "DECIMAL(18,2)"
+        else:
+            return "DECIMAL(18,2)"
     
     # If no pattern matches, try to find base type without size
     # Remove trailing digits and try again
@@ -502,4 +628,98 @@ def _get_datatype_from_params(cursor, db_type: str, prcd: str, metadata_connecti
     finally:
         if metadata_cursor:
             metadata_cursor.close()
+
+
+def _convert_datatype_for_target_db(prval: str, target_db_type: str, original_prcd: str = None) -> str:
+    """
+    Convert a data type PRVAL from metadata database format to target database format.
+    
+    Args:
+        prval: PRVAL from DMS_PARAMS (may be in metadata DB format)
+        target_db_type: Target database type (ORACLE, POSTGRESQL, etc.)
+        original_prcd: Original PRCD code (for fallback conversion)
+        
+    Returns:
+        Data type string appropriate for target database
+    """
+    if not prval:
+        return None
+    
+    prval_upper = prval.upper().strip()
+    
+    # If target is Oracle, convert PostgreSQL types to Oracle types
+    if target_db_type == "ORACLE":
+        # Convert PostgreSQL types to Oracle
+        if prval_upper.startswith("VARCHAR("):
+            # Extract size: varchar(100) -> VARCHAR2(100)
+            size_match = re.search(r'\((\d+)\)', prval)
+            if size_match:
+                size = size_match.group(1)
+                return f"VARCHAR2({size})"
+            return "VARCHAR2(255)"
+        elif prval_upper == "TIMESTAMP" or prval_upper.startswith("TIMESTAMP("):
+            # timestamp -> TIMESTAMP(6)
+            if "(" in prval_upper:
+                return prval_upper  # Already has precision
+            return "TIMESTAMP(6)"
+        elif prval_upper == "TEXT":
+            # TEXT -> CLOB for Oracle
+            return "CLOB"
+        elif prval_upper == "DATE":
+            return "DATE"
+        elif prval_upper.startswith("INTEGER") or prval_upper == "INT":
+            # INTEGER -> NUMBER(10)
+            return "NUMBER(10)"
+        elif prval_upper.startswith("BIGINT"):
+            # BIGINT -> NUMBER(19)
+            return "NUMBER(19)"
+        elif prval_upper.startswith("DECIMAL") or prval_upper.startswith("NUMERIC"):
+            # Extract precision and scale: decimal(18,2) -> NUMBER(18,2)
+            match = re.search(r'\((\d+)(?:,(\d+))?\)', prval)
+            if match:
+                precision = match.group(1)
+                scale = match.group(2) or "0"
+                return f"NUMBER({precision},{scale})"
+            return "NUMBER(18,2)"
+        elif prval_upper == "NUMBER" or prval_upper.startswith("NUMBER("):
+            # Already Oracle format, return as-is
+            return prval
+        else:
+            # Try to convert based on original PRCD if provided
+            if original_prcd:
+                # Use _resolve_single_data_type as fallback
+                return None  # Will trigger fallback resolution
+            return prval  # Return as-is if can't convert
+    
+    # If target is PostgreSQL, convert Oracle types to PostgreSQL types
+    elif target_db_type == "POSTGRESQL":
+        if prval_upper.startswith("VARCHAR2("):
+            # Extract size: VARCHAR2(100) -> varchar(100)
+            size_match = re.search(r'\((\d+)\)', prval)
+            if size_match:
+                size = size_match.group(1)
+                return f"VARCHAR({size})"
+            return "VARCHAR(255)"
+        elif prval_upper.startswith("TIMESTAMP("):
+            # TIMESTAMP(6) -> timestamp
+            return "TIMESTAMP"
+        elif prval_upper == "CLOB":
+            # CLOB -> TEXT for PostgreSQL
+            return "TEXT"
+        elif prval_upper.startswith("NUMBER("):
+            # Extract precision and scale: NUMBER(18,2) -> decimal(18,2)
+            match = re.search(r'\((\d+)(?:,(\d+))?\)', prval)
+            if match:
+                precision = match.group(1)
+                scale = match.group(2) or "0"
+                return f"DECIMAL({precision},{scale})"
+            return "DECIMAL(18,2)"
+        elif prval_upper == "NUMBER":
+            return "DECIMAL(18,2)"
+        else:
+            # Already PostgreSQL format or unknown, return as-is
+            return prval
+    
+    # For other database types, return as-is
+    return prval
 

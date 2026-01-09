@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, date
 from backend.modules.common.db_table_utils import _detect_db_type
 from backend.modules.file_upload.table_creator import _quote_identifier
-from backend.modules.logger import info, error, warning
+from backend.modules.logger import info, error, warning, debug
 
 
 # Toggle for very detailed debug logging in this module.
@@ -92,18 +92,25 @@ def load_data(
                 is_audit_col = True
         
         # Also check if column name matches standard audit column names
-        if trg_col in ('CRTDBY', 'CRTDDT', 'UPDTBY', 'UPDTDT'):
+        # Support both Oracle-style (CRTDBY, CRTDDT) and standard (CREATED_BY, CREATED_DATE) naming
+        audit_column_names = {
+            # Oracle-style names
+            'CRTDBY': 'CREATED_BY',
+            'CRTDDT': 'CREATED_DATE',
+            'UPDTBY': 'UPDATED_BY',
+            'UPDTDT': 'UPDATED_DATE',
+            # Standard names
+            'CREATED_BY': 'CREATED_BY',
+            'CREATED_DATE': 'CREATED_DATE',
+            'UPDATED_BY': 'UPDATED_BY',
+            'UPDATED_DATE': 'UPDATED_DATE',
+        }
+        
+        if trg_col in audit_column_names:
             is_audit_col = True
             # Set audttyp if not already set
             if not audttyp:
-                if trg_col == 'CRTDBY':
-                    audttyp = 'CREATED_BY'
-                elif trg_col == 'CRTDDT':
-                    audttyp = 'CREATED_DATE'
-                elif trg_col == 'UPDTBY':
-                    audttyp = 'UPDATED_BY'
-                elif trg_col == 'UPDTDT':
-                    audttyp = 'UPDATED_DATE'
+                audttyp = audit_column_names[trg_col]
         
         if is_audit_col and audttyp:
             audit_columns[trg_col] = audttyp
@@ -134,9 +141,9 @@ def load_data(
             end_idx = min(start_idx + batch_size, total_rows)
             batch_df = dataframe.iloc[start_idx:end_idx].copy()
             
-            info(f"Processing batch {batch_num + 1}/{num_batches} (rows {start_idx + 1}-{end_idx})")
-            info(f"[load_data] Batch DataFrame shape: {batch_df.shape}")
-            info(f"[load_data] Batch DataFrame columns: {list(batch_df.columns)}")
+            debug(f"Processing batch {batch_num + 1}/{num_batches} (rows {start_idx + 1}-{end_idx})")
+            debug(f"[load_data] Batch DataFrame shape: {batch_df.shape}")
+            debug(f"[load_data] Batch DataFrame columns: {list(batch_df.columns)}")
             if len(batch_df) > 0 and 'COD_ACCT_NO' in batch_df.columns:
                 info(f"[load_data] Batch COD_ACCT_NO first value: '{batch_df.iloc[0]['COD_ACCT_NO']}'")
             
@@ -283,7 +290,7 @@ def _insert_batch(
         placeholders = ", ".join(["?"] * len(target_columns))
     
     insert_sql = f"INSERT INTO {table_ref} ({columns_str}) VALUES ({placeholders})"
-    info(f"[_insert_batch] INSERT SQL: {insert_sql}")
+    debug(f"[_insert_batch] INSERT SQL: {insert_sql}")
     
     rows_successful = 0
     rows_failed = 0
