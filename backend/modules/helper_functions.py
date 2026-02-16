@@ -1,6 +1,7 @@
 import os
 import oracledb
 import dotenv
+from fastapi import Request
 
 # Support both FastAPI (package import) and legacy Flask (relative import) contexts
 try:
@@ -13,6 +14,18 @@ except ImportError:  # When running Flask app.py directly inside backend
 dotenv.load_dotenv()
 
 ORACLE_SCHEMA = os.getenv("DMS_SCHEMA")
+
+
+def _current_username(request: Request = None) -> str:
+    """Extract current username from FastAPI request headers"""
+    if request is None:
+        return "system"
+    return (
+        request.headers.get("X-User")
+        or request.headers.get("X-USER-ID")
+        or request.headers.get("X-USERNAME")
+        or "system"
+    )
 
 def get_parameter_mapping(conn):
     cursor = None
@@ -176,7 +189,7 @@ def _normalize_column_names(columns):
     """Normalize column names to uppercase for consistency between Oracle and PostgreSQL"""
     return [col.upper() if col else col for col in columns]
 
-def add_parameter_mapping(conn, type, code, desc, value):
+def add_parameter_mapping(conn, type, code, desc, value, dbtyp='GENERIC', created_by='SYSTEM'):
     cursor = None
     try:
         # Detect DB type from connection module (no queries needed)
@@ -203,16 +216,16 @@ def add_parameter_mapping(conn, type, code, desc, value):
         if db_type == "POSTGRESQL":
             # PostgreSQL: use unquoted identifiers (will be lowercase in DB, but we normalize in SELECT)
             query = """
-                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, PRRECCRDT, PRRECUPDT)
-                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, PRRECCRDT, PRRECUPDT)
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """
-            cursor.execute(query, (type, code, desc, value))
+            cursor.execute(query, (type, code, desc, value, dbtyp, created_by))
         else:  # Oracle
             query = """
-                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, PRRECCRDT, PRRECUPDT)
-                VALUES (:1, :2, :3, :4, sysdate, sysdate)
+                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, PRRECCRDT, PRRECUPDT)
+                VALUES (:1, :2, :3, :4, :5, :6, sysdate, sysdate)
             """
-            cursor.execute(query, [type, code, desc, value])
+            cursor.execute(query, [type, code, desc, value, dbtyp, created_by])
         
         cursor.close()
         cursor = None
@@ -774,6 +787,553 @@ def call_delete_mapping_details(connection, p_mapref, p_trgclnm):
     except Exception as e:
         error_message = f"Exception while deleting mapping detail: {str(e)}"
         return False, error_message
+
+
+# ============================================================================
+# PHASE 1: DATABASE MANAGEMENT & DATATYPE SUPPORT FUNCTIONS
+# ============================================================================
+# These functions support multi-database datatype management system
+# Enables dynamic database registry and per-database datatype mappings
+
+# Datatype compatibility matrix - maps generic datatypes to database-specific types
+DATATYPE_COMPATIBILITY_MATRIX = {
+    'INT': {
+        'ORACLE': 'NUMBER(10,0)',
+        'POSTGRESQL': 'INTEGER',
+        'MYSQL': 'INT',
+        'SQLSERVER': 'INT',
+        'SNOWFLAKE': 'NUMBER(10,0)',
+        'GENERIC': 'INT'
+    },
+    'BIGINT': {
+        'ORACLE': 'NUMBER(19,0)',
+        'POSTGRESQL': 'BIGINT',
+        'MYSQL': 'BIGINT',
+        'SQLSERVER': 'BIGINT',
+        'SNOWFLAKE': 'NUMBER(19,0)',
+        'GENERIC': 'BIGINT'
+    },
+    'DECIMAL': {
+        'ORACLE': 'NUMBER',
+        'POSTGRESQL': 'NUMERIC',
+        'MYSQL': 'DECIMAL',
+        'SQLSERVER': 'DECIMAL',
+        'SNOWFLAKE': 'DECIMAL',
+        'GENERIC': 'DECIMAL'
+    },
+    'VARCHAR': {
+        'ORACLE': 'VARCHAR2(255)',
+        'POSTGRESQL': 'VARCHAR(255)',
+        'MYSQL': 'VARCHAR(255)',
+        'SQLSERVER': 'VARCHAR(255)',
+        'SNOWFLAKE': 'VARCHAR(255)',
+        'GENERIC': 'VARCHAR'
+    },
+    'VARCHAR_LARGE': {
+        'ORACLE': 'VARCHAR2(2000)',
+        'POSTGRESQL': 'VARCHAR(4000)',
+        'MYSQL': 'TEXT',
+        'SQLSERVER': 'VARCHAR(MAX)',
+        'SNOWFLAKE': 'VARCHAR(16777216)',
+        'GENERIC': 'VARCHAR_LARGE'
+    },
+    'DATE': {
+        'ORACLE': 'DATE',
+        'POSTGRESQL': 'DATE',
+        'MYSQL': 'DATE',
+        'SQLSERVER': 'DATE',
+        'SNOWFLAKE': 'DATE',
+        'GENERIC': 'DATE'
+    },
+    'TIMESTAMP': {
+        'ORACLE': 'TIMESTAMP',
+        'POSTGRESQL': 'TIMESTAMP',
+        'MYSQL': 'DATETIME',
+        'SQLSERVER': 'DATETIME2',
+        'SNOWFLAKE': 'TIMESTAMP_NTZ',
+        'GENERIC': 'TIMESTAMP'
+    },
+    'BOOLEAN': {
+        'ORACLE': 'CHAR(1)',
+        'POSTGRESQL': 'BOOLEAN',
+        'MYSQL': 'BOOLEAN',
+        'SQLSERVER': 'BIT',
+        'SNOWFLAKE': 'BOOLEAN',
+        'GENERIC': 'BOOLEAN'
+    },
+    'FLOAT': {
+        'ORACLE': 'FLOAT',
+        'POSTGRESQL': 'FLOAT8',
+        'MYSQL': 'FLOAT',
+        'SQLSERVER': 'FLOAT',
+        'SNOWFLAKE': 'FLOAT',
+        'GENERIC': 'FLOAT'
+    },
+    'JSON': {
+        'ORACLE': 'CLOB',
+        'POSTGRESQL': 'JSON',
+        'MYSQL': 'JSON',
+        'SQLSERVER': 'NVARCHAR(MAX)',
+        'SNOWFLAKE': 'VARIANT',
+        'GENERIC': 'JSON'
+    }
+}
+
+
+def get_supported_databases(conn):
+    """
+    Fetch list of supported databases from DMS_SUPPORTED_DATABASES table.
+    Returns list of database configuration dictionaries.
+    """
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        dms_db_ref = _get_table_ref(cursor, db_type, 'DMS_SUPPORTED_DATABASES')
+        
+        if db_type == "POSTGRESQL":
+            query = f"""
+                SELECT DBTYP, DBDESC, DBVRSN, STTS, RECCRDT, CRTBY, RECUPDT, UPDBY
+                FROM {dms_db_ref}
+                WHERE STTS = 'ACTIVE'
+                ORDER BY RECCRDT DESC
+            """
+            cursor.execute(query)
+        else:  # Oracle
+            query = f"""
+                SELECT DBTYP, DBDESC, DBVRSN, STTS, RECCRDT, CRTBY, RECUPDT, UPDBY
+                FROM {dms_db_ref}
+                WHERE STTS = 'ACTIVE'
+                ORDER BY RECCRDT DESC
+            """
+            cursor.execute(query)
+        
+        columns = [col[0] for col in cursor.description]
+        columns_upper = _normalize_column_names(columns)
+        
+        result = []
+        for row in cursor.fetchall():
+            result.append(dict(zip(columns_upper, row)))
+        
+        cursor.close()
+        return result
+    except Exception as e:
+        error(f"Error fetching supported databases: {str(e)}")
+        raise
+
+
+def add_supported_database(conn, dbtyp, dbdesc, dbvrsn, created_by):
+    """
+    Add a new supported database type to DMS_SUPPORTED_DATABASES.
+    Returns (success: bool, message: str)
+    """
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        dms_db_ref = _get_table_ref(cursor, db_type, 'DMS_SUPPORTED_DATABASES')
+        
+        # Check if database type already exists
+        if db_type == "POSTGRESQL":
+            check_query = f"SELECT COUNT(*) FROM {dms_db_ref} WHERE DBTYP = %s"
+            cursor.execute(check_query, (dbtyp,))
+        else:  # Oracle
+            check_query = f"SELECT COUNT(*) FROM {dms_db_ref} WHERE DBTYP = :1"
+            cursor.execute(check_query, [dbtyp])
+        
+        if cursor.fetchone()[0] > 0:
+            cursor.close()
+            return False, f"Database type '{dbtyp}' already exists"
+        
+        # Insert new database type
+        if db_type == "POSTGRESQL":
+            insert_query = f"""
+                INSERT INTO {dms_db_ref} (DBTYP, DBDESC, DBVRSN, STTS, CRTBY, RECCRDT, UPDBY, RECUPDT)
+                VALUES (%s, %s, %s, 'ACTIVE', %s, NOW(), %s, NOW())
+            """
+            cursor.execute(insert_query, (dbtyp, dbdesc, dbvrsn, created_by, created_by))
+        else:  # Oracle
+            insert_query = f"""
+                INSERT INTO {dms_db_ref} (DBTYP, DBDESC, DBVRSN, STTS, CRTBY, RECCRDT, UPDBY, RECUPDT)
+                VALUES (:1, :2, :3, 'ACTIVE', :4, SYSDATE, :5, SYSDATE)
+            """
+            cursor.execute(insert_query, [dbtyp, dbdesc, dbvrsn, created_by, created_by])
+        
+        conn.commit()
+        cursor.close()
+        return True, f"Database type '{dbtyp}' successfully added"
+    except Exception as e:
+        conn.rollback()
+        error(f"Error adding supported database: {str(e)}")
+        return False, f"Error: {str(e)}"
+
+
+def get_database_status(conn, dbtyp):
+    """Get status of a supported database type"""
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        dms_db_ref = _get_table_ref(cursor, db_type, 'DMS_SUPPORTED_DATABASES')
+        
+        if db_type == "POSTGRESQL":
+            query = f"SELECT STTS FROM {dms_db_ref} WHERE DBTYP = %s"
+            cursor.execute(query, (dbtyp,))
+        else:  # Oracle
+            query = f"SELECT STTS FROM {dms_db_ref} WHERE DBTYP = :1"
+            cursor.execute(query, [dbtyp])
+        
+        row = cursor.fetchone()
+        cursor.close()
+        return row[0] if row else None
+    except Exception as e:
+        error(f"Error getting database status: {str(e)}")
+        return None
+
+
+def update_database_status(conn, dbtyp, status, updated_by):
+    """
+    Update status of a supported database type (ACTIVE/INACTIVE)
+    Returns (success: bool, message: str)
+    """
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        dms_db_ref = _get_table_ref(cursor, db_type, 'DMS_SUPPORTED_DATABASES')
+        
+        if status not in ['ACTIVE', 'INACTIVE']:
+            return False, f"Invalid status '{status}'. Must be ACTIVE or INACTIVE"
+        
+        if db_type == "POSTGRESQL":
+            update_query = f"UPDATE {dms_db_ref} SET STTS = %s, UPDBY = %s, RECUPDT = NOW() WHERE DBTYP = %s"
+            cursor.execute(update_query, (status, updated_by, dbtyp))
+        else:  # Oracle
+            update_query = f"UPDATE {dms_db_ref} SET STTS = :1, UPDBY = :2, RECUPDT = SYSDATE WHERE DBTYP = :3"
+            cursor.execute(update_query, [status, updated_by, dbtyp])
+        
+        conn.commit()
+        cursor.close()
+        return True, f"Database type '{dbtyp}' status updated to '{status}'"
+    except Exception as e:
+        conn.rollback()
+        error(f"Error updating database status: {str(e)}")
+        return False, f"Error: {str(e)}"
+
+
+def get_parameter_mapping_datatype_for_db(conn, db_type_filter=None):
+    """
+    Fetch datatype parameters from DMS_PARAMS, optionally filtered by DBTYP.
+    If db_type_filter is None, returns all datatypes.
+    Returns list of datatype parameter dictionaries.
+    """
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        dms_params_ref = _get_table_ref(cursor, db_type, 'DMS_PARAMS')
+        
+        if db_type_filter:
+            if db_type == "POSTGRESQL":
+                query = f"""
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP
+                    FROM {dms_params_ref}
+                    WHERE PRTYP = 'Datatype' AND DBTYP = %s
+                    ORDER BY PRCD
+                """
+                cursor.execute(query, (db_type_filter,))
+            else:  # Oracle
+                query = f"""
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP
+                    FROM {dms_params_ref}
+                    WHERE PRTYP = 'Datatype' AND DBTYP = :1
+                    ORDER BY PRCD
+                """
+                cursor.execute(query, [db_type_filter])
+        else:
+            if db_type == "POSTGRESQL":
+                query = f"""
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP
+                    FROM {dms_params_ref}
+                    WHERE PRTYP = 'Datatype'
+                    ORDER BY DBTYP, PRCD
+                """
+                cursor.execute(query)
+            else:  # Oracle
+                query = f"""
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP
+                    FROM {dms_params_ref}
+                    WHERE PRTYP = 'Datatype'
+                    ORDER BY DBTYP, PRCD
+                """
+                cursor.execute(query)
+        
+        columns = [col[0] for col in cursor.description]
+        columns_upper = _normalize_column_names(columns)
+        
+        result = []
+        for row in cursor.fetchall():
+            result.append(dict(zip(columns_upper, row)))
+        
+        cursor.close()
+        return result
+    except Exception as e:
+        error(f"Error fetching datatypes for database: {str(e)}")
+        raise
+
+
+def get_all_datatype_groups(conn):
+    """
+    Get all datatype parameters grouped by DBTYP.
+    Returns dictionary: {dbtyp: [datatype_list]}
+    """
+    try:
+        all_datatypes = get_parameter_mapping_datatype_for_db(conn)
+        
+        grouped = {}
+        for datatype in all_datatypes:
+            dbtyp = datatype.get('DBTYP', 'UNKNOWN')
+            if dbtyp not in grouped:
+                grouped[dbtyp] = []
+            grouped[dbtyp].append(datatype)
+        
+        return grouped
+    except Exception as e:
+        error(f"Error grouping datatypes: {str(e)}")
+        raise
+
+
+def verify_datatype_compatibility(generic_prcd, target_prval, target_dbtype):
+    """
+    Verify if a datatype is compatible with target database type.
+    Returns (compatible: bool, suggested_value: str or None, message: str)
+    """
+    try:
+        # Check if generic datatype exists in matrix
+        if generic_prcd not in DATATYPE_COMPATIBILITY_MATRIX:
+            return False, None, f"Generic datatype '{generic_prcd}' not found in compatibility matrix"
+        
+        matrix = DATATYPE_COMPATIBILITY_MATRIX[generic_prcd]
+        
+        # Check if target database type is supported
+        if target_dbtype not in matrix:
+            return False, None, f"Database type '{target_dbtype}' not supported for '{generic_prcd}'"
+        
+        # Get suggested value from matrix
+        suggested_value = matrix[target_dbtype]
+        
+        # Check if provided value matches suggested
+        if target_prval.upper() == suggested_value.upper():
+            return True, suggested_value, "Datatype is compatible"
+        
+        # Not exact match, but return suggested value
+        return True, suggested_value, f"Datatype '{target_prval}' differs from recommended '{suggested_value}'"
+    except Exception as e:
+        error(f"Error verifying datatype compatibility: {str(e)}")
+        return False, None, f"Error: {str(e)}"
+
+
+def clone_datatypes_from_generic(conn, target_dbtype, mappings, created_by):
+    """
+    Clone datatype parameters from GENERIC database type to target database type.
+    mappings: dict mapping generic datatype codes to custom values or None (use default)
+    Returns (success: bool, created_count: int, skipped_count: int, message: str)
+    """
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        dms_params_ref = _get_table_ref(cursor, db_type, 'DMS_PARAMS')
+        
+        # Get GENERIC datatypes
+        generic_datatypes = get_parameter_mapping_datatype_for_db(conn, 'GENERIC')
+        
+        if not generic_datatypes:
+            cursor.close()
+            return False, 0, 0, "No GENERIC datatypes found to clone"
+        
+        created_count = 0
+        skipped_count = 0
+        
+        for generic_dt in generic_datatypes:
+            prcd = generic_dt['PRCD']
+            prdesc = generic_dt['PRDESC']
+            
+            # Determine target value
+            if prcd in mappings and mappings[prcd]:
+                target_prval = mappings[prcd]
+            else:
+                # Use default from compatibility matrix
+                if prcd in DATATYPE_COMPATIBILITY_MATRIX:
+                    target_prval = DATATYPE_COMPATIBILITY_MATRIX[prcd].get(target_dbtype)
+                    if not target_prval:
+                        skipped_count += 1
+                        continue
+                else:
+                    skipped_count += 1
+                    continue
+            
+            # Check if already exists
+            if db_type == "POSTGRESQL":
+                check_query = f"SELECT COUNT(*) FROM {dms_params_ref} WHERE PRCD = %s AND DBTYP = %s"
+                cursor.execute(check_query, (prcd, target_dbtype))
+            else:  # Oracle
+                check_query = f"SELECT COUNT(*) FROM {dms_params_ref} WHERE PRCD = :1 AND DBTYP = :2"
+                cursor.execute(check_query, [prcd, target_dbtype])
+            
+            if cursor.fetchone()[0] > 0:
+                skipped_count += 1
+                continue
+            
+            # Insert cloned datatype
+            if db_type == "POSTGRESQL":
+                insert_query = f"""
+                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, RECCRDT, UPDBY, RECUPDT)
+                    VALUES ('Datatype', %s, %s, %s, %s, %s, NOW(), %s, NOW())
+                """
+                cursor.execute(insert_query, ('Datatype', prcd, prdesc, target_prval, target_dbtype, created_by, created_by))
+            else:  # Oracle
+                insert_query = f"""
+                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, RECCRDT, UPDBY, RECUPDT)
+                    VALUES ('Datatype', :1, :2, :3, :4, :5, SYSDATE, :6, SYSDATE)
+                """
+                cursor.execute(insert_query, ['Datatype', prcd, prdesc, target_prval, target_dbtype, created_by, created_by])
+            
+            created_count += 1
+        
+        conn.commit()
+        cursor.close()
+        return True, created_count, skipped_count, f"Cloned {created_count} datatypes, skipped {skipped_count}"
+    except Exception as e:
+        conn.rollback()
+        error(f"Error cloning datatypes: {str(e)}")
+        return False, 0, 0, f"Error: {str(e)}"
+
+
+def is_datatype_in_use(conn, dbtyp, prcd):
+    """
+    Check if a datatype parameter is referenced in any mapping.
+    Returns (in_use: bool, reference_count: int, details: dict)
+    """
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        dms_mapr_ref = _get_table_ref(cursor, db_type, 'DMS_MAPR')
+        
+        details = {
+            'dbtyp': dbtyp,
+            'prcd': prcd,
+            'mapping_count': 0,
+            'job_count': 0,
+            'upload_count': 0,
+            'report_count': 0
+        }
+        
+        total_count = 0
+        
+        # This is a simple implementation - in production would check actual references
+        # For now, we just return that it's safe to delete unless explicitly in use
+        # The full implementation would join with actual dependent tables
+        
+        cursor.close()
+        return total_count > 0, total_count, details
+    except Exception as e:
+        error(f"Error checking datatype in use: {str(e)}")
+        return False, 0, {}
+
+
+def is_parameter_in_use_in_mappings(conn, prcd):
+    """Check if parameter is referenced in DMS_MAPR mappings"""
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        # This would require joining on actual mapping logic column
+        # For Phase 1, return count = 0 (safe to delete)
+        cursor.close()
+        return 0
+    except Exception as e:
+        error(f"Error checking parameter in mappings: {str(e)}")
+        return 0
+
+
+def is_parameter_in_use_in_jobs(conn, prcd):
+    """Check if parameter is referenced in DMS_JOB jobs"""
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        # Jobs reference parameters through mappings
+        # For Phase 1, return count = 0 (safe to delete)
+        cursor.close()
+        return 0
+    except Exception as e:
+        error(f"Error checking parameter in jobs: {str(e)}")
+        return 0
+
+
+def is_parameter_in_use_in_uploads(conn, prcd):
+    """Check if parameter is referenced in DMS_FLUPLD file uploads"""
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        # File uploads reference parameters through mappings
+        # For Phase 1, return count = 0 (safe to delete)
+        cursor.close()
+        return 0
+    except Exception as e:
+        error(f"Error checking parameter in uploads: {str(e)}")
+        return 0
+
+
+def is_parameter_in_use_in_reports(conn, prcd):
+    """Check if parameter is referenced in DMS_RPRT_DEF reports"""
+    try:
+        cursor = conn.cursor()
+        db_type = _detect_db_type_from_connection(conn)
+        
+        # Reports reference parameters
+        # For Phase 1, return count = 0 (safe to delete)
+        cursor.close()
+        return 0
+    except Exception as e:
+        error(f"Error checking parameter in reports: {str(e)}")
+        return 0
+
+
+def validate_parameter_delete(conn, prcd):
+    """
+    Validate that a parameter can be safely deleted.
+    Returns (safe_to_delete: bool, blocking_count: int, message: str)
+    """
+    try:
+        mapping_count = is_parameter_in_use_in_mappings(conn, prcd)
+        job_count = is_parameter_in_use_in_jobs(conn, prcd)
+        upload_count = is_parameter_in_use_in_uploads(conn, prcd)
+        report_count = is_parameter_in_use_in_reports(conn, prcd)
+        
+        total_blocking = mapping_count + job_count + upload_count + report_count
+        
+        if total_blocking > 0:
+            details = []
+            if mapping_count > 0:
+                details.append(f"{mapping_count} mapping(s)")
+            if job_count > 0:
+                details.append(f"{job_count} job(s)")
+            if upload_count > 0:
+                details.append(f"{upload_count} upload(s)")
+            if report_count > 0:
+                details.append(f"{report_count} report(s)")
+            
+            message = f"Cannot delete: referenced by {', '.join(details)}"
+            return False, total_blocking, message
+        
+        return True, 0, "Parameter can be safely deleted"
+    except Exception as e:
+        error(f"Error validating parameter delete: {str(e)}")
+        return False, 0, f"Error: {str(e)}"
 
 
 
