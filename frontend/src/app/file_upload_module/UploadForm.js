@@ -488,7 +488,7 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
       const token = localStorage.getItem('token')
       const formDataObj = new FormData()
       formDataObj.append('file', selectedFile)
-      formDataObj.append('preview_rows', '10')
+      formDataObj.append('preview_rows', '200')  // Read first 200 rows for column detection
 
       const response = await axios.post(`${API_BASE_URL}/file-upload/upload-file`, formDataObj, {
         headers: {

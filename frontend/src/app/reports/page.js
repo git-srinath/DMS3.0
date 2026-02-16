@@ -33,6 +33,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  DialogContentText,
   Checkbox,
   ListItemText,
   Collapse,
@@ -44,8 +45,10 @@ import {
   Refresh,
   AutoAwesome,
   Visibility,
-  DeleteOutline,
+  Stop as StopIcon,
   ArrowBack,
+  Warning as WarningIcon,
+  DeleteOutline,
 } from "@mui/icons-material";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -535,6 +538,8 @@ const ReportsPage = () => {
     filePath: ""
   });
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const [stopScheduleDialog, setStopScheduleDialog] = useState({ open: false, report: null });
+  const [stoppingSchedule, setStoppingSchedule] = useState(false);
   const [runDialog, setRunDialog] = useState({ open: false, report: null });
   const [runForm, setRunForm] = useState({ outputFormat: "CSV", destination: "DOWNLOAD", email: "", filePath: "" });
   const [runningReport, setRunningReport] = useState(false);
@@ -712,6 +717,33 @@ const ReportsPage = () => {
     }
   };
 
+  const handleStopSchedule = async () => {
+    const report = stopScheduleDialog.report;
+    if (!report || !report.scheduleId) return;
+    setStoppingSchedule(true);
+    try {
+      await axios.delete(`${apiBase}/api/report-schedules/${report.scheduleId}`);
+      showNotification("Schedule stopped successfully", "success");
+      setStopScheduleDialog({ open: false, report: null });
+      fetchReports();
+    } catch (err) {
+      const message = err.response?.data?.message || "Failed to stop schedule";
+      showNotification(message, "error");
+    } finally {
+      setStoppingSchedule(false);
+    }
+  };
+
+  const openStopScheduleDialog = (report) => {
+    if (report.scheduleId) {
+      setStopScheduleDialog({ open: true, report });
+    }
+  };
+
+  const closeStopScheduleDialog = () => {
+    setStopScheduleDialog({ open: false, report: null });
+  };
+
   const getScheduleLabel = (report) => {
     if (!report.scheduleFrequency) return "None";
     return report.scheduleFrequency;
@@ -820,6 +852,13 @@ const ReportsPage = () => {
                             <PlayArrow fontSize="small" />
                           </IconButton>
                         </Tooltip>
+                        {report.scheduleFrequency && (
+                          <Tooltip title="Stop Schedule">
+                            <IconButton size="small" color="error" onClick={() => openStopScheduleDialog(report)}>
+                              <StopIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                       </Stack>
                     </TableCell>
                   </TableRow>
@@ -1047,10 +1086,20 @@ const ReportsPage = () => {
     </Stack>
   </DialogContent>
   <DialogActions>
-    <Button onClick={closeScheduleDialog} disabled={savingSchedule}>
+    <Button onClick={closeScheduleDialog} disabled={savingSchedule || stoppingSchedule}>
       Cancel
     </Button>
-    <Button onClick={handleSaveSchedule} variant="contained" disabled={savingSchedule}>
+    {scheduleDialog.report?.scheduleId && (
+      <Button 
+        onClick={() => openStopScheduleDialog(scheduleDialog.report)} 
+        color="error" 
+        disabled={savingSchedule || stoppingSchedule}
+        startIcon={<StopIcon />}
+      >
+        Stop Schedule
+      </Button>
+    )}
+    <Button onClick={handleSaveSchedule} variant="contained" disabled={savingSchedule || stoppingSchedule}>
       {savingSchedule ? "Saving..." : "Save Schedule"}
     </Button>
   </DialogActions>
@@ -1114,6 +1163,33 @@ const ReportsPage = () => {
             <Button onClick={closeRunDialog}>Cancel</Button>
             <Button variant="contained" color="primary" onClick={handleRunReport} disabled={runningReport} startIcon={<PlayArrow />}>
               {runningReport ? "Running..." : "Run Report"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={stopScheduleDialog.open} onClose={closeStopScheduleDialog} fullWidth maxWidth="sm">
+          <DialogTitle>Stop Schedule</DialogTitle>
+          <DialogContent>
+            <DialogContentText sx={{ mb: 2 }}>
+              Are you sure you want to stop the schedule for report "{stopScheduleDialog.report?.reportName}"?
+            </DialogContentText>
+            <Typography variant="body2" color="warning.main" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <WarningIcon fontSize="small" />
+              This report will no longer be automatically scheduled for future runs.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeStopScheduleDialog} disabled={stoppingSchedule}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleStopSchedule} 
+              variant="contained" 
+              color="error" 
+              disabled={stoppingSchedule}
+              startIcon={stoppingSchedule ? <CircularProgress size={16} /> : <StopIcon />}
+            >
+              {stoppingSchedule ? "Stopping..." : "Stop Schedule"}
             </Button>
           </DialogActions>
         </Dialog>

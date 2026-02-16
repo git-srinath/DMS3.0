@@ -54,6 +54,7 @@ import {
   Cancel as CancelIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material'
 import { message } from 'antd'
 import { useTheme } from '@/context/ThemeContext'
@@ -111,6 +112,8 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
   const [errorFilterCode, setErrorFilterCode] = useState('')
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
   const [savingSchedule, setSavingSchedule] = useState(false)
+  const [stopScheduleDialog, setStopScheduleDialog] = useState({ show: false, upload: null })
+  const [stoppingSchedule, setStoppingSchedule] = useState(false)
   const [scheduleForm, setScheduleForm] = useState({
     frequency: 'DL', // DL, WK, MN, HY, YR, ID
     dayOfWeek: 'MON',
@@ -551,6 +554,51 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
     }
   }
 
+  const handleStopSchedule = async () => {
+    if (!stopScheduleDialog.upload) return
+
+    setStoppingSchedule(true)
+    try {
+      const token = localStorage.getItem('token')
+      const scheduleId = stopScheduleDialog.upload.schdid
+      
+      if (!scheduleId) {
+        message.error('Schedule ID not found')
+        return
+      }
+
+      const response = await axios.delete(`${API_BASE_URL}/file-upload/schedules/${scheduleId}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (response.data?.success) {
+        message.success('Schedule stopped successfully')
+        setStopScheduleDialog({ show: false, upload: null })
+        fetchUploads()
+      } else {
+        message.error(response.data?.message || 'Failed to stop schedule')
+      }
+    } catch (error) {
+      console.error('Error stopping schedule:', error)
+      message.error(getApiErrorMessage(error, 'Failed to stop schedule'))
+    } finally {
+      setStoppingSchedule(false)
+    }
+  }
+
+  const handleOpenStopScheduleDialog = (upload) => {
+    if (upload.schdid) {
+      setStopScheduleDialog({ show: true, upload })
+    }
+  }
+
+  const handleCloseStopScheduleDialog = () => {
+    setStopScheduleDialog({ show: false, upload: null })
+  }
+
   // Poll for job status
   const pollJobStatus = async (requestId) => {
     if (!requestId) return
@@ -768,17 +816,19 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
   }
 
   return (
-    <Box sx={{ width: '100%' }}>
+    <Box sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
       <Paper
         elevation={3}
         sx={{
           p: 3,
           backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper,
           borderRadius: 2,
+          maxWidth: '100%',
+          overflow: 'hidden',
         }}
       >
         {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
           <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
             File Upload Configurations
           </Typography>
@@ -798,20 +848,20 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
             <CircularProgress />
           </Box>
         ) : (
-          <TableContainer>
-            <Table>
+          <TableContainer sx={{ maxWidth: '100%', overflowX: 'auto' }}>
+            <Table sx={{ tableLayout: 'fixed', width: '100%' }}>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Reference</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Description</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">File Name</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">File Type</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Target Table</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Active?</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Schedule</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Next Run</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Last Run</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Actions</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">Reference</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '15%', fontSize: '0.75rem', py: 1 }} align="left">Description</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">File Name</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '8%', fontSize: '0.75rem', py: 1 }} align="center">Type</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '13%', fontSize: '0.75rem', py: 1 }} align="left">Target Table</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '6%', fontSize: '0.75rem', py: 1 }} align="center">Active</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '8%', fontSize: '0.75rem', py: 1 }} align="center">Schedule</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">Next Run</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">Last Run</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '10%', fontSize: '0.75rem', py: 1 }} align="center">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -854,14 +904,18 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                                 ? alpha(muiTheme.palette.info.main, 0.1)
                                 : alpha(muiTheme.palette.info.main, 0.05),
                             }),
+                            '& > td': {
+                              py: 1,
+                              fontSize: '0.8125rem',
+                            },
                           }}
                         >
-                          <TableCell align="center">
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
-                              <span>{upload.flupldref}</span>
+                          <TableCell align="left">
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                              <Box sx={{ fontWeight: 600, fontSize: '0.875rem' }}>{upload.flupldref}</Box>
                               {/* Show running indicator, expand/collapse, and cancel button for any active job */}
                               {displayStatus && (displayStatus === 'QUEUED' || displayStatus === 'PROCESSING' || displayStatus === 'NEW' || displayStatus === 'CLAIMED') && (
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
                                   <Chip
                                     icon={displayStatus === 'PROCESSING' || displayStatus === 'CLAIMED' ? <CircularProgress size={14} thickness={4} sx={{ color: 'inherit' }} /> : null}
                                     label={displayStatus === 'PROCESSING' || displayStatus === 'CLAIMED' ? 'Processing...' : displayStatus === 'NEW' ? 'Waiting...' : 'Queued'}
@@ -908,8 +962,20 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                               )}
                             </Box>
                           </TableCell>
-                      <TableCell align="center">{upload.fluplddesc || '-'}</TableCell>
-                      <TableCell align="center">{upload.flnm || '-'}</TableCell>
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem' }}>
+                            {upload.fluplddesc || '-'}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem', wordBreak: 'break-word' }}>
+                            {upload.flnm || '-'}
+                          </Typography>
+                        </Box>
+                      </TableCell>
                       <TableCell align="center">
                         <Chip
                           label={upload.fltyp || 'N/A'}
@@ -918,10 +984,14 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                           variant="outlined"
                         />
                       </TableCell>
-                      <TableCell align="center">
-                        {upload.trgschm && upload.trgtblnm
-                          ? `${upload.trgschm}.${upload.trgtblnm}`
-                          : '-'}
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem', wordBreak: 'break-word' }}>
+                            {upload.trgschm && upload.trgtblnm
+                              ? `${upload.trgschm}.${upload.trgtblnm}`
+                              : '-'}
+                          </Typography>
+                        </Box>
                       </TableCell>
                       <TableCell align="center">
                         <Checkbox
@@ -929,6 +999,7 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                           color="success"
                           inputProps={{ 'aria-label': 'Active?' }}
                           onChange={() => handleToggleStatus(upload)}
+                          size="small"
                         />
                       </TableCell>
                       <TableCell align="center">
@@ -942,30 +1013,46 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                             />
                           </Tooltip>
                         ) : (
-                          <Typography variant="body2" color="text.secondary">-</Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
                         )}
                       </TableCell>
-                      <TableCell align="center">
-                        {upload.schd_nxt_run_dt ? (
-                          <Tooltip title={new Date(upload.schd_nxt_run_dt).toLocaleString()}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
-                              {new Date(upload.schd_nxt_run_dt).toLocaleString()}
-                            </Typography>
-                          </Tooltip>
-                        ) : (
-                          <Typography variant="body2" color="text.secondary">-</Typography>
-                        )}
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          {upload.schd_nxt_run_dt ? (
+                            <Tooltip title={new Date(upload.schd_nxt_run_dt).toLocaleString()}>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                                {new Date(upload.schd_nxt_run_dt).toLocaleString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric', 
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </Typography>
+                            </Tooltip>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                          )}
+                        </Box>
                       </TableCell>
-                      <TableCell align="center">
-                        {upload.last_run_dt ? (
-                          <Tooltip title={new Date(upload.last_run_dt).toLocaleString()}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
-                              {new Date(upload.last_run_dt).toLocaleString()}
-                            </Typography>
-                          </Tooltip>
-                        ) : (
-                          <Typography variant="body2" color="text.secondary">-</Typography>
-                        )}
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          {upload.last_run_dt ? (
+                            <Tooltip title={new Date(upload.last_run_dt).toLocaleString()}>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                                {new Date(upload.last_run_dt).toLocaleString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric', 
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </Typography>
+                            </Tooltip>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                          )}
+                        </Box>
                       </TableCell>
                       <TableCell align="center">
                         <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
@@ -1050,6 +1137,17 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                               <DeleteIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          {upload.schdid && (
+                            <Tooltip title="Stop Schedule">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleOpenStopScheduleDialog(upload)}
+                                color="error"
+                              >
+                                <StopIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>
@@ -1863,6 +1961,35 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
           <Button onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
           <Button onClick={handleDeleteConfirm} color="error" variant="contained">
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Stop Schedule Dialog */}
+      <Dialog
+        open={stopScheduleDialog.show}
+        onClose={handleCloseStopScheduleDialog}
+      >
+        <DialogTitle>Stop Schedule</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            Are you sure you want to stop the schedule for upload configuration "{stopScheduleDialog.upload?.flupldref}"?
+          </DialogContentText>
+          <Typography variant="body2" color="warning.main" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <WarningIcon fontSize="small" />
+            This will disable automatic file uploads for this configuration.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseStopScheduleDialog} disabled={stoppingSchedule}>Cancel</Button>
+          <Button 
+            onClick={handleStopSchedule} 
+            color="error" 
+            variant="contained"
+            disabled={stoppingSchedule}
+            startIcon={stoppingSchedule ? <CircularProgress size={16} /> : <StopIcon />}
+          >
+            Stop Schedule
           </Button>
         </DialogActions>
       </Dialog>

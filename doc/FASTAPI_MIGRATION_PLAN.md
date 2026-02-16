@@ -133,7 +133,7 @@ For each major module currently registered in `backend/app.py`:
 - `modules.license.license` → `modules/license/fastapi_license.py`
 - `modules.mapper.mapper` → `modules/mapper/fastapi_mapper.py`
 - `modules.jobs.jobs` → `modules/jobs/fastapi_jobs.py`
-- `modules.type_mapping.parameter_mapping` → `modules/type_mapping/fastapi_parameter_mapping.py`
+- `modules.parameters.parameter_mapping` → `modules/parameters/fastapi_parameter_mapping.py`
 - `modules.dashboard.dashboard` → `modules/dashboard/fastapi_dashboard.py`
 - `modules.admin.access_control` → `modules/admin/fastapi_access_control.py`
 - `modules.manage_sql.manage_sql` → `modules/manage_sql/fastapi_manage_sql.py`

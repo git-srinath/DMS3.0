@@ -4,7 +4,11 @@ import builtins
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.database.dbconnect import create_metadata_connection
+from backend.database.dbconnect import (
+    create_metadata_connection,
+    _load_db_driver,
+    _parse_standard_connection_url,
+)
 
 # Support both FastAPI (package import) and legacy Flask (relative import) contexts
 try:
@@ -461,17 +465,27 @@ async def test_db_connection(payload: TestConnectionRequest):
     test_conn = None
     try:
         # Validate required fields
-        required_fields = ['dbtyp', 'dbhost', 'dbport', 'dbsrvnm', 'usrnm', 'passwd']
-        missing_fields = [field for field in required_fields if not getattr(payload, field, None)]
+        # If a full connection string is provided, only dbtyp is required.
+        # If no connection string is provided, require individual connection pieces.
+        base_required = ["dbtyp"]
+        if not payload.constr:
+            base_required.extend(["dbhost", "dbport", "dbsrvnm", "usrnm", "passwd"])
+
+        missing_fields: list[str] = []
+        for field in base_required:
+            value = getattr(payload, field, None)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                missing_fields.append(field)
+
         if missing_fields:
             raise HTTPException(
                 status_code=400,
                 detail={
                     "success": False,
-                    "message": f"Missing required fields: {', '.join(missing_fields)}"
-                }
+                    "message": f"Missing required fields: {', '.join(missing_fields)}",
+                },
             )
-        
+
         db_type = payload.dbtyp.upper()
         host = payload.dbhost
         port = payload.dbport
@@ -518,17 +532,25 @@ async def test_db_connection(payload: TestConnectionRequest):
             cursor.close()
             
         elif db_type == 'MYSQL':
-            import mysql.connector
+            # Use shared driver loader/parsing logic for MySQL
+            mysql_connector = _load_db_driver("MYSQL")
             if connection_string:
-                # Parse connection string if provided (basic implementation)
-                test_conn = mysql.connector.connect(connection_string)
+                # Expect a standard mysql://user:pass@host:port/dbname style URL
+                parsed = _parse_standard_connection_url(connection_string, expected_scheme="mysql")
+                test_conn = mysql_connector.connect(
+                    host=parsed["host"],
+                    port=parsed["port"] or 3306,
+                    database=parsed["database"],
+                    user=parsed["username"],
+                    password=parsed["password"],
+                )
             else:
-                test_conn = mysql.connector.connect(
+                test_conn = mysql_connector.connect(
                     host=host,
-                    port=port,
+                    port=int(port) if port else 3306,
                     database=database,
                     user=username,
-                    password=password
+                    password=password,
                 )
             cursor = test_conn.cursor()
             cursor.execute("SELECT 1")

@@ -810,13 +810,15 @@ class SchedulerService:
                     claimed_ids.append(req_id)
 
                 # Update with database-specific syntax
+                # Mark as PROCESSING immediately when picked up (instead of CLAIMED)
+                # This allows users to cancel jobs that are being processed
                 if db_type == "POSTGRESQL":
                     # Try uppercase column names first
                     try:
                         cursor.executemany(
                             f"""
                             UPDATE {dms_prcreq_full}
-                            SET "STATUS" = 'CLAIMED',
+                            SET "STATUS" = 'PROCESSING',
                                 "CLAIMED_AT" = CURRENT_TIMESTAMP,
                                 "CLAIMED_BY" = %s
                             WHERE "REQUEST_ID" = %s
@@ -831,7 +833,7 @@ class SchedulerService:
                         cursor.executemany(
                             f"""
                             UPDATE {dms_prcreq_full}
-                            SET status = 'CLAIMED',
+                            SET status = 'PROCESSING',
                                 claimed_at = CURRENT_TIMESTAMP,
                                 claimed_by = %s
                             WHERE request_id = %s
@@ -845,7 +847,7 @@ class SchedulerService:
                     cursor.executemany(
                         f"""
                         UPDATE {schema_prefix}DMS_PRCREQ
-                        SET status = 'CLAIMED',
+                        SET status = 'PROCESSING',
                             claimed_at = SYSTIMESTAMP,
                             claimed_by = :claimed_by
                         WHERE request_id = :request_id
@@ -856,7 +858,7 @@ class SchedulerService:
                         ],
                     )
                 cursor.connection.commit()
-                debug(f"[_poll_queue] Claimed {len(claimed_ids)} requests")
+                debug(f"[_poll_queue] Marked {len(claimed_ids)} requests as PROCESSING")
 
             for request in requests:
                 debug(f"[_poll_queue] Submitting request {request.request_id} ({request.mapref}) to executor")
@@ -868,6 +870,10 @@ class SchedulerService:
     def _execute_request(self, request: QueueRequest) -> None:
         info(f"[_execute_request] Starting execution of request {request.request_id} (mapref={request.mapref}, type={request.request_type.value})")
         try:
+            # Job is already marked as PROCESSING when picked up from queue
+            # Only update if status is not already PROCESSING (safety check)
+            # self._mark_request_processing(request)  # No longer needed - already PROCESSING
+            
             # Handle REPORT type requests separately
             if request.request_type.value == "REPORT":
                 info(f"[_execute_request] Executing REPORT request for {request.mapref}")
@@ -930,12 +936,15 @@ class SchedulerService:
         return result
 
     def _execute_file_upload_request(self, request: QueueRequest) -> Dict[str, Any]:
-        """Execute a FILE_UPLOAD type request using the FileUploadExecutor."""
+        """
+        Execute file upload request using streaming executor for better memory efficiency.
+        Uses chunked processing to handle large files without loading entire file into memory.
+        """
         # Support both FastAPI (package import) and legacy Flask (relative import) contexts
         try:
-            from backend.modules.file_upload.file_upload_executor import FileUploadExecutor
+            from backend.modules.file_upload.streaming_file_executor import StreamingFileExecutor
         except ImportError:  # When running Flask app.py directly inside backend
-            from modules.file_upload.file_upload_executor import FileUploadExecutor  # type: ignore
+            from modules.file_upload.streaming_file_executor import StreamingFileExecutor  # type: ignore
 
         payload = request.payload or {}
         flupldref = payload.get("flupldref")
@@ -949,9 +958,10 @@ class SchedulerService:
             raise ValueError("File upload reference not found in request payload or mapref")
         
         load_mode = payload.get("load_mode", "INSERT")
-        username = "system"  # Scheduled executions run as system
+        username = payload.get("username", "system")  # Use username from payload if provided
         
-        executor = FileUploadExecutor()
+        # Use streaming executor for better memory efficiency
+        executor = StreamingFileExecutor(chunk_size=10000)  # Process 10K rows per chunk
         result = executor.execute(
             flupldref=flupldref,
             file_path=None,  # Use file path from configuration
@@ -959,9 +969,61 @@ class SchedulerService:
             username=username
         )
         
-        info(f"[SchedulerService] File upload {flupldref} executed successfully: {result}")
+        info(f"[SchedulerService] File upload {flupldref} executed successfully: {result.get('rows_successful', 0)} rows loaded")
         return result
 
+    def _mark_request_processing(self, request: QueueRequest) -> None:
+        """Mark request as PROCESSING when execution starts."""
+        try:
+            with self._db_cursor() as cursor:
+                connection = cursor.connection
+                db_type = _detect_db_type(connection)
+                schema = os.getenv('DMS_SCHEMA', 'TRG')
+                
+                # Get table reference for PostgreSQL (handles case sensitivity)
+                if db_type == "POSTGRESQL":
+                    schema_lower = schema.lower() if schema else 'public'
+                    dms_prcreq_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_PRCREQ')
+                    dms_prcreq_ref = f'"{dms_prcreq_table}"' if dms_prcreq_table != dms_prcreq_table.lower() else dms_prcreq_table
+                    schema_prefix = f'{schema_lower}.' if schema else ''
+                    dms_prcreq_full = f'{schema_prefix}{dms_prcreq_ref}'
+                    
+                    # Try uppercase first, fallback to lowercase
+                    try:
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prcreq_full}
+                            SET "STATUS" = 'PROCESSING'
+                            WHERE "REQUEST_ID" = %s
+                            """,
+                            (request.request_id,),
+                        )
+                    except Exception:
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prcreq_full}
+                            SET status = 'PROCESSING'
+                            WHERE request_id = %s
+                            """,
+                            (request.request_id,),
+                        )
+                else:  # Oracle
+                    schema_prefix = f'{schema}.' if schema else ''
+                    cursor.execute(
+                        f"""
+                        UPDATE {schema_prefix}DMS_PRCREQ
+                        SET status = 'PROCESSING'
+                        WHERE request_id = :1
+                        """,
+                        [request.request_id],
+                    )
+                
+                connection.commit()
+                info(f"[_mark_request_processing] Marked request {request.request_id} as PROCESSING")
+        except Exception as e:
+            warning(f"[_mark_request_processing] Failed to mark request {request.request_id} as PROCESSING: {e}")
+            # Don't fail the execution if status update fails
+    
     def _mark_request_complete(self, request: QueueRequest, status: str, payload: Dict[str, Any]) -> None:
         info(f"[_mark_request_complete] Marking request {request.request_id} as {status}")
         try:
