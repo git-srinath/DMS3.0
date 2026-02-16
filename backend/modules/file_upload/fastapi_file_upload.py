@@ -110,8 +110,8 @@ async def upload_file(
         if not file.filename:
             raise HTTPException(status_code=400, detail="No file selected")
         
-        # Validate preview_rows
-        preview_rows = max(1, min(100, int(preview_rows)))  # Clamp between 1 and 100
+        # Validate preview_rows - increased to 200 for better column detection
+        preview_rows = max(1, min(200, int(preview_rows)))  # Clamp between 1 and 200
         
         file_ext = Path(file.filename).suffix.lower()
         file_type = parser_manager.detect_file_type(file.filename)
@@ -123,7 +123,7 @@ async def upload_file(
             # For CSV, read only enough to get first N rows
             # Estimate: average row is ~200-500 bytes, read preview_rows * 1000 bytes per row for safety
             estimated_bytes_per_row = 1000
-            max_bytes = min(preview_rows * estimated_bytes_per_row, 1024 * 1024)  # Max 1MB for preview
+            max_bytes = min(preview_rows * estimated_bytes_per_row, 1024 * 1024 * 2)  # Max 2MB for preview (increased for 200 rows)
             
             # Read chunks until we have enough rows or hit max bytes
             preview_data = b''
@@ -184,8 +184,11 @@ async def upload_file(
             
             info(f"Excel preview optimized: Read {bytes_written} bytes for preview of {file.filename}")
         else:
-            # For other formats, use similar approach - limit to 5MB for preview
-            max_bytes_for_preview = 1024 * 1024 * 5  # 5MB max
+            # For other formats (JSON, Parquet, etc.), we need to be more careful
+            # JSON files must be complete to parse, so we read the full file
+            # but the parser will limit the data it processes
+            # For very large files, we'll still limit the read to prevent memory issues
+            max_bytes_for_preview = 1024 * 1024 * 50  # 50MB max for JSON/Parquet (increased from 5MB)
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=UPLOAD_DIR) as temp_file:
                 chunk_size = 8192
                 bytes_written = 0
@@ -200,16 +203,30 @@ async def upload_file(
                 
                 temp_file_path = temp_file.name
             
-            info(f"File preview optimized: Read {bytes_written} bytes for preview of {file.filename}")
+            info(f"File preview: Read {bytes_written} bytes for preview of {file.filename}")
         
         # Get file info (lightweight operation - just file stats)
         file_info = parser_manager.get_file_info(temp_file_path)
         
         # Get columns and preview in one efficient operation
         # preview_file already only reads the first N rows, so this is optimized
-        preview_df = parser_manager.preview_file(temp_file_path, rows=preview_rows)
-        columns = list(preview_df.columns)
-        preview = preview_df.to_dict('records')
+        try:
+            preview_df = parser_manager.preview_file(temp_file_path, rows=preview_rows)
+            columns = list(preview_df.columns)
+            preview = preview_df.to_dict('records')
+        except (MemoryError, ValueError) as e:
+            # If preview fails due to memory or parsing issues, provide helpful error
+            error_msg = str(e)
+            if "too large" in error_msg.lower() or "memory" in error_msg.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File is too large to preview. Please use a smaller file or contact support. Error: {error_msg}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error parsing file for preview: {error_msg}"
+                )
         
         # Convert preview values to strings for JSON serialization
         for row in preview:
@@ -1902,4 +1919,159 @@ async def save_file_upload_schedule(payload: FileUploadScheduleRequest):
                 conn.close()
             except Exception:
                 pass
+
+
+@router.put("/schedules/{schedule_id}")
+async def update_file_upload_schedule(schedule_id: int, payload: Dict[str, Any]):
+    """
+    Update a file upload schedule status (e.g., pause/stop).
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+        table_name = _get_table_ref(cursor, db_type, "DMS_FLUPLD_SCHD")
+
+        # Validate schedule exists
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"SELECT schdid FROM {table_name} WHERE schdid = %s",
+                (schedule_id,),
+            )
+        else:
+            cursor.execute(
+                f"SELECT SCHDID FROM {table_name} WHERE SCHDID = :1",
+                [schedule_id],
+            )
+
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Schedule {schedule_id} not found",
+            )
+
+        # Update schedule fields
+        if "stts" in payload:
+            stts = (payload.get("stts") or "ACTIVE").upper()
+            if db_type == "POSTGRESQL":
+                cursor.execute(
+                    f"""
+                    UPDATE {table_name}
+                    SET stts = %s, uptdt = CURRENT_TIMESTAMP
+                    WHERE schdid = %s
+                    """,
+                    (stts, schedule_id),
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    UPDATE {table_name}
+                    SET STTS = :1, UPTDT = SYSTIMESTAMP
+                    WHERE SCHDID = :2
+                    """,
+                    [stts, schedule_id],
+                )
+
+        conn.commit()
+        return {
+            "success": True,
+            "data": {
+                "scheduleId": schedule_id,
+                "message": "Schedule updated successfully"
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        error(f"Error updating file upload schedule: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating file upload schedule: {str(e)}",
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.delete("/schedules/{schedule_id}")
+async def delete_file_upload_schedule(schedule_id: int):
+    """
+    Delete/stop a file upload schedule by setting CURFLG to 'N' and status to INACTIVE.
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+        table_name = _get_table_ref(cursor, db_type, "DMS_FLUPLD_SCHD")
+
+        # Validate schedule exists
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"SELECT schdid FROM {table_name} WHERE schdid = %s",
+                (schedule_id,),
+            )
+        else:
+            cursor.execute(
+                f"SELECT SCHDID FROM {table_name} WHERE SCHDID = :1",
+                [schedule_id],
+            )
+
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Schedule {schedule_id} not found",
+            )
+
+        # Soft delete: set CURFLG to 'N' and status to INACTIVE
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"""
+                UPDATE {table_name}
+                SET curflg = 'N', stts = 'INACTIVE', uptdt = CURRENT_TIMESTAMP
+                WHERE schdid = %s
+                """,
+                (schedule_id,),
+            )
+        else:
+            cursor.execute(
+                f"""
+                UPDATE {table_name}
+                SET CURFLG = 'N', STTS = 'INACTIVE', UPTDT = SYSTIMESTAMP
+                WHERE SCHDID = :1
+                """,
+                [schedule_id],
+            )
+
+        conn.commit()
+        return {
+            "success": True,
+            "data": {
+                "scheduleId": schedule_id,
+                "message": "Schedule stopped successfully"
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        error(f"Error deleting file upload schedule: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error deleting file upload schedule: {str(e)}",
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 

@@ -674,6 +674,98 @@ async def save_job_schedule(payload: SaveJobScheduleRequest):
             conn.close()
 
 
+class DisableJobScheduleRequest(BaseModel):
+    MAPREF: str
+
+
+@router.post("/schedule/{mapref}/disable")
+async def disable_job_schedule(mapref: str):
+    """
+    Disable/stop a recurring job schedule.
+    Prevents the job from being scheduled for future runs.
+    Mirrors Flask endpoint: POST /job/schedule/{mapref}/disable
+    """
+    conn = None
+    try:
+        if not mapref:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "message": "Missing required parameter: MAPREF"},
+            )
+        
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        service.enable_disable_schedule(mapref, "D")
+        
+        return {
+            "success": True,
+            "message": f"Schedule for {mapref} has been disabled successfully.",
+        }
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in disable_job_schedule: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Unexpected error: {str(exc)}"},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/schedule/{mapref}/enable")
+async def enable_job_schedule(mapref: str):
+    """
+    Enable a previously disabled recurring job schedule.
+    Allows the job to be scheduled for future runs again.
+    Mirrors Flask endpoint: POST /job/schedule/{mapref}/enable
+    """
+    conn = None
+    try:
+        if not mapref:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "message": "Missing required parameter: MAPREF"},
+            )
+        
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        service.enable_disable_schedule(mapref, "E")
+        
+        return {
+            "success": True,
+            "message": f"Schedule for {mapref} has been enabled successfully.",
+        }
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in enable_job_schedule: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Unexpected error: {str(exc)}"},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
 class SaveParentChildJobRequest(BaseModel):
     PARENT_MAP_REFERENCE: str
     CHILD_MAP_REFERENCE: str
