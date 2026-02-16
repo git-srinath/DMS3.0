@@ -228,6 +228,7 @@ class ReportMetadataService(_MetadataRepository):
                 DSTN_TYP AS destination_type
             FROM {tables['DMS_RPRT_SCHD']}
             WHERE RPRTID IN ({placeholders})
+              AND UPPER(COALESCE(STTS, '')) != 'INACTIVE'
             ORDER BY RPRTID, SCHDID DESC
         """
         self._execute(cursor, query, {})
@@ -622,6 +623,7 @@ class ReportMetadataService(_MetadataRepository):
                 QUE_REQ_ID AS queue_request_id
             FROM {tables['DMS_RPRT_SCHD']}
             WHERE RPRTID = {placeholder}
+              AND UPPER(COALESCE(STTS, '')) != 'INACTIVE'
             ORDER BY SCHDID DESC
         """
         self._execute(cursor, query, builder.params)
@@ -1060,6 +1062,7 @@ class ReportMetadataService(_MetadataRepository):
                 FROM {tables['DMS_RPRT_SCHD']} s
                 JOIN {tables['DMS_RPRT_DEF']} r ON r.RPRTID = s.RPRTID
                 WHERE r.CURFLG = 'Y'
+                  AND UPPER(COALESCE(s.STTS, '')) != 'INACTIVE'
                 ORDER BY s.SCHDID DESC
             """
             self._execute(cursor, query)
@@ -1210,6 +1213,54 @@ class ReportMetadataService(_MetadataRepository):
             if isinstance(exc, ReportServiceError):
                 raise
             raise ReportServiceError("Failed to update schedule") from exc
+        finally:
+            self._close_connection(conn, cursor)
+
+    def delete_schedule(self, schedule_id: int, username: str) -> Dict[str, Any]:
+        """Delete/stop a report schedule by setting STTS to 'INACTIVE' (soft delete)."""
+        conn, cursor, db_type, tables = self._open_connection()
+        try:
+            # Validate schedule exists and get details for audit
+            if not self._schedule_exists(cursor, tables, db_type, schedule_id):
+                raise ReportServiceError("Schedule not found", status_code=404, code="SCHEDULE_NOT_FOUND")
+
+            # Verify table reference is available
+            if 'DMS_RPRT_SCHD' not in tables:
+                raise ReportServiceError(
+                    f"Schedule table 'DMS_RPRT_SCHD' not found in metadata. Available tables: {list(tables.keys())}",
+                    status_code=500,
+                    code="TABLE_NOT_FOUND"
+                )
+
+            builder = _ParamBuilder(db_type)
+            timestamp_placeholder = builder.add(datetime.utcnow(), "updt")
+            where_placeholder = builder.add(schedule_id, "schdid")
+            
+            # Soft delete: set STTS to 'INACTIVE' (CURFLG is not a column in DMS_RPRT_SCHD)
+            schedule_table = tables['DMS_RPRT_SCHD']
+            query = f"""
+                UPDATE {schedule_table}
+                SET STTS = 'INACTIVE',
+                    UPDTDT = {timestamp_placeholder}
+                WHERE SCHDID = {where_placeholder}
+            """
+            debug(f"[delete_schedule] Executing query for schedule_id={schedule_id}, db_type={db_type}, table={schedule_table}")
+            self._execute(cursor, query, builder.params)
+            self._commit(conn)
+            info(f"[delete_schedule] Schedule {schedule_id} stopped by {username}")
+            
+            return {
+                "success": True,
+                "scheduleId": schedule_id,
+                "message": "Schedule stopped successfully"
+            }
+        except Exception as exc:
+            self._rollback(conn)
+            if isinstance(exc, ReportServiceError):
+                error(f"[delete_schedule] ReportServiceError: {exc.message}", exc_info=True)
+                raise
+            error(f"[delete_schedule] Unexpected error for schedule_id={schedule_id}: {str(exc)}", exc_info=True)
+            raise ReportServiceError(f"Failed to delete schedule: {str(exc)}", details={"schedule_id": schedule_id}) from exc
         finally:
             self._close_connection(conn, cursor)
 
