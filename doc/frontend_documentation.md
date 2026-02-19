@@ -34,7 +34,7 @@ frontend/
 │   │   ├── manage_sql/     # SQL management module
 │   │   ├── mapper_module/  # Mapper module
 │   │   ├── profile/        # User profile module
-│   │   ├── type_mapper/    # Type mapping module
+│   │   ├── type_mapper/    # Parameters module
 │   │   ├── api/            # API routes
 │   │   ├── context/        # React context providers
 │   │   ├── components/     # Shared components
@@ -131,7 +131,7 @@ The application uses Next.js App Router for navigation, with the following main 
 - `/job_status_and_logs` - Job status and logs
 - `/dashboard` - Analytics dashboard
 - `/manage_sql` - SQL management
-- `/type_mapper` - Type mapping
+- `/type_mapper` - Parameters
 - `/profile` - User profile
 
 ## UI Framework & Styling

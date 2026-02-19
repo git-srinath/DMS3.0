@@ -216,9 +216,6 @@ const RegisterDBConnectionsPage = () => {
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
       <Container maxWidth="xl" sx={{ py: 2, px: 3, mb: 4 }}>
-        <Typography variant="h5" fontWeight={600} gutterBottom>
-          Register DB Connections
-        </Typography>
         <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
           <Grid item>
             <Button variant="contained" startIcon={<Add />} onClick={handleAdd}>

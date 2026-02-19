@@ -37,6 +37,7 @@ import {
   Alert,
   LinearProgress,
   Checkbox,
+  Collapse,
 } from '@mui/material'
 import {
   Add as AddIcon,
@@ -50,6 +51,10 @@ import {
   PlayCircleOutline as ExecuteIcon,
   Schedule as ScheduleIcon,
   History as HistoryIcon,
+  Cancel as CancelIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material'
 import { message } from 'antd'
 import { useTheme } from '@/context/ThemeContext'
@@ -93,6 +98,11 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
   const [showExecuteDialog, setShowExecuteDialog] = useState(false)
   const [executing, setExecuting] = useState(false)
   const [executeResult, setExecuteResult] = useState(null)
+  const [jobRequestId, setJobRequestId] = useState(null)
+  const [jobStatus, setJobStatus] = useState(null) // QUEUED, PROCESSING, DONE, FAILED
+  const [pollingInterval, setPollingInterval] = useState(null)
+  const [activeJobs, setActiveJobs] = useState({}) // Map of flupldref -> { request_id, status }
+  const [expandedRows, setExpandedRows] = useState({}) // Map of flupldref -> boolean for expanded state
   const [loadMode, setLoadMode] = useState('INSERT')
   const [showErrorDialog, setShowErrorDialog] = useState(false)
   const [runHistory, setRunHistory] = useState([])
@@ -102,6 +112,8 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
   const [errorFilterCode, setErrorFilterCode] = useState('')
   const [showScheduleDialog, setShowScheduleDialog] = useState(false)
   const [savingSchedule, setSavingSchedule] = useState(false)
+  const [stopScheduleDialog, setStopScheduleDialog] = useState({ show: false, upload: null })
+  const [stoppingSchedule, setStoppingSchedule] = useState(false)
   const [scheduleForm, setScheduleForm] = useState({
     frequency: 'DL', // DL, WK, MN, HY, YR, ID
     dayOfWeek: 'MON',
@@ -165,6 +177,80 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
     fetchUploads()
   }, [])
 
+  // Fetch all active jobs periodically to show progress in table
+  const fetchActiveJobs = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const response = await axios.get(`${API_BASE_URL}/file-upload/active-jobs`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (response.data.success) {
+        const jobs = response.data.active_jobs || {}
+        // Filter out any jobs that are not actually active (shouldn't happen, but safety check)
+        const filteredJobs = {}
+        Object.keys(jobs).forEach(flupldref => {
+          const jobList = jobs[flupldref]
+          if (Array.isArray(jobList) && jobList.length > 0) {
+            // Only include jobs with active statuses
+            const activeJobList = jobList.filter(job => {
+              const status = (job?.status || '').toUpperCase()
+              return status === 'NEW' || status === 'QUEUED' || status === 'PROCESSING' || status === 'CLAIMED'
+            })
+            if (activeJobList.length > 0) {
+              filteredJobs[flupldref] = activeJobList
+            }
+          }
+        })
+        setActiveJobs(filteredJobs)
+      } else {
+        console.warn('[ActiveJobs] API returned success=false:', response.data)
+        setActiveJobs({}) // Clear active jobs if API indicates failure
+      }
+    } catch (error) {
+      // Log error details for debugging
+      console.error('[ActiveJobs] Error fetching active jobs:', error)
+      if (error.response) {
+        console.error('[ActiveJobs] Response status:', error.response.status)
+        console.error('[ActiveJobs] Response data:', error.response.data)
+      }
+    }
+  }
+
+  // Poll for active jobs every 3 seconds
+  useEffect(() => {
+    // Fetch immediately
+    fetchActiveJobs()
+    
+    // Then poll every 3 seconds
+    const activeJobsInterval = setInterval(() => {
+      fetchActiveJobs()
+    }, 3000)
+    
+    return () => {
+      clearInterval(activeJobsInterval)
+    }
+  }, [])
+
+  // Keep polling job status even if dialog is closed (for table indicator)
+  useEffect(() => {
+    if (!jobRequestId || !selectedUpload) return
+    
+    // Poll every 3 seconds to check job status (even if dialog is closed)
+    const statusCheckInterval = setInterval(() => {
+      if (jobRequestId) {
+        pollJobStatus(jobRequestId)
+      }
+    }, 3000)
+    
+    return () => {
+      clearInterval(statusCheckInterval)
+    }
+  }, [jobRequestId, selectedUpload])
+
   // Expose refresh function to parent component
   useEffect(() => {
     if (refreshTableRef) {
@@ -173,16 +259,117 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
   }, [refreshTableRef])
 
   // Handle delete
-  const handleDeleteClick = (upload) => {
+  const handleDeleteClick = async (upload) => {
     setSelectedUpload(upload)
+    
+    // Check if file has been processed (has last_run_dt) or if table exists
+    const hasBeenProcessed = upload.last_run_dt || upload.lstrundt
+    
+    if (hasBeenProcessed) {
+      // Check if table exists in target database
+      try {
+        const token = localStorage.getItem('token')
+        const response = await axios.get(
+          `${API_BASE_URL}/file-upload/check-table-exists/${encodeURIComponent(upload.flupldref)}`,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        )
+        
+        const tableExists = response.data?.table_exists || false
+        const targetTable = upload.trgschm && upload.trgtblnm 
+          ? `${upload.trgschm}.${upload.trgtblnm}` 
+          : 'target table'
+        
+        if (tableExists) {
+          message.warning(
+            `Cannot delete this configuration. The file has been processed and the table "${targetTable}" exists in the target database. ` +
+            `Deleting this configuration would result in loss of metadata about the table structure and mappings.`
+          )
+          return
+        } else if (hasBeenProcessed) {
+          message.warning(
+            `Cannot delete this configuration. The file has been processed at least once. ` +
+            `Deleting this configuration would result in loss of execution history and metadata.`
+          )
+          return
+        }
+      } catch (error) {
+        // If check fails, still block deletion if it has been processed
+        if (hasBeenProcessed) {
+          message.warning(
+            `Cannot delete this configuration. The file has been processed at least once. ` +
+            `Deleting this configuration would result in loss of execution history and metadata.`
+          )
+          return
+        }
+        // If check fails and hasn't been processed, allow deletion (table check failed)
+        console.warn('Failed to check table existence, allowing deletion:', error)
+      }
+    }
+    
+    // If no processing has occurred and table doesn't exist, allow deletion
     setShowDeleteDialog(true)
+  }
+
+  // Handle cancel job
+  const handleCancelJob = async (requestId, flupldref) => {
+    if (!requestId) return
+
+    try {
+      const token = localStorage.getItem('token')
+      const response = await axios.post(
+        `${API_BASE_URL}/file-upload/cancel-job/${requestId}`,
+        {},
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      )
+
+      if (response.data.success) {
+        message.success(`Job ${requestId} has been cancelled`)
+        // Refresh active jobs to update UI
+        fetchActiveJobs()
+        // If this was the current job, clear its status
+        if (jobRequestId === requestId) {
+          setJobRequestId(null)
+          setJobStatus(null)
+          setExecuting(false)
+        }
+      } else {
+        message.error(response.data.message || 'Failed to cancel job')
+      }
+    } catch (error) {
+      console.error('Error cancelling job:', error)
+      const errorMessage = getApiErrorMessage(error, 'Failed to cancel job')
+      message.error(errorMessage)
+    }
   }
 
   // Handle execute
   const handleExecuteClick = (upload) => {
+    // If there's already a running job for this upload, show its status instead of starting new one
+    if (jobRequestId && selectedUpload?.flupldref === upload.flupldref && (jobStatus === 'QUEUED' || jobStatus === 'PROCESSING' || jobStatus === 'NEW' || jobStatus === 'CLAIMED')) {
+      // Just reopen the dialog to show current status
+      setShowExecuteDialog(true)
+      return
+    }
+    
     setSelectedUpload(upload)
     setLoadMode('INSERT')
     setExecuteResult(null)
+    setJobRequestId(null)
+    setJobStatus(null)
+    if (pollingInterval) {
+      clearInterval(pollingInterval)
+      setPollingInterval(null)
+    }
     setShowExecuteDialog(true)
   }
 
@@ -367,11 +554,149 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
     }
   }
 
+  const handleStopSchedule = async () => {
+    if (!stopScheduleDialog.upload) return
+
+    setStoppingSchedule(true)
+    try {
+      const token = localStorage.getItem('token')
+      const scheduleId = stopScheduleDialog.upload.schdid
+      
+      if (!scheduleId) {
+        message.error('Schedule ID not found')
+        return
+      }
+
+      const response = await axios.delete(`${API_BASE_URL}/file-upload/schedules/${scheduleId}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (response.data?.success) {
+        message.success('Schedule stopped successfully')
+        setStopScheduleDialog({ show: false, upload: null })
+        fetchUploads()
+      } else {
+        message.error(response.data?.message || 'Failed to stop schedule')
+      }
+    } catch (error) {
+      console.error('Error stopping schedule:', error)
+      message.error(getApiErrorMessage(error, 'Failed to stop schedule'))
+    } finally {
+      setStoppingSchedule(false)
+    }
+  }
+
+  const handleOpenStopScheduleDialog = (upload) => {
+    if (upload.schdid) {
+      setStopScheduleDialog({ show: true, upload })
+    }
+  }
+
+  const handleCloseStopScheduleDialog = () => {
+    setStopScheduleDialog({ show: false, upload: null })
+  }
+
+  // Poll for job status
+  const pollJobStatus = async (requestId) => {
+    if (!requestId) return
+
+    try {
+      const token = localStorage.getItem('token')
+      const response = await axios.get(
+        `${API_BASE_URL}/file-upload/execute-status/${requestId}`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      )
+
+      if (response.data.success) {
+        const status = response.data.status
+        setJobStatus(status)
+
+        if (status === 'DONE') {
+          // Job completed successfully
+          setExecuting(false)
+          if (pollingInterval) {
+            clearInterval(pollingInterval)
+            setPollingInterval(null)
+          }
+          
+          // Fetch final results from execution history
+          fetchUploads() // Refresh to get updated last run date
+          
+          setExecuteResult({
+            success: true,
+            message: 'File upload completed successfully in the background',
+            data: {
+              status: 'DONE',
+              completed_at: response.data.completed_at,
+            },
+          })
+          message.success('File upload completed successfully')
+        } else if (status === 'FAILED') {
+          // Job failed
+          setExecuting(false)
+          if (pollingInterval) {
+            clearInterval(pollingInterval)
+            setPollingInterval(null)
+          }
+          
+          setExecuteResult({
+            success: false,
+            message: 'File upload failed. Check execution history for details.',
+            data: {
+              status: 'FAILED',
+              completed_at: response.data.completed_at,
+            },
+          })
+          message.error('File upload failed')
+        } else if (status === 'NEW' || status === 'PROCESSING' || status === 'QUEUED' || status === 'CLAIMED') {
+          // Job is still running, update status display
+          // 'NEW' means queued but not started yet, 'PROCESSING' means actively running
+          if (status === 'PROCESSING') {
+            setJobStatus('PROCESSING')
+          } else if (status === 'NEW' || status === 'QUEUED' || status === 'CLAIMED') {
+            // Keep showing as QUEUED if status is still NEW or QUEUED
+            setJobStatus('QUEUED')
+          }
+          // Continue polling
+        } else if (status === 'CANCELLED') {
+          // Job was cancelled
+          setExecuting(false)
+          if (pollingInterval) {
+            clearInterval(pollingInterval)
+            setPollingInterval(null)
+          }
+          
+          setExecuteResult({
+            success: false,
+            message: 'File upload was cancelled',
+            data: {
+              status: 'CANCELLED',
+            },
+          })
+          message.warning('File upload was cancelled')
+        }
+      }
+    } catch (error) {
+      console.error('Error polling job status:', error)
+      // Don't show error for polling failures, just log
+    }
+  }
+
   const handleExecuteConfirm = async () => {
     if (!selectedUpload) return
 
     setExecuting(true)
     setExecuteResult(null)
+    setJobRequestId(null)
+    setJobStatus(null)
 
     try {
       const token = localStorage.getItem('token')
@@ -390,35 +715,52 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
       )
 
       if (response.data.success) {
-        setExecuteResult({
-          success: true,
-          message: response.data.message,
-          data: response.data.data,
-        })
-        message.success('File upload executed successfully')
-        // Refresh the table to update last run date
-        fetchUploads()
+        const requestId = response.data.request_id
+        setJobRequestId(requestId)
+        setJobStatus('QUEUED') // Initial status is QUEUED
+        setExecuting(true) // Keep executing flag true so dialog stays open
+        
+        message.success('File upload queued for background execution')
+        
+        // Start polling for status updates
+        const interval = setInterval(() => {
+          pollJobStatus(requestId)
+        }, 2000) // Poll every 2 seconds
+        
+        setPollingInterval(interval)
+        
+        // Also poll immediately (with small delay to let backend update status)
+        setTimeout(() => pollJobStatus(requestId), 500)
       } else {
         setExecuteResult({
           success: false,
-          message: response.data.message || 'Execution failed',
-          data: response.data.data,
+          message: response.data.message || 'Failed to queue file upload',
+          data: null,
         })
-        message.error(response.data.message || 'Execution failed')
+        message.error(response.data.message || 'Failed to queue file upload')
+        setExecuting(false)
       }
     } catch (error) {
-      console.error('Error executing upload:', error)
-      const errorMessage = getApiErrorMessage(error, 'Failed to execute file upload')
+      console.error('Error queuing upload:', error)
+      const errorMessage = getApiErrorMessage(error, 'Failed to queue file upload')
       setExecuteResult({
         success: false,
         message: errorMessage,
-        data: error.response?.data?.data || null,
+        data: null,
       })
       message.error(errorMessage)
-    } finally {
       setExecuting(false)
     }
   }
+
+  // Cleanup polling on unmount or dialog close
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval)
+      }
+    }
+  }, [pollingInterval])
 
   const handleDeleteConfirm = async () => {
     if (!selectedUpload) return
@@ -474,17 +816,19 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
   }
 
   return (
-    <Box sx={{ width: '100%' }}>
+    <Box sx={{ width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
       <Paper
         elevation={3}
         sx={{
           p: 3,
           backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper,
           borderRadius: 2,
+          maxWidth: '100%',
+          overflow: 'hidden',
         }}
       >
         {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3, flexWrap: 'wrap' }}>
           <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
             File Upload Configurations
           </Typography>
@@ -498,55 +842,26 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
           </Button>
         </Box>
 
-        {/* Search Bar */}
-        <Box sx={{ mb: 2 }}>
-          <TextField
-            fullWidth
-            placeholder="Search by reference, description, filename, or table name..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
-              endAdornment: searchQuery && (
-                <InputAdornment position="end">
-                  <IconButton size="small" onClick={() => setSearchQuery('')}>
-                    <ClearIcon />
-                  </IconButton>
-                </InputAdornment>
-              ),
-            }}
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                backgroundColor: darkMode ? alpha(muiTheme.palette.background.default, 0.5) : muiTheme.palette.background.default,
-              },
-            }}
-          />
-        </Box>
-
         {/* Table */}
         {loadingUploads ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
             <CircularProgress />
           </Box>
         ) : (
-          <TableContainer>
-            <Table>
+          <TableContainer sx={{ maxWidth: '100%', overflowX: 'auto' }}>
+            <Table sx={{ tableLayout: 'fixed', width: '100%' }}>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Reference</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Description</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">File Name</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">File Type</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Target Table</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Active?</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Schedule</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Next Run</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Last Run</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="center">Actions</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">Reference</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '15%', fontSize: '0.75rem', py: 1 }} align="left">Description</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">File Name</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '8%', fontSize: '0.75rem', py: 1 }} align="center">Type</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '13%', fontSize: '0.75rem', py: 1 }} align="left">Target Table</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '6%', fontSize: '0.75rem', py: 1 }} align="center">Active</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '8%', fontSize: '0.75rem', py: 1 }} align="center">Schedule</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">Next Run</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '12%', fontSize: '0.75rem', py: 1 }} align="left">Last Run</TableCell>
+                  <TableCell sx={{ fontWeight: 600, width: '10%', fontSize: '0.75rem', py: 1 }} align="center">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -561,21 +876,106 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredUploads.map((upload) => (
-                    <TableRow
-                      key={upload.flupldref}
-                      hover
-                      sx={{
-                        '&:hover': {
-                          backgroundColor: darkMode
-                            ? alpha(muiTheme.palette.action.hover, 0.1)
-                            : muiTheme.palette.action.hover,
-                        },
-                      }}
-                    >
-                      <TableCell align="center">{upload.flupldref}</TableCell>
-                      <TableCell align="center">{upload.fluplddesc || '-'}</TableCell>
-                      <TableCell align="center">{upload.flnm || '-'}</TableCell>
+                  filteredUploads.map((upload) => {
+                    const activeJob = activeJobs[upload.flupldref]?.[0]
+                    const hasActiveJob = activeJob && (activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING' || activeJob.status === 'NEW' || activeJob.status === 'CLAIMED')
+                    const isExpanded = expandedRows[upload.flupldref] || false
+                    const progress = activeJob?.progress || {}
+                    const currentJobStatus = jobRequestId && selectedUpload?.flupldref === upload.flupldref ? jobStatus : null
+                    const displayStatus = activeJob?.status || currentJobStatus
+                    
+                    // Calculate percentage
+                    const percentage = progress?.percentage || (progress?.rows_processed && progress?.total_rows 
+                      ? Math.min(100, Math.round((progress.rows_processed / progress.total_rows) * 100))
+                      : null)
+                    
+                    return (
+                      <React.Fragment key={upload.flupldref}>
+                        <TableRow
+                          hover
+                          sx={{
+                            '&:hover': {
+                              backgroundColor: darkMode
+                                ? alpha(muiTheme.palette.action.hover, 0.1)
+                                : muiTheme.palette.action.hover,
+                            },
+                            ...(hasActiveJob && {
+                              backgroundColor: darkMode
+                                ? alpha(muiTheme.palette.info.main, 0.1)
+                                : alpha(muiTheme.palette.info.main, 0.05),
+                            }),
+                            '& > td': {
+                              py: 1,
+                              fontSize: '0.8125rem',
+                            },
+                          }}
+                        >
+                          <TableCell align="left">
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                              <Box sx={{ fontWeight: 600, fontSize: '0.875rem' }}>{upload.flupldref}</Box>
+                              {/* Show running indicator, expand/collapse, and cancel button for any active job */}
+                              {displayStatus && (displayStatus === 'QUEUED' || displayStatus === 'PROCESSING' || displayStatus === 'NEW' || displayStatus === 'CLAIMED') && (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                                  <Chip
+                                    icon={displayStatus === 'PROCESSING' || displayStatus === 'CLAIMED' ? <CircularProgress size={14} thickness={4} sx={{ color: 'inherit' }} /> : null}
+                                    label={displayStatus === 'PROCESSING' || displayStatus === 'CLAIMED' ? 'Processing...' : displayStatus === 'NEW' ? 'Waiting...' : 'Queued'}
+                                    size="small"
+                                    color={displayStatus === 'PROCESSING' || displayStatus === 'CLAIMED' ? 'warning' : 'info'}
+                                    onClick={() => setExpandedRows(prev => ({ ...prev, [upload.flupldref]: !prev[upload.flupldref] }))}
+                                    sx={{
+                                      cursor: 'pointer',
+                                      animation: (displayStatus === 'PROCESSING' || displayStatus === 'CLAIMED') ? 'pulse 2s infinite' : 'none',
+                                      '@keyframes pulse': {
+                                        '0%, 100%': { opacity: 1 },
+                                        '50%': { opacity: 0.6 },
+                                      },
+                                      fontWeight: 600,
+                                      border: (displayStatus === 'PROCESSING' || displayStatus === 'CLAIMED') ? `2px solid ${muiTheme.palette.warning.main}` : 'none',
+                                    }}
+                                  />
+                                  <Tooltip title={isExpanded ? "Hide progress" : "Show progress"}>
+                                    <IconButton
+                                      size="small"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setExpandedRows(prev => ({ ...prev, [upload.flupldref]: !prev[upload.flupldref] }))
+                                      }}
+                                      sx={{ p: 0.5 }}
+                                    >
+                                      {isExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                                    </IconButton>
+                                  </Tooltip>
+                                  <Tooltip title="Cancel job">
+                                    <IconButton
+                                      size="small"
+                                      color="error"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleCancelJob(activeJob?.request_id || (currentJobStatus ? jobRequestId : null), upload.flupldref)
+                                      }}
+                                      sx={{ p: 0.5 }}
+                                    >
+                                      <CancelIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
+                              )}
+                            </Box>
+                          </TableCell>
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem' }}>
+                            {upload.fluplddesc || '-'}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem', wordBreak: 'break-word' }}>
+                            {upload.flnm || '-'}
+                          </Typography>
+                        </Box>
+                      </TableCell>
                       <TableCell align="center">
                         <Chip
                           label={upload.fltyp || 'N/A'}
@@ -584,10 +984,14 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                           variant="outlined"
                         />
                       </TableCell>
-                      <TableCell align="center">
-                        {upload.trgschm && upload.trgtblnm
-                          ? `${upload.trgschm}.${upload.trgtblnm}`
-                          : '-'}
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem', wordBreak: 'break-word' }}>
+                            {upload.trgschm && upload.trgtblnm
+                              ? `${upload.trgschm}.${upload.trgtblnm}`
+                              : '-'}
+                          </Typography>
+                        </Box>
                       </TableCell>
                       <TableCell align="center">
                         <Checkbox
@@ -595,6 +999,7 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                           color="success"
                           inputProps={{ 'aria-label': 'Active?' }}
                           onChange={() => handleToggleStatus(upload)}
+                          size="small"
                         />
                       </TableCell>
                       <TableCell align="center">
@@ -608,24 +1013,46 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                             />
                           </Tooltip>
                         ) : (
-                          <Typography variant="body2" color="text.secondary">-</Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
                         )}
                       </TableCell>
-                      <TableCell align="center">
-                        {upload.schd_nxt_run_dt ? (
-                          <Tooltip title={new Date(upload.schd_nxt_run_dt).toLocaleString()}>
-                            <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
-                              {new Date(upload.schd_nxt_run_dt).toLocaleString()}
-                            </Typography>
-                          </Tooltip>
-                        ) : (
-                          <Typography variant="body2" color="text.secondary">-</Typography>
-                        )}
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          {upload.schd_nxt_run_dt ? (
+                            <Tooltip title={new Date(upload.schd_nxt_run_dt).toLocaleString()}>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                                {new Date(upload.schd_nxt_run_dt).toLocaleString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric', 
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </Typography>
+                            </Tooltip>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                          )}
+                        </Box>
                       </TableCell>
-                      <TableCell align="center">
-                        {upload.lstrundt
-                          ? new Date(upload.lstrundt).toLocaleString()
-                          : '-'}
+                      <TableCell align="left">
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          {upload.last_run_dt ? (
+                            <Tooltip title={new Date(upload.last_run_dt).toLocaleString()}>
+                              <Typography variant="body2" sx={{ fontSize: '0.75rem', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                                {new Date(upload.last_run_dt).toLocaleString('en-US', { 
+                                  month: 'short', 
+                                  day: 'numeric', 
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                                })}
+                              </Typography>
+                            </Tooltip>
+                          ) : (
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>-</Typography>
+                          )}
+                        </Box>
                       </TableCell>
                       <TableCell align="center">
                         <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
@@ -638,15 +1065,37 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                               <EditIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
-                          <Tooltip title="Execute">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleExecuteClick(upload)}
-                              color="primary"
-                              disabled={!upload.trgconid || !upload.trgtblnm}
-                            >
-                              <ExecuteIcon fontSize="small" />
-                            </IconButton>
+                          <Tooltip 
+                            title={
+                              (() => {
+                                const activeJob = activeJobs[upload.flupldref]?.[0]
+                                const hasActiveJob = activeJob && (activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING' || activeJob.status === 'NEW' || activeJob.status === 'CLAIMED')
+                                if (hasActiveJob) {
+                                  return `File upload is already ${activeJob.status === 'PROCESSING' || activeJob.status === 'CLAIMED' ? 'processing' : activeJob.status === 'QUEUED' ? 'queued' : 'waiting to start'}. Please wait for it to complete.`
+                                }
+                                if (!upload.trgconid || !upload.trgtblnm) {
+                                  return 'Target connection and table must be configured'
+                                }
+                                return 'Execute file upload'
+                              })()
+                            }
+                          >
+                            <span>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleExecuteClick(upload)}
+                                color="primary"
+                                disabled={
+                                  (() => {
+                                    const activeJob = activeJobs[upload.flupldref]?.[0]
+                                    const hasActiveJob = activeJob && (activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING' || activeJob.status === 'NEW' || activeJob.status === 'CLAIMED')
+                                    return hasActiveJob || !upload.trgconid || !upload.trgtblnm
+                                  })()
+                                }
+                              >
+                                <ExecuteIcon fontSize="small" />
+                              </IconButton>
+                            </span>
                           </Tooltip>
                           <Tooltip title="Schedule">
                             <IconButton
@@ -688,10 +1137,149 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                               <DeleteIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          {upload.schdid && (
+                            <Tooltip title="Stop Schedule">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleOpenStopScheduleDialog(upload)}
+                                color="error"
+                              >
+                                <StopIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>
-                  ))
+                    
+                    {/* Expandable Progress Row */}
+                    {hasActiveJob && (
+                      <TableRow>
+                        <TableCell colSpan={10} sx={{ py: 0, borderBottom: 'none' }}>
+                          <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                            <Box sx={{ p: 2, backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.3) : alpha(muiTheme.palette.background.paper, 0.5) }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                <Box sx={{ flex: 1 }}>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                                    Upload Progress: {upload.flupldref}
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                                    Target Table: {upload.trgschm && upload.trgtblnm ? `${upload.trgschm}.${upload.trgtblnm}` : 'N/A'}
+                                  </Typography>
+                                </Box>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Chip
+                                    label={activeJob.status === 'PROCESSING' || activeJob.status === 'CLAIMED' 
+                                      ? 'Processing' 
+                                      : activeJob.status === 'NEW' 
+                                      ? 'Waiting to Start' 
+                                      : 'Queued'}
+                                    size="small"
+                                    color={(activeJob.status === 'PROCESSING' || activeJob.status === 'CLAIMED') ? 'warning' : 'info'}
+                                    sx={{
+                                      fontWeight: 600,
+                                      animation: (activeJob.status === 'PROCESSING' || activeJob.status === 'CLAIMED') ? 'pulse 2s infinite' : 'none',
+                                      '@keyframes pulse': {
+                                        '0%, 100%': { opacity: 1 },
+                                        '50%': { opacity: 0.7 },
+                                      },
+                                    }}
+                                  />
+                                  <Tooltip title="Cancel job">
+                                    <IconButton
+                                      size="small"
+                                      color="error"
+                                      onClick={() => handleCancelJob(activeJob?.request_id, upload.flupldref)}
+                                    >
+                                      <CancelIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
+                              </Box>
+                              
+                              {/* Progress Bar */}
+                              {percentage !== null && (
+                                <Box sx={{ mb: 2 }}>
+                                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+                                    <Typography variant="body2" color="text.secondary">
+                                      Data Loading Progress
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600, color: muiTheme.palette.info.main }}>
+                                      {percentage}%
+                                    </Typography>
+                                  </Box>
+                                  <LinearProgress 
+                                    variant="determinate" 
+                                    value={percentage} 
+                                    sx={{ 
+                                      height: 8, 
+                                      borderRadius: 1,
+                                      backgroundColor: darkMode ? alpha(muiTheme.palette.divider, 0.3) : alpha(muiTheme.palette.divider, 0.2),
+                                      '& .MuiLinearProgress-bar': {
+                                        borderRadius: 1,
+                                      }
+                                    }}
+                                  />
+                                </Box>
+                              )}
+                              
+                              {/* Detailed Information */}
+                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                                <Box>
+                                  <Typography variant="caption" color="text.secondary" display="block">
+                                    Table Created
+                                  </Typography>
+                                  {progress?.table_created ? (
+                                    <Chip label="Yes" size="small" color="success" sx={{ mt: 0.5, height: 24 }} />
+                                  ) : activeJob.status === 'NEW' || activeJob.status === 'QUEUED' ? (
+                                    <Chip label="Pending" size="small" color="default" sx={{ mt: 0.5, height: 24 }} />
+                                  ) : (
+                                    <Chip label="In Progress" size="small" color="warning" sx={{ mt: 0.5, height: 24 }} />
+                                  )}
+                                </Box>
+                                
+                                {progress?.rows_processed !== undefined && (
+                                  <Box>
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                      Rows Processed
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 500, mt: 0.5 }}>
+                                      {progress.rows_processed.toLocaleString()}
+                                      {progress?.total_rows && ` / ${progress.total_rows.toLocaleString()}`}
+                                    </Typography>
+                                  </Box>
+                                )}
+                                
+                                {progress?.rows_successful !== undefined && (
+                                  <Box>
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                      Successful
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 500, color: 'success.main', mt: 0.5 }}>
+                                      {progress.rows_successful.toLocaleString()}
+                                    </Typography>
+                                  </Box>
+                                )}
+                                
+                                {progress?.rows_failed !== undefined && progress.rows_failed > 0 && (
+                                  <Box>
+                                    <Typography variant="caption" color="text.secondary" display="block">
+                                      Failed
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 500, color: 'error.main', mt: 0.5 }}>
+                                      {progress.rows_failed.toLocaleString()}
+                                    </Typography>
+                                  </Box>
+                                )}
+                              </Box>
+                            </Box>
+                          </Collapse>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
+                  )
+                  })
                 )}
               </TableBody>
             </Table>
@@ -703,24 +1291,125 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
       <Dialog
         open={showExecuteDialog}
         onClose={() => {
-          if (!executing) {
-            setShowExecuteDialog(false)
+          // Allow closing even if processing, but keep polling in background
+          // User can check status later via execution history
+          if (executing || jobStatus === 'PROCESSING' || jobStatus === 'QUEUED') {
+            // Keep polling in background, just close dialog
+            message.info('Job is running in background. Check execution history or reopen this dialog for status updates.')
+          }
+          setShowExecuteDialog(false)
+          // Don't clear jobRequestId and jobStatus - keep them for potential status checks
+          // Only clear if job is done
+          if (jobStatus === 'DONE' || jobStatus === 'FAILED') {
             setExecuteResult(null)
+            setJobRequestId(null)
+            setJobStatus(null)
+            if (pollingInterval) {
+              clearInterval(pollingInterval)
+              setPollingInterval(null)
+            }
           }
         }}
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle>
-          Execute File Upload: {selectedUpload?.flupldref}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <span>Execute File Upload: {selectedUpload?.flupldref}</span>
+              {jobStatus && (
+                <>
+                  <Chip 
+                    label={jobStatus === 'PROCESSING' ? 'Processing...' : jobStatus === 'QUEUED' ? 'Queued' : jobStatus === 'NEW' ? 'Waiting...' : jobStatus}
+                    size="small"
+                    color={jobStatus === 'PROCESSING' ? 'warning' : 'info'}
+                  />
+                  {(jobStatus === 'QUEUED' || jobStatus === 'PROCESSING' || jobStatus === 'NEW' || jobStatus === 'CLAIMED') && jobRequestId && (
+                    <Tooltip title="Cancel this job">
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleCancelJob(jobRequestId, selectedUpload?.flupldref)}
+                        sx={{ ml: 1 }}
+                      >
+                        <CancelIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </>
+              )}
+            </Box>
+            {(() => {
+              if (!selectedUpload || jobStatus) return null
+              const activeJob = activeJobs[selectedUpload.flupldref]?.[0]
+              const hasActiveJob = activeJob && (activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING' || activeJob.status === 'NEW')
+              if (hasActiveJob) {
+                return (
+                  <Alert severity="warning" sx={{ mt: 1 }}>
+                    A file upload is already {activeJob.status === 'PROCESSING' || activeJob.status === 'CLAIMED' ? 'processing' : activeJob.status === 'QUEUED' ? 'queued' : 'waiting to start'}. 
+                    Please wait for it to complete before starting a new upload.
+                  </Alert>
+                )
+              }
+              return null
+            })()}
+          </Box>
         </DialogTitle>
         <DialogContent>
-          {executing ? (
+          {executing || jobStatus ? (
             <Box sx={{ py: 2 }}>
-              <Typography variant="body2" sx={{ mb: 2 }}>
-                Executing file upload. Please wait...
-              </Typography>
-              <LinearProgress />
+              {jobStatus === 'QUEUED' && (
+                <>
+                  <Typography variant="body2" sx={{ mb: 2, fontWeight: 600 }}>
+                    File upload queued for background execution
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Request ID: {jobRequestId}
+                  </Typography>
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    The file upload is queued and will be processed in the background. 
+                    You can close this dialog and continue working. The job status will be updated automatically.
+                  </Alert>
+                  <LinearProgress />
+                </>
+              )}
+              {jobStatus === 'PROCESSING' && (
+                <>
+                  <Typography variant="body2" sx={{ mb: 2, fontWeight: 600 }}>
+                    Processing file upload...
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Request ID: {jobRequestId}
+                  </Typography>
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    The file is being processed in chunks. This may take a while for large files.
+                  </Alert>
+                  <LinearProgress />
+                </>
+              )}
+              {jobStatus === 'NEW' && (
+                <>
+                  <Typography variant="body2" sx={{ mb: 2, fontWeight: 600 }}>
+                    File upload queued (waiting to start)...
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Request ID: {jobRequestId}
+                  </Typography>
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    The file upload is queued and waiting for the scheduler to pick it up.
+                    Status will update automatically when processing starts.
+                  </Alert>
+                  <LinearProgress />
+                </>
+              )}
+              {!jobStatus && (
+                <>
+                  <Typography variant="body2" sx={{ mb: 2 }}>
+                    Queuing file upload...
+                  </Typography>
+                  <LinearProgress />
+                </>
+              )}
             </Box>
           ) : executeResult ? (
             <Box sx={{ py: 2 }}>
@@ -848,10 +1537,27 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
               onClick={() => {
                 setShowExecuteDialog(false)
                 setExecuteResult(null)
+                setJobRequestId(null)
+                setJobStatus(null)
+                if (pollingInterval) {
+                  clearInterval(pollingInterval)
+                  setPollingInterval(null)
+                }
               }}
               variant="contained"
             >
               Close
+            </Button>
+          ) : (executing || jobStatus) ? (
+            <Button
+              onClick={() => {
+                setShowExecuteDialog(false)
+                // Keep polling in background, user can check status later
+                message.info('Job is running in background. Check execution history for status.')
+              }}
+              variant="outlined"
+            >
+              Close (Keep Running)
             </Button>
           ) : (
             <>
@@ -865,7 +1571,14 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
                 onClick={handleExecuteConfirm}
                 variant="contained"
                 color="primary"
-                disabled={executing}
+                disabled={
+                  executing || 
+                  (() => {
+                    if (!selectedUpload) return false
+                    const activeJob = activeJobs[selectedUpload.flupldref]?.[0]
+                    return activeJob && (activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING' || activeJob.status === 'NEW' || activeJob.status === 'CLAIMED')
+                  })()
+                }
                 startIcon={executing ? <CircularProgress size={16} /> : <ExecuteIcon />}
               >
                 Execute
@@ -1248,6 +1961,35 @@ const UploadTable = ({ handleEditUpload, handleCreateNewUpload, refreshTableRef 
           <Button onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
           <Button onClick={handleDeleteConfirm} color="error" variant="contained">
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Stop Schedule Dialog */}
+      <Dialog
+        open={stopScheduleDialog.show}
+        onClose={handleCloseStopScheduleDialog}
+      >
+        <DialogTitle>Stop Schedule</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            Are you sure you want to stop the schedule for upload configuration "{stopScheduleDialog.upload?.flupldref}"?
+          </DialogContentText>
+          <Typography variant="body2" color="warning.main" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <WarningIcon fontSize="small" />
+            This will disable automatic file uploads for this configuration.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseStopScheduleDialog} disabled={stoppingSchedule}>Cancel</Button>
+          <Button 
+            onClick={handleStopSchedule} 
+            color="error" 
+            variant="contained"
+            disabled={stoppingSchedule}
+            startIcon={stoppingSchedule ? <CircularProgress size={16} /> : <StopIcon />}
+          >
+            Stop Schedule
           </Button>
         </DialogActions>
       </Dialog>

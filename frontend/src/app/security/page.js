@@ -286,13 +286,6 @@ const SecurityPage = () => {
 
   return (
     <Box sx={{ px: { xs: 2, md: 4 }, py: { xs: 3, md: 4 }, maxWidth: 1200, mx: 'auto' }}>
-      <Stack direction="row" alignItems="center" spacing={1} mb={3}>
-        <ShieldOutlinedIcon sx={{ color: '#2563eb' }} />
-        <Typography variant="h5" fontWeight={700} letterSpacing="-0.01em">
-          Security & Module Access
-        </Typography>
-      </Stack>
-
       <Typography variant="body2" color="text.secondary" mb={3}>
         Enable or disable access to specific application modules for each user. Essentials and Admin tools remain available for everyone.
       </Typography>

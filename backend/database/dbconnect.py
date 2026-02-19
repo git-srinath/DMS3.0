@@ -120,20 +120,20 @@ def create_metadata_connection():
     """
     # Import logger inside the function to avoid circular imports
     try:
-        from backend.modules.logger import info, error
+        from backend.modules.logger import info, error, debug
     except ImportError:
-        from modules.logger import info, error
+        from modules.logger import info, error, debug
     
     # Check environment variable each time to ensure we get the current value
     current_db_type = os.getenv("DB_TYPE", "ORACLE").upper()
     
-    info(f"[create_metadata_connection] DB_TYPE from environment: {current_db_type}")
+    debug(f"[create_metadata_connection] DB_TYPE from environment: {current_db_type}")
     
     if current_db_type == "POSTGRESQL":
-        info("[create_metadata_connection] Creating PostgreSQL connection")
+        debug("[create_metadata_connection] Creating PostgreSQL connection")
         return create_postgresql_connection()
     else:
-        info("[create_metadata_connection] Creating Oracle connection")
+        debug("[create_metadata_connection] Creating Oracle connection")
         return create_oracle_connection()
 
 def create_oracle_connection():
@@ -171,9 +171,9 @@ def create_postgresql_connection():
         psycopg2 = _load_db_driver("POSTGRESQL")
         # Import logger inside the function to avoid circular imports
         try:
-            from backend.modules.logger import info, error
+            from backend.modules.logger import info, error, debug
         except ImportError:
-            from modules.logger import info, error
+            from modules.logger import info, error, debug
         
         # Verify we have required parameters
         if not db_connection_string and not all([db_host, db_name, db_user, db_password]):
@@ -181,10 +181,10 @@ def create_postgresql_connection():
             raise ValueError("Missing required PostgreSQL connection parameters")
         
         if db_connection_string:
-            info(f"[create_postgresql_connection] Using connection string")
+            debug(f"[create_postgresql_connection] Using connection string")
             connection = psycopg2.connect(db_connection_string)
         else:
-            info(f"[create_postgresql_connection] Connecting to {db_host}:{db_port or 5432}/{db_name} as {db_user}")
+            debug(f"[create_postgresql_connection] Connecting to {db_host}:{db_port or 5432}/{db_name} as {db_user}")
             connection = psycopg2.connect(
                 host=db_host,
                 port=int(db_port) if db_port else 5432,
@@ -195,7 +195,7 @@ def create_postgresql_connection():
         # Set autocommit mode to avoid transaction issues
         # This ensures each query is automatically committed
         connection.autocommit = True
-        info("PostgreSQL connection established successfully")
+        debug("PostgreSQL connection established successfully")
         return connection
     except ImportError:
         try:
@@ -253,9 +253,9 @@ def create_target_connection(connection_id):
     """
     try:
         try:
-            from backend.modules.logger import info, error
+            from backend.modules.logger import info, error, debug
         except ImportError:
-            from modules.logger import info, error
+            from modules.logger import info, error, debug
         import builtins
         
         # Get metadata connection first
@@ -383,7 +383,7 @@ def create_target_connection(connection_id):
                     dsn=f"{dbhost}:{dbport}/{dbsrvnm}"
                 )
         
-        info(f"Target connection '{connm}' (ID: {connection_id}, Type: {target_db_type}) established successfully")
+        debug(f"Target connection '{connm}' (ID: {connection_id}, Type: {target_db_type}) established successfully")
         return target_conn
         
     except Exception as e:

@@ -20,7 +20,24 @@ class DWToolLogger:
     def _setup_logger(self):
         """Set up the logger with the required format"""
         self.logger = logging.getLogger('dwtool')
-        self.logger.setLevel(logging.DEBUG)
+        
+        # Read log level from environment variable, default to INFO
+        log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
+        
+        # Map string to logging level constant
+        log_level_map = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'WARNING': logging.WARNING,
+            'ERROR': logging.ERROR,
+            'CRITICAL': logging.CRITICAL
+        }
+        
+        # Get the log level, default to INFO if invalid
+        log_level = log_level_map.get(log_level_str, logging.INFO)
+        
+        # Set logger level
+        self.logger.setLevel(log_level)
         
         # Prevent duplicate log entries
         if self.logger.hasHandlers():
@@ -31,7 +48,8 @@ class DWToolLogger:
         
         # Create file handler
         file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.DEBUG)
+        # Set file handler level to match logger level
+        file_handler.setLevel(log_level)
         
         # Create formatter - we'll handle the custom format in our methods
         formatter = logging.Formatter('%(message)s')

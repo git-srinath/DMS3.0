@@ -233,14 +233,14 @@ class SchedulerService:
         simply logs the desire to sync; the concrete implementation will map
         frequency codes to APScheduler triggers.
         """
-        info("[_sync_schedules] Starting schedule synchronization...")
+        debug("[_sync_schedules] Starting schedule synchronization...")
         try:
             with self._db_cursor() as cursor:
                 connection = cursor.connection
                 db_type = _detect_db_type(connection)
                 schema = os.getenv('DMS_SCHEMA', 'TRG')
                 
-                info(f"[_sync_schedules] Database type: {db_type}, Schema: {schema}")
+                debug(f"[_sync_schedules] Database type: {db_type}, Schema: {schema}")
                 
                 # Get table reference for PostgreSQL (handles case sensitivity)
                 if db_type == "POSTGRESQL":
@@ -251,7 +251,7 @@ class SchedulerService:
                     schema_prefix = f'{schema_lower}.' if schema else ''
                     dms_jobsch_full = f'{schema_prefix}{dms_jobsch_ref}'
                     
-                    info(f"[_sync_schedules] PostgreSQL table: {dms_jobsch_full}")
+                    debug(f"[_sync_schedules] PostgreSQL table: {dms_jobsch_full}")
                     
                     # PostgreSQL is case-sensitive for column names
                     # Try uppercase column names first (if created with quotes), fallback to lowercase
@@ -303,7 +303,7 @@ class SchedulerService:
                 # Normalize column names to uppercase for consistency
                 columns = [col.upper() if col else col for col in columns]
                 
-                info(f"[_sync_schedules] Found {len(rows)} schedule records in DMS_JOBSCH")
+                debug(f"[_sync_schedules] Found {len(rows)} schedule records in DMS_JOBSCH")
 
             desired_jobs = {}
             for row in rows:
@@ -311,15 +311,15 @@ class SchedulerService:
                 job_id = f"schedule:{record['JOBSCHID']}"
                 schflg = record.get("SCHFLG")
                 nxt_run_dt = record.get("NXT_RUN_DT")
-                info(f"[_sync_schedules] Processing record: JOBSCHID={record['JOBSCHID']}, MAPREF={record.get('MAPREF')}, SCHFLG={schflg}, FRQCD={record.get('FRQCD')}, NXT_RUN_DT={nxt_run_dt}")
+                debug(f"[_sync_schedules] Processing record: JOBSCHID={record['JOBSCHID']}, MAPREF={record.get('MAPREF')}, SCHFLG={schflg}, FRQCD={record.get('FRQCD')}, NXT_RUN_DT={nxt_run_dt}")
                 
                 if schflg == "Y":
                     desired_jobs[job_id] = record
-                    info(f"[_sync_schedules] Added to desired_jobs: {job_id} for {record.get('MAPREF')}")
+                    debug(f"[_sync_schedules] Added to desired_jobs: {job_id} for {record.get('MAPREF')}")
                 else:
                     debug(f"[_sync_schedules] Skipping {job_id} - SCHFLG is not 'Y' (value: {schflg})")
 
-            info(f"[_sync_schedules] Total desired jobs: {len(desired_jobs)}")
+            debug(f"[_sync_schedules] Total desired jobs: {len(desired_jobs)}")
 
             current_jobs = set(self._scheduled_job_ids)
             removed_count = 0
@@ -327,14 +327,15 @@ class SchedulerService:
                 try:
                     self.scheduler.remove_job(job_id)
                     self._scheduled_job_ids.remove(job_id)
-                    info(f"[_sync_schedules] Removed schedule job {job_id}")
+                    debug(f"[_sync_schedules] Removed schedule job {job_id}")
                     removed_count += 1
                 except Exception as e:
                     debug(f"[_sync_schedules] Error removing job {job_id}: {e}")
                     continue
             
             if removed_count > 0:
-                info(f"[_sync_schedules] Removed {removed_count} jobs from scheduler")
+                if removed_count > 0:
+                    info(f"[_sync_schedules] Removed {removed_count} jobs from scheduler")
 
             added_count = 0
             updated_count = 0
@@ -375,15 +376,15 @@ class SchedulerService:
                                                 self._scheduled_job_ids.remove(job_id)
                                     else:
                                         seconds_until_run = (next_run - now).total_seconds()
-                                        info(f"[_sync_schedules] Job {job_id} already scheduled, next run: {next_run} (in {seconds_until_run:.0f} seconds)")
+                                        debug(f"[_sync_schedules] Job {job_id} already scheduled, next run: {next_run} (in {seconds_until_run:.0f} seconds)")
                                         updated_count += 1
                                         continue
                                 else:
-                                    info(f"[_sync_schedules] Job {job_id} already scheduled, next run: {next_run}")
+                                    debug(f"[_sync_schedules] Job {job_id} already scheduled, next run: {next_run}")
                                     updated_count += 1
                                     continue
                             else:
-                                info(f"[_sync_schedules] Job {job_id} has no next_run_time, rescheduling...")
+                                debug(f"[_sync_schedules] Job {job_id} has no next_run_time, rescheduling...")
                                 try:
                                     self.scheduler.remove_job(job_id)
                                     self._scheduled_job_ids.remove(job_id)
@@ -392,7 +393,7 @@ class SchedulerService:
                                         self._scheduled_job_ids.remove(job_id)
                         else:
                             # Job ID in our set but not in scheduler - re-add it
-                            info(f"[_sync_schedules] Job {job_id} missing from scheduler, re-adding...")
+                            debug(f"[_sync_schedules] Job {job_id} missing from scheduler, re-adding...")
                             self._scheduled_job_ids.remove(job_id)
                     except Exception as e:
                         debug(f"[_sync_schedules] Error checking existing job {job_id}: {e}")
@@ -401,7 +402,7 @@ class SchedulerService:
                             self._scheduled_job_ids.remove(job_id)
                 
                 try:
-                    info(f"[_sync_schedules] Building trigger for {job_id} (MAPREF={record.get('MAPREF')}, FRQCD={record.get('FRQCD')}, FRQDD={record.get('FRQDD')}, FRQHH={record.get('FRQHH')}, FRQMI={record.get('FRQMI')}, STRTDT={record.get('STRTDT')}, ENDDT={record.get('ENDDT')})")
+                    debug(f"[_sync_schedules] Building trigger for {job_id} (MAPREF={record.get('MAPREF')}, FRQCD={record.get('FRQCD')}, FRQDD={record.get('FRQDD')}, FRQHH={record.get('FRQHH')}, FRQMI={record.get('FRQMI')}, STRTDT={record.get('STRTDT')}, ENDDT={record.get('ENDDT')})")
                     
                     # Fix end_date if it's too restrictive (e.g., tomorrow at midnight when job should run daily)
                     # If end_date is set and it's preventing scheduling, remove it or set it far in the future
@@ -417,7 +418,7 @@ class SchedulerService:
                             # If end_date is too soon (e.g., within next 7 days), remove it for recurring schedules
                             # This allows the schedule to continue running
                             if enddt < now + timedelta(days=7):
-                                info(f"[_sync_schedules] End date {enddt} is too restrictive for recurring schedule (DL={record.get('FRQCD')}), removing it to allow continuous scheduling")
+                                debug(f"[_sync_schedules] End date {enddt} is too restrictive for recurring schedule (DL={record.get('FRQCD')}), removing it to allow continuous scheduling")
                                 record['ENDDT'] = None
                     
                     # Ensure start_date is set - if not provided, use a date in the past so APScheduler can calculate next occurrence
@@ -436,10 +437,10 @@ class SchedulerService:
                         if start_date.tzinfo is None:
                             start_date = scheduler_tz.localize(start_date) if hasattr(scheduler_tz, 'localize') else start_date.replace(tzinfo=scheduler_tz)
                         record['STRTDT'] = start_date
-                        info(f"[_sync_schedules] No start_date in schedule, using yesterday at scheduled time: {start_date}")
+                        debug(f"[_sync_schedules] No start_date in schedule, using yesterday at scheduled time: {start_date}")
                     
                     trigger = build_trigger(record, self.config.timezone)
-                    info(f"[_sync_schedules] Trigger built successfully: {trigger}, start_date={record.get('STRTDT')}, end_date={record.get('ENDDT')}")
+                    debug(f"[_sync_schedules] Trigger built successfully: {trigger}, start_date={record.get('STRTDT')}, end_date={record.get('ENDDT')}")
                     
                     job = self.scheduler.add_job(
                         self._enqueue_scheduled_job,
@@ -473,7 +474,7 @@ class SchedulerService:
                             if now.tzinfo is None:
                                 now = now.replace(tzinfo=scheduler_tz)
                             seconds_until = (next_run - now).total_seconds()
-                            info(f"[_sync_schedules] Job {job_id} will run in {seconds_until:.0f} seconds ({seconds_until/60:.1f} minutes)")
+                            debug(f"[_sync_schedules] Job {job_id} will run in {seconds_until:.0f} seconds ({seconds_until/60:.1f} minutes)")
                     
                     info(
                         f"[_sync_schedules] Successfully scheduled job {job_id} for mapref {record['MAPREF']} "
@@ -488,30 +489,29 @@ class SchedulerService:
             
             if added_count > 0:
                 info(f"[_sync_schedules] Added {added_count} new jobs to scheduler")
-            if updated_count > 0:
-                info(f"[_sync_schedules] Checked {updated_count} existing jobs in scheduler")
+            debug(f"[_sync_schedules] Checked {updated_count} existing jobs in scheduler")
             if rescheduled_count > 0:
                 info(f"[_sync_schedules] Rescheduled {rescheduled_count} jobs that were in the past")
             
-            # Log all scheduled jobs and their next run times
+            # Log all scheduled jobs and their next run times (debug only)
             if len(self._scheduled_job_ids) > 0:
-                info(f"[_sync_schedules] Currently scheduled jobs ({len(self._scheduled_job_ids)}):")
+                debug(f"[_sync_schedules] Currently scheduled jobs ({len(self._scheduled_job_ids)}):")
                 for job_id in self._scheduled_job_ids:
                     try:
                         job = self.scheduler.get_job(job_id)
                         if job:
                             next_run = getattr(job, 'next_run_time', None)
                             next_run_str = str(next_run) if next_run else "Not scheduled yet"
-                            info(f"[_sync_schedules]   - {job_id}: next_run={next_run_str}")
+                            debug(f"[_sync_schedules]   - {job_id}: next_run={next_run_str}")
                         else:
-                            info(f"[_sync_schedules]   - {job_id}: NOT FOUND in scheduler (will be removed)")
+                            debug(f"[_sync_schedules]   - {job_id}: NOT FOUND in scheduler (will be removed)")
                             self._scheduled_job_ids.remove(job_id)
                     except Exception as e:
                         debug(f"[_sync_schedules] Error getting job {job_id}: {e}")
             else:
                 warning("[_sync_schedules] No jobs are currently scheduled in APScheduler!")
             
-            info(f"[_sync_schedules] Schedule sync complete. Total scheduled jobs: {len(self._scheduled_job_ids)}")
+            debug(f"[_sync_schedules] Schedule sync complete. Total scheduled jobs: {len(self._scheduled_job_ids)}")
 
         except Exception as e:
             import traceback
@@ -795,7 +795,7 @@ class SchedulerService:
                 requests: List[QueueRequest] = []
                 for row in rows:
                     req_id, mapref, req_type, payload = row
-                    info(f"[_poll_queue] Processing request: request_id={req_id}, mapref={mapref}, type={req_type}")
+                    debug(f"[_poll_queue] Processing request: request_id={req_id}, mapref={mapref}, type={req_type}")
                     # Read LOB object if it's a LOB
                     payload_str = _read_lob(payload)
                     payload_dict = json.loads(payload_str) if payload_str else {}
@@ -810,13 +810,15 @@ class SchedulerService:
                     claimed_ids.append(req_id)
 
                 # Update with database-specific syntax
+                # Mark as PROCESSING immediately when picked up (instead of CLAIMED)
+                # This allows users to cancel jobs that are being processed
                 if db_type == "POSTGRESQL":
                     # Try uppercase column names first
                     try:
                         cursor.executemany(
                             f"""
                             UPDATE {dms_prcreq_full}
-                            SET "STATUS" = 'CLAIMED',
+                            SET "STATUS" = 'PROCESSING',
                                 "CLAIMED_AT" = CURRENT_TIMESTAMP,
                                 "CLAIMED_BY" = %s
                             WHERE "REQUEST_ID" = %s
@@ -831,7 +833,7 @@ class SchedulerService:
                         cursor.executemany(
                             f"""
                             UPDATE {dms_prcreq_full}
-                            SET status = 'CLAIMED',
+                            SET status = 'PROCESSING',
                                 claimed_at = CURRENT_TIMESTAMP,
                                 claimed_by = %s
                             WHERE request_id = %s
@@ -845,7 +847,7 @@ class SchedulerService:
                     cursor.executemany(
                         f"""
                         UPDATE {schema_prefix}DMS_PRCREQ
-                        SET status = 'CLAIMED',
+                        SET status = 'PROCESSING',
                             claimed_at = SYSTIMESTAMP,
                             claimed_by = :claimed_by
                         WHERE request_id = :request_id
@@ -856,10 +858,10 @@ class SchedulerService:
                         ],
                     )
                 cursor.connection.commit()
-                info(f"[_poll_queue] Claimed {len(claimed_ids)} requests")
+                debug(f"[_poll_queue] Marked {len(claimed_ids)} requests as PROCESSING")
 
             for request in requests:
-                info(f"[_poll_queue] Submitting request {request.request_id} ({request.mapref}) to executor")
+                debug(f"[_poll_queue] Submitting request {request.request_id} ({request.mapref}) to executor")
                 self.executor.submit(self._execute_request, request)
         except Exception as e:
             import traceback
@@ -868,6 +870,10 @@ class SchedulerService:
     def _execute_request(self, request: QueueRequest) -> None:
         info(f"[_execute_request] Starting execution of request {request.request_id} (mapref={request.mapref}, type={request.request_type.value})")
         try:
+            # Job is already marked as PROCESSING when picked up from queue
+            # Only update if status is not already PROCESSING (safety check)
+            # self._mark_request_processing(request)  # No longer needed - already PROCESSING
+            
             # Handle REPORT type requests separately
             if request.request_type.value == "REPORT":
                 info(f"[_execute_request] Executing REPORT request for {request.mapref}")
@@ -930,12 +936,15 @@ class SchedulerService:
         return result
 
     def _execute_file_upload_request(self, request: QueueRequest) -> Dict[str, Any]:
-        """Execute a FILE_UPLOAD type request using the FileUploadExecutor."""
+        """
+        Execute file upload request using streaming executor for better memory efficiency.
+        Uses chunked processing to handle large files without loading entire file into memory.
+        """
         # Support both FastAPI (package import) and legacy Flask (relative import) contexts
         try:
-            from backend.modules.file_upload.file_upload_executor import FileUploadExecutor
+            from backend.modules.file_upload.streaming_file_executor import StreamingFileExecutor
         except ImportError:  # When running Flask app.py directly inside backend
-            from modules.file_upload.file_upload_executor import FileUploadExecutor  # type: ignore
+            from modules.file_upload.streaming_file_executor import StreamingFileExecutor  # type: ignore
 
         payload = request.payload or {}
         flupldref = payload.get("flupldref")
@@ -949,9 +958,10 @@ class SchedulerService:
             raise ValueError("File upload reference not found in request payload or mapref")
         
         load_mode = payload.get("load_mode", "INSERT")
-        username = "system"  # Scheduled executions run as system
+        username = payload.get("username", "system")  # Use username from payload if provided
         
-        executor = FileUploadExecutor()
+        # Use streaming executor for better memory efficiency
+        executor = StreamingFileExecutor(chunk_size=10000)  # Process 10K rows per chunk
         result = executor.execute(
             flupldref=flupldref,
             file_path=None,  # Use file path from configuration
@@ -959,9 +969,61 @@ class SchedulerService:
             username=username
         )
         
-        info(f"[SchedulerService] File upload {flupldref} executed successfully: {result}")
+        info(f"[SchedulerService] File upload {flupldref} executed successfully: {result.get('rows_successful', 0)} rows loaded")
         return result
 
+    def _mark_request_processing(self, request: QueueRequest) -> None:
+        """Mark request as PROCESSING when execution starts."""
+        try:
+            with self._db_cursor() as cursor:
+                connection = cursor.connection
+                db_type = _detect_db_type(connection)
+                schema = os.getenv('DMS_SCHEMA', 'TRG')
+                
+                # Get table reference for PostgreSQL (handles case sensitivity)
+                if db_type == "POSTGRESQL":
+                    schema_lower = schema.lower() if schema else 'public'
+                    dms_prcreq_table = get_postgresql_table_name(cursor, schema_lower, 'DMS_PRCREQ')
+                    dms_prcreq_ref = f'"{dms_prcreq_table}"' if dms_prcreq_table != dms_prcreq_table.lower() else dms_prcreq_table
+                    schema_prefix = f'{schema_lower}.' if schema else ''
+                    dms_prcreq_full = f'{schema_prefix}{dms_prcreq_ref}'
+                    
+                    # Try uppercase first, fallback to lowercase
+                    try:
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prcreq_full}
+                            SET "STATUS" = 'PROCESSING'
+                            WHERE "REQUEST_ID" = %s
+                            """,
+                            (request.request_id,),
+                        )
+                    except Exception:
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prcreq_full}
+                            SET status = 'PROCESSING'
+                            WHERE request_id = %s
+                            """,
+                            (request.request_id,),
+                        )
+                else:  # Oracle
+                    schema_prefix = f'{schema}.' if schema else ''
+                    cursor.execute(
+                        f"""
+                        UPDATE {schema_prefix}DMS_PRCREQ
+                        SET status = 'PROCESSING'
+                        WHERE request_id = :1
+                        """,
+                        [request.request_id],
+                    )
+                
+                connection.commit()
+                info(f"[_mark_request_processing] Marked request {request.request_id} as PROCESSING")
+        except Exception as e:
+            warning(f"[_mark_request_processing] Failed to mark request {request.request_id} as PROCESSING: {e}")
+            # Don't fail the execution if status update fails
+    
     def _mark_request_complete(self, request: QueueRequest, status: str, payload: Dict[str, Any]) -> None:
         info(f"[_mark_request_complete] Marking request {request.request_id} as {status}")
         try:

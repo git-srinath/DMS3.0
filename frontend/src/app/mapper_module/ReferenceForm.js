@@ -22,6 +22,8 @@ import {
   InputLabel,
   FormControlLabel,
   ButtonGroup,
+  RadioGroup,
+  Radio,
   Menu,
   ListItemIcon,
   ListItemText,
@@ -85,6 +87,7 @@ import { useReferenceLock, releaseReferenceLock } from './lockUtils'
 import ReferenceRow from './ReferenceRow'
 import LoadingDialog from './LoadingDialog'
 import SqlEditorDialog from './SqlEditorDialog'
+import SqlPrefillDialog from './SqlPrefillDialog'
 
 const getApiErrorMessage = (error, defaultMessage) => {
   // Check if it's an Axios error
@@ -248,11 +251,49 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
     sourceSystem: '',
     bulkProcessRows: '',
     targetConnectionId: null,
+    // Base/source SQL used for prefill (stored in metadata if SRCSQL column exists)
+    baseSql: '',
     // Checkpoint configuration fields
     checkpointStrategy: 'AUTO',
     checkpointColumn: '',
     checkpointEnabled: true,
   })
+
+  // Auto-populate targetSchema when targetConnectionId is set (including on load)
+  // This must be placed AFTER formData is declared
+  useEffect(() => {
+    // Only run if we have the necessary data
+    if (!formData || !connections || connections.length === 0) {
+      return
+    }
+
+    const targetConnectionId = formData.targetConnectionId
+    const currentTargetSchema = formData.targetSchema
+
+    // Only populate if targetConnectionId is set and targetSchema is empty
+    if (targetConnectionId && !currentTargetSchema) {
+      const selectedConnection = connections.find(
+        (conn) => conn && String(conn.conid) === String(targetConnectionId)
+      )
+      
+      if (selectedConnection && selectedConnection.usrnm) {
+        const schemaValue = String(selectedConnection.usrnm).toUpperCase().trim()
+        if (schemaValue) {
+          setFormData((prev) => {
+            // Only update if targetSchema is still empty to avoid infinite loops
+            if (!prev || !prev.targetSchema) {
+              return {
+                ...prev,
+                targetSchema: schemaValue,
+              }
+            }
+            return prev
+          })
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.targetConnectionId, connections.length])
 
   // Removed pagination state - using scrollbar instead
 
@@ -317,8 +358,14 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
   const [isJobCreating, setIsJobCreating] = useState(false)
   const [isJobCreated, setIsJobCreated] = useState(false)
 
+  // SQL prefill dialog
+  const [showSqlPrefillDialog, setShowSqlPrefillDialog] = useState(false)
+
   // Add new state for tracking bulk validation status
   const [bulkValidationSuccess, setBulkValidationSuccess] = useState(true)
+
+  // Add state for bulk SCD type selection (radio button)
+  const [bulkScdType, setBulkScdType] = useState('')
 
   // Add constants for select options
   const TABLE_TYPES = [
@@ -623,20 +670,62 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
             scdType: '', // Reset to '1' instead of empty string
           }))
         )
+        setBulkScdType('') // Reset bulk SCD radio selection
       }
     }
 
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value,
-    }))
-
-    // Track modifications if this is an update
-    if (originalFormData) {
-      setModifiedFields((prev) => ({
+    // Auto-populate targetSchema when targetConnectionId is selected
+    if (field === 'targetConnectionId') {
+      const selectedConnection = connections.find(
+        (conn) => String(conn.conid) === String(value)
+      )
+      
+      // If a connection is selected and it has a username, use it as targetSchema
+      // For Oracle, username is typically the schema. For PostgreSQL, it's often the same.
+      if (selectedConnection && selectedConnection.usrnm) {
+        setFormData((prev) => ({
+          ...prev,
+          [field]: value,
+          targetSchema: selectedConnection.usrnm.toUpperCase(), // Use uppercase for consistency
+        }))
+        
+        // Track modifications for both fields
+        if (originalFormData) {
+          setModifiedFields((prev) => ({
+            ...prev,
+            [field]: originalFormData[field] !== value,
+            targetSchema: originalFormData.targetSchema !== selectedConnection.usrnm.toUpperCase(),
+          }))
+        }
+      } else {
+        // If no connection selected or no username, just update targetConnectionId
+        setFormData((prev) => ({
+          ...prev,
+          [field]: value,
+        }))
+        
+        // Track modifications if this is an update
+        if (originalFormData) {
+          setModifiedFields((prev) => ({
+            ...prev,
+            [field]: originalFormData[field] !== value,
+          }))
+        }
+      }
+    } else {
+      // For other fields, update normally
+      setFormData((prev) => ({
         ...prev,
-        [field]: originalFormData[field] !== value,
+        [field]: value,
       }))
+
+      // Track modifications if this is an update
+      if (originalFormData) {
+        setModifiedFields((prev) => ({
+          ...prev,
+          [field]: originalFormData[field] !== value,
+        }))
+      }
     }
 
     // Set hasUnsavedChanges to true and reset validation states when changes are made
@@ -763,23 +852,37 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
 
         // Special handling for primaryKey changes
         if (field === 'primaryKey') {
-            // If unchecking primary key
-            if (value === false) {
-            // Clear the pkSeq
-            newRows[index].pkSeq = ''
+            if (value === true) {
+                // When checking primary key, auto-populate keyColumn with fieldName if empty
+                if (!newRows[index].keyColumn && newRows[index].fieldName) {
+                    newRows[index].keyColumn = newRows[index].fieldName
+                }
+                // Auto-assign next pkSeq if empty
+                if (!newRows[index].pkSeq) {
+                    const existingSeqs = newRows
+                        .filter((r, i) => i !== index && r.primaryKey && r.pkSeq)
+                        .map((r) => parseInt(r.pkSeq, 10))
+                        .filter((v) => !isNaN(v))
+                    const nextSeq = existingSeqs.length > 0 ? Math.max(...existingSeqs) + 1 : 1
+                    newRows[index].pkSeq = String(nextSeq)
+                }
+            } else {
+                // If unchecking primary key
+                // Clear the pkSeq
+                newRows[index].pkSeq = ''
 
-            // Clear any pkSeq errors and warnings for this row
-            setPkSeqErrors((prev) => {
-                const newErrors = { ...prev }
-                delete newErrors[index]
-                return newErrors
-            })
+                // Clear any pkSeq errors and warnings for this row
+                setPkSeqErrors((prev) => {
+                    const newErrors = { ...prev }
+                    delete newErrors[index]
+                    return newErrors
+                })
 
-            setRowWarnings((prev) => {
-                const newWarnings = { ...prev }
-                delete newWarnings[index]
-                return newWarnings
-            })
+                setRowWarnings((prev) => {
+                    const newWarnings = { ...prev }
+                    delete newWarnings[index]
+                    return newWarnings
+                })
             }
         }
 
@@ -942,8 +1045,9 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
           .max(255, 'Description cannot exceed 255 characters'),
         targetSchema: z
           .string()
-          .min(1, 'Target Schema is required')
-          .max(30, 'Target Schema cannot exceed 30 characters'),
+          .max(30, 'Target Schema cannot exceed 30 characters')
+          .optional()
+          .or(z.literal('')),
         tableName: z
           .string()
           .min(1, 'Table Name is required')
@@ -1044,10 +1148,23 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
     setIsSaving(true)
 
     try {
+      // Auto-populate targetSchema from connection if it's missing but targetConnectionId is set
+      let finalTargetSchema = formData.targetSchema
+      if (!finalTargetSchema && formData.targetConnectionId && connections.length > 0) {
+        const selectedConnection = connections.find(
+          (conn) => String(conn.conid) === String(formData.targetConnectionId)
+        )
+        if (selectedConnection && selectedConnection.usrnm) {
+          finalTargetSchema = selectedConnection.usrnm.toUpperCase()
+        }
+      }
+
       // Prepare the data to be sent with user information
       const dataToSend = {
         formData: {
           ...formData,
+          // Ensure targetSchema is populated from connection if missing
+          targetSchema: finalTargetSchema || '',
           bulkProcessRows: formData.bulkProcessRows || '0', // Default to 0 if empty
           user_id: userData?.id || '', // Add user ID from localStorage
           username: userData?.username || '' // Add username from localStorage
@@ -1323,6 +1440,7 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
         sourceSystem: formDataFromResponse.sourceSystem || '',
         bulkProcessRows: formDataFromResponse.bulkProcessRows || '',
         targetConnectionId: formDataFromResponse.targetConnectionId || null,
+        baseSql: formDataFromResponse.baseSql || '',
         // Ensure checkpoint fields have defaults even if missing from backend
         checkpointStrategy: formDataFromResponse.checkpointStrategy || 'AUTO',
         checkpointColumn: formDataFromResponse.checkpointColumn || '',
@@ -2323,6 +2441,24 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
               >
                 Export
               </Button>
+
+              {/* Load from SQL Button - Prefill mapper from SQL (belongs with Template/Export tools) */}
+              <Tooltip title="Prefill columns from SQL (manual or from Manage SQL)">
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setShowSqlPrefillDialog(true)}
+                  sx={{
+                    height: '30px',
+                    minWidth: '90px',
+                    textTransform: 'none',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                  }}
+                >
+                  Load from SQL
+                </Button>
+              </Tooltip>
             </div>
 
             {/* Right side buttons - Updated for proper workflow */}
@@ -2509,6 +2645,7 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
                   </Button>
                 </span>
               </Tooltip>
+
             </div>
           </div>
 
@@ -3388,11 +3525,73 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
                           `}
                       sx={{ 
                         fontSize: 'clamp(0.65rem, 0.7vw, 0.7rem)',
-                        width: '80px',
+                        width: '120px',
                         padding: '6px 8px'
                       }}
                     >
-                      SCD Type
+                      <div className="flex flex-col gap-1">
+                        <span>SCD Type</span>
+                        <RadioGroup
+                          row
+                          value={bulkScdType}
+                          onChange={(e) => {
+                            const selectedType = e.target.value
+                            setBulkScdType(selectedType)
+                            // Apply SCD type to all populated rows
+                            setRows((prevRows) =>
+                              prevRows.map((row) => {
+                                // Only touch rows that have a fieldName (i.e., "in use")
+                                if (!row.fieldName) return row
+                                return {
+                                  ...row,
+                                  scdType: selectedType,
+                                }
+                              })
+                            )
+                            setHasUnsavedChanges(true)
+                            setShowValidateButton(false)
+                            setHasBeenValidated(false)
+                            setIsActivated(false)
+                            setIsActivationSuccessful(false)
+                            message.success(`Applied SCD Type ${selectedType} to all populated rows`)
+                          }}
+                          sx={{
+                            '& .MuiFormControlLabel-root': {
+                              margin: 0,
+                              marginRight: '8px',
+                            },
+                            '& .MuiRadio-root': {
+                              padding: '2px',
+                              fontSize: '0.7rem',
+                            },
+                            '& .MuiFormControlLabel-label': {
+                              fontSize: '0.7rem',
+                              paddingLeft: '2px',
+                            },
+                          }}
+                        >
+                          <FormControlLabel
+                            value="1"
+                            control={<Radio size="small" />}
+                            label="1"
+                            sx={{
+                              '& .MuiFormControlLabel-label': {
+                                fontSize: '0.7rem',
+                              },
+                            }}
+                          />
+                          <FormControlLabel
+                            value="2"
+                            control={<Radio size="small" />}
+                            label="2"
+                            sx={{
+                              '& .MuiFormControlLabel-label': {
+                                fontSize: '0.7rem',
+                              },
+                            }}
+                          />
+                        </RadioGroup>
+                      </div>
                     </TableCell>
                   )}
                   {/* Add Logic column header */}
@@ -3595,6 +3794,162 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
         sqlError={sqlError}
         selectedCode={sqlEditorSelectedCode}
         onCodeSelect={setSqlEditorSelectedCode}
+      />
+
+      {/* SQL Prefill Dialog for base SQL-driven prefill */}
+      <SqlPrefillDialog
+        open={showSqlPrefillDialog}
+        onClose={() => setShowSqlPrefillDialog(false)}
+        darkMode={darkMode}
+        connections={connections}
+        onApply={({ columns, sqlCode, sqlContent, connectionId }) => {
+          // Map selected columns into mapper rows; keep all fields editable until Save
+          setRows((prevRows) => {
+            const updatedRows = [...prevRows]
+
+            // Helper to find or create a row for a given column
+            const ensureRowForColumn = (colName) => {
+              const existingIndex = updatedRows.findIndex(
+                (r) => (r.fieldName || '').toUpperCase() === colName.toUpperCase()
+              )
+              if (existingIndex !== -1) {
+                return { index: existingIndex, isNew: false }
+              }
+
+              const emptyIndex = updatedRows.findIndex(
+                (r) =>
+                  !r.fieldName &&
+                  !r.dataType &&
+                  !r.logic
+              )
+
+              if (emptyIndex !== -1) {
+                return { index: emptyIndex, isNew: false }
+              }
+
+              updatedRows.push({
+                mapdtlid: '',
+                fieldName: '',
+                dataType: '',
+                primaryKey: false,
+                pkSeq: '',
+                nulls: false,
+                logic: '',
+                validator: 'N',
+                keyColumn: '',
+                valColumn: '',
+                execSequence: '',
+                mapCombineCode: '',
+                LogicVerFlag: '',
+                scdType: formData.tableType === 'DIM' ? '1' : '',
+                fieldDesc: '',
+              })
+              return { index: updatedRows.length - 1, isNew: true }
+            }
+
+            // Determine next PK sequence number
+            const existingPkSeqs = updatedRows
+              .map((r) => parseInt(r.pkSeq, 10))
+              .filter((v) => !isNaN(v))
+            const basePkSeq = existingPkSeqs.length
+              ? Math.max(...existingPkSeqs) + 1
+              : 1
+            let pkSeqCounter = basePkSeq
+
+            // Collect all key columns from the dialog (sorted by sequence)
+            const keyColumnsList = columns
+              .filter((col) => col.isKeyColumn && col.keyColumnSeq)
+              .sort((a, b) => (a.keyColumnSeq || 0) - (b.keyColumnSeq || 0))
+              .map((col) => col.columnName)
+            
+            // Create comma-separated key column string (common for all rows)
+            const commonKeyColumn = keyColumnsList.length > 0 ? keyColumnsList.join(', ') : ''
+
+            // Execution sequence counter for this SQL apply operation
+            let execSeqCounter = 1
+
+            columns.forEach((col) => {
+              const colName = col.columnName
+              if (!colName) return
+
+              const { index } = ensureRowForColumn(colName)
+              const row = updatedRows[index]
+
+              row.fieldName = colName.toUpperCase()
+              if (col.targetDataType) {
+                row.dataType = col.targetDataType
+              }
+              if (!row.logic) {
+                // Use only the SQL code from Manage SQL
+                row.logic = sqlCode || ''
+              }
+              if (!row.valColumn) {
+                // Populate Value Column with source column name
+                row.valColumn = colName
+              }
+              // Populate Key Column - common for all rows from this SQL set
+              if (commonKeyColumn && !row.keyColumn) {
+                row.keyColumn = commonKeyColumn
+              }
+              // Auto-fill execution sequence for rows created/updated from this SQL
+              row.execSequence = String(execSeqCounter)
+              execSeqCounter += 1
+
+              // Auto-fill combination code with constant A00 (only if empty)
+              if (!row.mapCombineCode) {
+                row.mapCombineCode = 'A00'
+              }
+
+              // Set pkSeq for key columns
+              if (col.isKeyColumn && col.keyColumnSeq) {
+                row.pkSeq = String(col.keyColumnSeq)
+                // Mark as primary key if not already set
+                if (!row.primaryKey) {
+                  row.primaryKey = true
+                }
+              }
+              if (col.isPrimaryKey) {
+                row.primaryKey = true
+                // Only set pkSeq if it's not already set from keyColumn above
+                if (!row.pkSeq) {
+                  row.pkSeq = String(pkSeqCounter)
+                  pkSeqCounter += 1
+                }
+              }
+            })
+
+            return updatedRows
+          })
+
+          // Mark rows as modified so user must save; keep all fields editable
+          setHasUnsavedChanges(true)
+          setShowValidateButton(false)
+          setHasBeenValidated(false)
+          setIsActivated(false)
+          setIsActivationSuccessful(false)
+
+          // Track modified rows (all rows with data)
+          setModifiedRows((prev) => {
+            const indices = rowsRef.current
+              .map((r, idx) =>
+                r.fieldName || r.dataType || r.logic ? idx : null
+              )
+              .filter((idx) => idx !== null)
+            const merged = new Set([...(prev || []), ...indices])
+            return Array.from(merged)
+          })
+
+          // Persist base/source SQL text in formData so it can be saved with the mapping
+          if (sqlContent) {
+            setFormData((prev) => ({
+              ...prev,
+              baseSql: sqlContent,
+            }))
+          }
+
+          setShowSqlPrefillDialog(false)
+          message.success('Columns prefilled from SQL. Please review and Save.')
+        }}
       />
 
       {/* Row actions menu */}

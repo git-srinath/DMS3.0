@@ -166,9 +166,9 @@ const ColumnMappingTable = ({
                         col.trgkyflg === 'Y' || col.trgkyflg === true ? 'N' : 'Y'
                       )
                     }
-                    disabled={tableExists}
+                    disabled={isDefaultAudit || tableExists}
                     sx={{
-                      ...(tableExists && {
+                      ...((isDefaultAudit || tableExists) && {
                         opacity: 0.5,
                         cursor: 'not-allowed',
                       }),
@@ -187,9 +187,9 @@ const ColumnMappingTable = ({
                         col.isrqrd === 'Y' || col.isrqrd === true ? 'N' : 'Y'
                       )
                     }
-                    disabled={tableExists}
+                    disabled={isDefaultAudit || tableExists}
                     sx={{
-                      ...(tableExists && {
+                      ...((isDefaultAudit || tableExists) && {
                         opacity: 0.5,
                         cursor: 'not-allowed',
                       }),
@@ -204,6 +204,12 @@ const ColumnMappingTable = ({
                     value={col.dfltval || ''}
                     onChange={(e) => handleChange(idx, 'dfltval', e.target.value)}
                     placeholder="Default value"
+                    disabled={isDefaultAudit}
+                    sx={{
+                      ...(isDefaultAudit && {
+                        backgroundColor: darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)',
+                      }),
+                    }}
                   />
                 </TableCell>
                 <TableCell width={100}>
@@ -212,6 +218,7 @@ const ColumnMappingTable = ({
                       size="small"
                       checked={col.drvlgcflg === 'Y' || col.drvlgcflg === true}
                       onChange={(e) => handleChange(idx, 'drvlgcflg', e.target.checked ? 'Y' : 'N')}
+                      disabled={isDefaultAudit}
                     />
                   </Tooltip>
                 </TableCell>
@@ -225,9 +232,12 @@ const ColumnMappingTable = ({
                       value={col.drvlgc || ''}
                       onChange={(e) => handleChange(idx, 'drvlgc', e.target.value)}
                       placeholder="e.g., COL1 + COL2, CONCAT(COL1, '-', COL2)"
-                      disabled={!(col.drvlgcflg === 'Y' || col.drvlgcflg === true)}
+                      disabled={isDefaultAudit || !(col.drvlgcflg === 'Y' || col.drvlgcflg === true)}
                       sx={{
                         flex: 1,
+                        ...(isDefaultAudit && {
+                          backgroundColor: darkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.02)',
+                        }),
                         '& .MuiInputBase-input.Mui-disabled': {
                           WebkitTextFillColor: darkMode 
                             ? 'rgba(255, 255, 255, 0.3)' 

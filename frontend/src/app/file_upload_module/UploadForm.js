@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Box,
   Button,
@@ -15,6 +15,7 @@ import {
   MenuItem,
   Divider,
   CircularProgress,
+  LinearProgress,
   FormControl,
   InputLabel,
   Select,
@@ -46,6 +47,7 @@ import { useTheme } from '@/context/ThemeContext'
 import { API_BASE_URL } from '@/app/config'
 import ColumnMappingTable from './ColumnMappingTable'
 import { useSaveContext } from '@/context/SaveContext'
+import FileDataTypeDialog from './FileDataTypeDialog'
 
 // Frequency code options with descriptions
 const FREQUENCY_OPTIONS = [
@@ -90,6 +92,15 @@ const generateDescription = (fileInfo, rowCount, colCount) => {
   return parts.length > 0 ? parts.join(', ') : ''
 }
 
+// Helper function to format bytes
+const formatBytes = (bytes) => {
+  if (!bytes || bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
+}
+
 const UploadForm = ({ handleReturnToUploadTable, upload }) => {
   const { darkMode } = useTheme()
   const muiTheme = useMuiTheme()
@@ -125,7 +136,12 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
   const [connections, setConnections] = useState([])
   const [selectedFile, setSelectedFile] = useState(null)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadSpeed, setUploadSpeed] = useState(null)
+  const [uploadedBytes, setUploadedBytes] = useState(0)
+  const [fileSize, setFileSize] = useState(0)
   const [tableExists, setTableExists] = useState(false)
+  const [showDataTypeDialog, setShowDataTypeDialog] = useState(false)
   const saveContext = useSaveContext()
 
   // For editing, we prefer to load the latest values from the backend (see loadExistingConfigurationDetails below),
@@ -271,15 +287,21 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
               { trgclnm: 'UPDTDT', audttyp: 'UPDATED_DATE', trgcldtyp: 'Timestamp', isrqrd: 'Y', isaudit: 'Y' },
             ]
             
-            const existingAuditCols = new Set(
+            // Check for existing audit columns by name (not just by audttyp)
+            const auditColumnNames = ['CRTDBY', 'CRTDDT', 'UPDTBY', 'UPDTDT']
+            const existingAuditColNames = new Set(
               restoredMappings
-                .filter(c => c.isaudit === 'Y' && c.audttyp)
-                .map(c => c.audttyp.toUpperCase())
+                .filter(c => {
+                  const isAudit = c.isaudit === 'Y' || c.isaudit === true
+                  const isDefaultAudit = auditColumnNames.includes((c.trgclnm || '').toUpperCase())
+                  return isAudit || isDefaultAudit
+                })
+                .map(c => (c.trgclnm || '').toUpperCase())
             )
             
             const maxExcseq = Math.max(...restoredMappings.map(c => c.excseq || 0), 0)
             const missingAuditCols = defaultAuditColumns
-              .filter(audit => !existingAuditCols.has(audit.audttyp))
+              .filter(audit => !existingAuditColNames.has(audit.trgclnm.toUpperCase()))
               .map((audit, idx) => ({
                 id: createRowId(),
                 srcclnm: '',
@@ -294,7 +316,21 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
                 audttyp: audit.audttyp,
               }))
             
-            setColumnMappings([...restoredMappings, ...missingAuditCols])
+            // Sort to ensure audit columns are last
+            const allMappings = [...restoredMappings, ...missingAuditCols]
+            const sortedMappings = allMappings.sort((a, b) => {
+              const aIsAudit = (a.isaudit === 'Y' || a.isaudit === true) || auditColumnNames.includes((a.trgclnm || '').toUpperCase())
+              const bIsAudit = (b.isaudit === 'Y' || b.isaudit === true) || auditColumnNames.includes((b.trgclnm || '').toUpperCase())
+              
+              if (aIsAudit && !bIsAudit) return 1
+              if (!aIsAudit && bIsAudit) return -1
+              
+              const aSeq = a.excseq || 0
+              const bSeq = b.excseq || 0
+              return aSeq - bSeq
+            })
+            
+            setColumnMappings(sortedMappings)
 
             // Set simple columns list for preview header / chips
             const simpleColumns = data.map((c) => c.srcclnm || c.trgclnm).filter(Boolean)
@@ -438,16 +474,59 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
     }
 
     setUploading(true)
+    setUploadProgress(0)
+    setUploadSpeed(null)
+    setUploadedBytes(0)
+    setFileSize(selectedFile.size || 0)
+    
+    // Track upload start time for speed calculation
+    const uploadStartTime = Date.now()
+    let lastUpdateTime = uploadStartTime
+    let lastUploadedBytes = 0
+    
     try {
       const token = localStorage.getItem('token')
       const formDataObj = new FormData()
       formDataObj.append('file', selectedFile)
-      formDataObj.append('preview_rows', '10')
+      formDataObj.append('preview_rows', '200')  // Read first 200 rows for column detection
 
       const response = await axios.post(`${API_BASE_URL}/file-upload/upload-file`, formDataObj, {
         headers: {
           'Content-Type': 'multipart/form-data',
           Authorization: `Bearer ${token}`,
+        },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const currentTime = Date.now()
+            const currentUploaded = progressEvent.loaded
+            const total = progressEvent.total
+            
+            // Calculate progress percentage
+            const percentCompleted = Math.round((currentUploaded / total) * 100)
+            setUploadProgress(percentCompleted)
+            setUploadedBytes(currentUploaded)
+            
+            // Calculate upload speed (bytes per second)
+            const timeElapsed = (currentTime - lastUpdateTime) / 1000 // seconds
+            if (timeElapsed > 0.5) { // Update speed every 500ms
+              const bytesUploaded = currentUploaded - lastUploadedBytes
+              const speed = bytesUploaded / timeElapsed // bytes per second
+              
+              // Format speed (B/s, KB/s, MB/s)
+              let speedFormatted
+              if (speed < 1024) {
+                speedFormatted = `${Math.round(speed)} B/s`
+              } else if (speed < 1024 * 1024) {
+                speedFormatted = `${(speed / 1024).toFixed(1)} KB/s`
+              } else {
+                speedFormatted = `${(speed / (1024 * 1024)).toFixed(1)} MB/s`
+              }
+              
+              setUploadSpeed(speedFormatted)
+              lastUpdateTime = currentTime
+              lastUploadedBytes = currentUploaded
+            }
+          }
         },
       })
 
@@ -493,12 +572,12 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
           drvlgcflg: 'N', // Initialize derive logic flag
         }))
         
-        // Add default audit columns
+        // Add default audit columns (using standard naming: CRTDBY, CRTDDT, UPDTBY, UPDTDT)
         const auditColumns = [
-          { trgclnm: 'CREATED_BY', audttyp: 'CREATED_BY', trgcldtyp: 'String100', isrqrd: 'N', isaudit: 'Y' },
-          { trgclnm: 'CREATED_DATE', audttyp: 'CREATED_DATE', trgcldtyp: 'Timestamp', isrqrd: 'Y', isaudit: 'Y' },
-          { trgclnm: 'UPDATED_BY', audttyp: 'UPDATED_BY', trgcldtyp: 'String100', isrqrd: 'N', isaudit: 'Y' },
-          { trgclnm: 'UPDATED_DATE', audttyp: 'UPDATED_DATE', trgcldtyp: 'Timestamp', isrqrd: 'Y', isaudit: 'Y' },
+          { trgclnm: 'CRTDBY', audttyp: 'CREATED_BY', trgcldtyp: 'String100', isrqrd: 'N', isaudit: 'Y' },
+          { trgclnm: 'CRTDDT', audttyp: 'CREATED_DATE', trgcldtyp: 'Timestamp', isrqrd: 'Y', isaudit: 'Y' },
+          { trgclnm: 'UPDTBY', audttyp: 'UPDATED_BY', trgcldtyp: 'String100', isrqrd: 'N', isaudit: 'Y' },
+          { trgclnm: 'UPDTDT', audttyp: 'UPDATED_DATE', trgcldtyp: 'Timestamp', isrqrd: 'Y', isaudit: 'Y' },
         ]
         
         const auditMappings = auditColumns.map((audit, idx) => ({
@@ -515,7 +594,22 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
           audttyp: audit.audttyp,
         }))
         
-        setColumnMappings([...mappedColumns, ...auditMappings])
+        // Sort to ensure audit columns are last
+        const allMappings = [...mappedColumns, ...auditMappings]
+        const sortedMappings = allMappings.sort((a, b) => {
+          const auditColumnNames = ['CRTDBY', 'CRTDDT', 'UPDTBY', 'UPDTDT']
+          const aIsAudit = (a.isaudit === 'Y' || a.isaudit === true) || auditColumnNames.includes((a.trgclnm || '').toUpperCase())
+          const bIsAudit = (b.isaudit === 'Y' || b.isaudit === true) || auditColumnNames.includes((b.trgclnm || '').toUpperCase())
+          
+          if (aIsAudit && !bIsAudit) return 1
+          if (!aIsAudit && bIsAudit) return -1
+          
+          const aSeq = a.excseq || 0
+          const bSeq = b.excseq || 0
+          return aSeq - bSeq
+        })
+        
+        setColumnMappings(sortedMappings)
 
         message.success('File uploaded and details pre-filled successfully')
       } else {
@@ -544,10 +638,14 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
       message.error(serverMessage)
     } finally {
       setUploading(false)
+      setUploadProgress(0)
+      setUploadSpeed(null)
+      setUploadedBytes(0)
+      setFileSize(0)
     }
   }
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!formData.flupldref.trim()) {
       message.error('Reference is required')
       return
@@ -556,9 +654,26 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
       message.warning('Add at least one column mapping before saving')
       return
     }
+    
+    // Sort column mappings to ensure audit columns are last before saving
+    const auditColumnNames = ['CRTDBY', 'CRTDDT', 'UPDTBY', 'UPDTDT']
+    const sortedMappings = [...columnMappings].sort((a, b) => {
+      const aIsAudit = (a.isaudit === 'Y' || a.isaudit === true) || auditColumnNames.includes((a.trgclnm || '').toUpperCase())
+      const bIsAudit = (b.isaudit === 'Y' || b.isaudit === true) || auditColumnNames.includes((b.trgclnm || '').toUpperCase())
+      
+      // Regular columns first, audit columns last
+      if (aIsAudit && !bIsAudit) return 1
+      if (!aIsAudit && bIsAudit) return -1
+      
+      // Within same type, sort by excseq
+      const aSeq = a.excseq || 0
+      const bSeq = b.excseq || 0
+      return aSeq - bSeq
+    })
+    
     const mappedColumns =
-      columnMappings.length > 0
-        ? columnMappings.map((c, idx) => ({
+      sortedMappings.length > 0
+        ? sortedMappings.map((c, idx) => ({
             trgclnm: c.trgclnm || c.srcclnm || '',
             srcclnm: c.srcclnm || c.trgclnm || '',
             trgcldtyp: c.trgcldtyp || '',
@@ -617,10 +732,10 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
     } finally {
       setSaving(false)
     }
-  }
+  }, [formData, columnMappings, handleReturnToUploadTable])
   // Register global Save/Back handlers in NavBar when this form is active
   useEffect(() => {
-    if (!saveContext) return
+    if (!saveContext || !saveContext.registerHandlers) return
 
     saveContext.registerHandlers({
       moduleId: 'file_upload_module',
@@ -632,7 +747,9 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
     })
 
     return () => {
-      saveContext.clearHandlers('file_upload_module')
+      if (saveContext && saveContext.clearHandlers) {
+        saveContext.clearHandlers('file_upload_module')
+      }
     }
   }, [saveContext, handleSave, handleReturnToUploadTable, saving, upload])
 
@@ -782,10 +899,42 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
                     disabled={!selectedFile || uploading || !(selectedFile instanceof File)}
                     sx={{ textTransform: 'none', whiteSpace: 'nowrap' }}
                   >
-                    {uploading ? 'Processing...' : 'Prefill Details'}
+                    {uploading ? `Uploading... ${uploadProgress}%` : 'Prefill Details'}
                   </Button>
                 </Box>
             </Box>
+            {/* Upload Progress Indicator */}
+            {uploading && (
+              <Box sx={{ mt: 2, px: 1.5 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Uploading file...
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {uploadProgress}%
+                  </Typography>
+                </Box>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={uploadProgress} 
+                  sx={{ 
+                    height: 6, 
+                    borderRadius: 3,
+                    backgroundColor: darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                  }} 
+                />
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    {formatBytes(uploadedBytes)} / {formatBytes(fileSize)}
+                  </Typography>
+                  {uploadSpeed && (
+                    <Typography variant="caption" color="primary.main" sx={{ fontWeight: 600 }}>
+                      {uploadSpeed}
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+            )}
             {(selectedFile || formData.flnm) && (
               <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                 <Chip
@@ -1187,6 +1336,40 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
           <Button onClick={() => setPreviewDialogOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Data Type Review Dialog */}
+      <FileDataTypeDialog
+        open={showDataTypeDialog}
+        onClose={() => setShowDataTypeDialog(false)}
+        onApply={({ columnMappings: newMappings }) => {
+          // Merge with existing mappings, preserving audit columns
+          const auditColumns = columnMappings.filter(
+            (m) => m.isaudit === 'Y' || m.isaudit === true
+          )
+          
+          // Update existing mappings or add new ones
+          const updatedMappings = newMappings.map((newMapping) => {
+            const existing = columnMappings.find(
+              (m) => m.srcclnm === newMapping.srcclnm || m.trgclnm === newMapping.trgclnm
+            )
+            if (existing) {
+              return {
+                ...existing,
+                trgcldtyp: newMapping.trgcldtyp,
+              }
+            }
+            return newMapping
+          })
+          
+          setColumnMappings([...updatedMappings, ...auditColumns])
+          setShowDataTypeDialog(false)
+          message.success('Data types applied to column mappings')
+        }}
+        darkMode={darkMode}
+        columns={columns}
+        previewData={preview}
+        existingMappings={columnMappings}
+      />
     </Box>
   )
 }

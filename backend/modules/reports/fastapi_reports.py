@@ -82,6 +82,38 @@ async def list_reports(search: Optional[str] = None, includeInactive: str = "fal
         ) from exc
 
 
+@router.get("/reports/sql-sources")
+async def list_sql_sources():
+    try:
+        data = report_service.list_sql_sources()
+        return {"success": True, "data": data}
+    except ReportServiceError as exc:
+        return _handle_service_error(exc)
+    except Exception as exc:
+        error(f"[reports.list_sql_sources] Unexpected error: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to load SQL sources"
+        ) from exc
+
+
+@router.post("/reports/describe-sql")
+async def describe_sql(payload: Dict[str, Any]):
+    sql_text = payload.get("sqlText")
+    db_connection_id = payload.get("dbConnectionId")
+    try:
+        data = report_service.describe_sql_columns(
+            sql_text=sql_text, db_connection_id=db_connection_id
+        )
+        return {"success": True, "data": data}
+    except ReportServiceError as exc:
+        return _handle_service_error(exc)
+    except Exception as exc:  # pragma: no cover
+        error(f"[reports.describe_sql] Unexpected error: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to describe SQL"
+        ) from exc
+
+
 @router.get("/reports/{report_id}")
 async def get_report(report_id: int):
     try:
@@ -155,38 +187,6 @@ async def preview_report(request: Request, report_id: int, payload: Dict[str, An
         error(f"[reports.preview_report] Unexpected error: {exc}", exc_info=True)
         raise HTTPException(
             status_code=500, detail="Failed to generate preview"
-        ) from exc
-
-
-@router.get("/reports/sql-sources")
-async def list_sql_sources():
-    try:
-        data = report_service.list_sql_sources()
-        return {"success": True, "data": data}
-    except ReportServiceError as exc:
-        return _handle_service_error(exc)
-    except Exception as exc:
-        error(f"[reports.list_sql_sources] Unexpected error: {exc}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to load SQL sources"
-        ) from exc
-
-
-@router.post("/reports/describe-sql")
-async def describe_sql(payload: Dict[str, Any]):
-    sql_text = payload.get("sqlText")
-    db_connection_id = payload.get("dbConnectionId")
-    try:
-        data = report_service.describe_sql_columns(
-            sql_text=sql_text, db_connection_id=db_connection_id
-        )
-        return {"success": True, "data": data}
-    except ReportServiceError as exc:
-        return _handle_service_error(exc)
-    except Exception as exc:  # pragma: no cover
-        error(f"[reports.describe_sql] Unexpected error: {exc}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to describe SQL"
         ) from exc
 
 
@@ -528,6 +528,50 @@ async def update_report_schedule(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to update schedule: {str(exc)}",
+        ) from exc
+
+
+@router.delete("/report-schedules/{schedule_id}")
+async def delete_report_schedule(request: Request, schedule_id: int):
+    """Delete/stop a report schedule."""
+    username = _current_username(request)
+    try:
+        data = report_service.delete_schedule(
+            schedule_id, username=username
+        )
+        return {"success": True, "data": data}
+    except ReportServiceError as exc:
+        error(f"[reports.delete_report_schedule] Service error: {exc}", exc_info=True)
+        return _handle_service_error(exc)
+    except Exception as exc:
+        error(
+            f"[reports.delete_report_schedule] Unexpected error: {exc}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete schedule: {str(exc)}",
+        ) from exc
+
+
+@router.post("/report-schedules/{schedule_id}/stop")
+async def stop_report_schedule(request: Request, schedule_id: int):
+    """Stop/pause a report schedule (alias for DELETE)."""
+    username = _current_username(request)
+    try:
+        data = report_service.delete_schedule(
+            schedule_id, username=username
+        )
+        return {"success": True, "data": data}
+    except ReportServiceError as exc:
+        error(f"[reports.stop_report_schedule] Service error: {exc}", exc_info=True)
+        return _handle_service_error(exc)
+    except Exception as exc:
+        error(
+            f"[reports.stop_report_schedule] Unexpected error: {exc}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to stop schedule: {str(exc)}",
         ) from exc
 
 

@@ -12,12 +12,13 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Pat
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from datetime import date
+from datetime import date, datetime
+import json
 
 from backend.database.dbconnect import create_metadata_connection, create_target_connection
 from backend.modules.common.db_table_utils import _detect_db_type
 from backend.modules.helper_functions import _get_table_ref
-from backend.modules.logger import info, error, warning
+from backend.modules.logger import info, error, warning, debug
 from backend.modules.jobs.pkgdwprc_python import _calculate_next_run_time
 
 from .file_parser import FileParserManager
@@ -96,11 +97,12 @@ def _get_table_name(cursor, db_type: str, table_name: str) -> str:
 @router.post("/upload-file", response_model=FileUploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
-    preview_rows: int = Query(10, ge=1, le=100, description="Number of preview rows")
+    preview_rows: int = Form(10)
 ):
     """
     Upload and parse a file (CSV, Excel, JSON, etc.).
     Returns file information, columns, and preview data.
+    Optimized to only read first few rows for preview without saving entire file.
     """
     temp_file_path = None
     try:
@@ -108,24 +110,123 @@ async def upload_file(
         if not file.filename:
             raise HTTPException(status_code=400, detail="No file selected")
         
-        # Save uploaded file to temporary location
-        file_ext = Path(file.filename).suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=UPLOAD_DIR) as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_file_path = temp_file.name
+        # Validate preview_rows - increased to 200 for better column detection
+        preview_rows = max(1, min(200, int(preview_rows)))  # Clamp between 1 and 200
         
-        info(f"File uploaded: {file.filename} -> {temp_file_path}")
+        file_ext = Path(file.filename).suffix.lower()
+        file_type = parser_manager.detect_file_type(file.filename)
         
-        # Get file info
+        # Optimize based on file type:
+        # - CSV: Read only enough bytes to get first N rows (much faster)
+        # - Excel/JSON: May need more structure, but limit to reasonable size for preview
+        if file_type == 'CSV':
+            # For CSV, read only enough to get first N rows
+            # Estimate: average row is ~200-500 bytes, read preview_rows * 1000 bytes per row for safety
+            estimated_bytes_per_row = 1000
+            max_bytes = min(preview_rows * estimated_bytes_per_row, 1024 * 1024 * 2)  # Max 2MB for preview (increased for 200 rows)
+            
+            # Read chunks until we have enough rows or hit max bytes
+            preview_data = b''
+            total_read = 0
+            target_rows = preview_rows + 1  # +1 for header
+            
+            # Reset file pointer to start (if possible)
+            try:
+                await file.seek(0)
+            except Exception:
+                # If seek fails, file might be a stream - that's okay, we'll read from current position
+                pass
+            
+            chunk_size = 16384  # 16KB chunks for better performance
+            while total_read < max_bytes:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                preview_data += chunk
+                total_read += len(chunk)
+                
+                # Count complete rows (handle both \n and \r\n)
+                # Count \r\n as single line breaks, standalone \n as line breaks
+                text_preview = preview_data.decode('utf-8', errors='ignore')
+                # Count lines more accurately
+                line_count = text_preview.count('\n')
+                if '\r\n' in text_preview:
+                    # Adjust for Windows line endings - \r\n counts as one line break
+                    line_count = text_preview.count('\r\n') + (text_preview.count('\n') - text_preview.count('\r\n'))
+                
+                # Stop if we have enough rows
+                if line_count >= target_rows:
+                    break
+            
+            # Create a temporary file with just the preview portion
+            with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=file_ext, dir=UPLOAD_DIR) as temp_file:
+                temp_file.write(preview_data)
+                temp_file_path = temp_file.name
+            
+            info(f"CSV preview optimized: Read only {total_read:,} bytes for {preview_rows} rows preview of {file.filename}")
+        elif file_type in ['EXCEL', 'XLSX', 'XLS']:
+            # For Excel files, we need to read enough to parse the structure
+            # But we can limit to first 5MB which should be enough for header + preview_rows
+            max_bytes_for_preview = 1024 * 1024 * 5  # 5MB max
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=UPLOAD_DIR) as temp_file:
+                chunk_size = 8192
+                bytes_written = 0
+                await file.seek(0)
+                
+                while bytes_written < max_bytes_for_preview:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    temp_file.write(chunk)
+                    bytes_written += len(chunk)
+                
+                temp_file_path = temp_file.name
+            
+            info(f"Excel preview optimized: Read {bytes_written} bytes for preview of {file.filename}")
+        else:
+            # For other formats (JSON, Parquet, etc.), we need to be more careful
+            # JSON files must be complete to parse, so we read the full file
+            # but the parser will limit the data it processes
+            # For very large files, we'll still limit the read to prevent memory issues
+            max_bytes_for_preview = 1024 * 1024 * 50  # 50MB max for JSON/Parquet (increased from 5MB)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext, dir=UPLOAD_DIR) as temp_file:
+                chunk_size = 8192
+                bytes_written = 0
+                await file.seek(0)
+                
+                while bytes_written < max_bytes_for_preview:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    temp_file.write(chunk)
+                    bytes_written += len(chunk)
+                
+                temp_file_path = temp_file.name
+            
+            info(f"File preview: Read {bytes_written} bytes for preview of {file.filename}")
+        
+        # Get file info (lightweight operation - just file stats)
         file_info = parser_manager.get_file_info(temp_file_path)
         
-        # Get columns
-        columns = parser_manager.get_columns(temp_file_path)
-        
-        # Get preview
-        preview_df = parser_manager.preview_file(temp_file_path, rows=preview_rows)
-        preview = preview_df.to_dict('records')
+        # Get columns and preview in one efficient operation
+        # preview_file already only reads the first N rows, so this is optimized
+        try:
+            preview_df = parser_manager.preview_file(temp_file_path, rows=preview_rows)
+            columns = list(preview_df.columns)
+            preview = preview_df.to_dict('records')
+        except (MemoryError, ValueError) as e:
+            # If preview fails due to memory or parsing issues, provide helpful error
+            error_msg = str(e)
+            if "too large" in error_msg.lower() or "memory" in error_msg.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File is too large to preview. Please use a smaller file or contact support. Error: {error_msg}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error parsing file for preview: {error_msg}"
+                )
         
         # Convert preview values to strings for JSON serialization
         for row in preview:
@@ -463,6 +564,7 @@ async def save_file_upload(payload: SaveFileUploadRequest):
                 # Continue anyway - we'll still save new mappings
             
             # Define default audit columns that must always exist
+            # Standard audit columns (Oracle-style naming: CRTDBY, CRTDDT, etc.)
             default_audit_columns = [
                 {"trgclnm": "CRTDBY", "audttyp": "CREATED_BY", "trgcldtyp": "String100", "isrqrd": "N"},
                 {"trgclnm": "CRTDDT", "audttyp": "CREATED_DATE", "trgcldtyp": "Timestamp", "isrqrd": "Y"},
@@ -721,9 +823,65 @@ class DeleteFileUploadRequest(BaseModel):
 async def delete_file_upload_endpoint(payload: DeleteFileUploadRequest):
     """Delete file upload configuration (soft delete)."""
     conn = None
+    target_conn = None
     try:
         conn = create_metadata_connection()
         
+        # First, check if file has been processed or if table exists
+        config = get_file_upload_config(conn, payload.flupldref)
+        if not config:
+            raise HTTPException(
+                status_code=404,
+                detail=f"File upload configuration not found: {payload.flupldref}"
+            )
+        
+        # Check if file has been processed (has last_run_dt)
+        has_been_processed = config.get('lstrundt') or config.get('last_run_dt')
+        
+        if has_been_processed:
+            # Check if table exists in target database
+            trgconid = config.get('trgconid')
+            trgschm = config.get('trgschm', '')
+            trgtblnm = config.get('trgtblnm', '')
+            
+            if trgconid and trgtblnm:
+                try:
+                    target_conn = create_target_connection(trgconid)
+                    if target_conn:
+                        from backend.modules.common.db_table_utils import _detect_db_type
+                        
+                        cursor = target_conn.cursor()
+                        db_type = _detect_db_type(target_conn)
+                        table_exists = _check_table_exists(cursor, db_type, trgschm, trgtblnm)
+                        cursor.close()
+                    
+                    if table_exists:
+                        target_table = f"{trgschm}.{trgtblnm}" if trgschm else trgtblnm
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Cannot delete file upload configuration '{payload.flupldref}'. "
+                                f"The file has been processed and the table '{target_table}' exists in the target database. "
+                                f"Deleting this configuration would result in loss of metadata about the table structure and mappings."
+                            )
+                        )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    # If table check fails, still block deletion if processed
+                    error(f"Error checking table existence during delete: {str(e)}")
+            
+            # If processed but table doesn't exist (or couldn't check), still block deletion
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot delete file upload configuration '{payload.flupldref}'. "
+                    f"The file has been processed at least once. "
+                    f"Deleting this configuration would result in loss of execution history and metadata."
+                )
+            )
+        
+        # If not processed, allow deletion
         try:
             delete_file_upload(conn, payload.flupldref)
             conn.commit()
@@ -822,14 +980,14 @@ class ExecuteRequest(BaseModel):
 @router.post("/execute")
 async def execute_file_upload(request: Request, payload: ExecuteRequest):
     """
-    Execute file upload configuration.
+    Queue file upload for background execution via scheduler.
     
     Args:
         request: FastAPI request object (for getting username)
         payload: ExecuteRequest with flupldref, optional file_path, and load_mode
         
     Returns:
-        JSONResponse with execution results
+        JSONResponse with request_id for polling status
     """
     try:
         # Get username from token
@@ -852,53 +1010,412 @@ async def execute_file_upload(request: Request, payload: ExecuteRequest):
                 detail=f"Invalid load_mode. Must be one of: {', '.join(valid_modes)}"
             )
         
-        # Execute file upload
-        executor = FileUploadExecutor()
-        result = executor.execute(
-            flupldref=payload.flupldref,
-            file_path=payload.file_path,
-            load_mode=payload.load_mode,
-            username=username
-        )
+        # Queue file upload request for background processing
+        from backend.modules.jobs.pkgdwprc_python import JobSchedulerService
         
-        if result['success']:
+        metadata_conn = create_metadata_connection()
+        try:
+            service = JobSchedulerService(metadata_conn)
+            request_payload = {
+                "flupldref": payload.flupldref,
+                "load_mode": payload.load_mode,
+                "username": username or "system"
+            }
+            if payload.file_path:
+                request_payload["file_path"] = payload.file_path
+            
+            request_id = service.queue_file_upload_request(
+                flupldref=payload.flupldref,
+                payload=request_payload
+            )
+            
+            info(f"File upload {payload.flupldref} queued with request_id={request_id}")
+            
             return JSONResponse(
                 status_code=200,
                 content={
                     "success": True,
-                    "message": result['message'],
-                    "data": {
-                        "rows_processed": result['rows_processed'],
-                        "rows_successful": result['rows_successful'],
-                        "rows_failed": result['rows_failed'],
-                        "table_created": result['table_created'],
-                        "errors": result['errors'][:100]  # Limit to first 100 errors
-                    }
+                    "message": f"File upload queued for background execution",
+                    "request_id": request_id,
+                    "status": "NEW"
                 }
             )
-        else:
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "success": False,
-                    "message": result['message'],
-                    "data": {
-                        "rows_processed": result['rows_processed'],
-                        "rows_successful": result['rows_successful'],
-                        "rows_failed": result['rows_failed'],
-                        "errors": result['errors']
-                    }
-                }
-            )
+        finally:
+            metadata_conn.close()
             
     except HTTPException:
         raise
     except Exception as e:
-        error(f"Error executing file upload: {str(e)}", exc_info=True)
+        error(f"Error queueing file upload: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error executing file upload: {str(e)}"
+            detail=f"Error queueing file upload: {str(e)}"
         )
+
+
+@router.get("/execute-status/{request_id}")
+async def get_execute_status(request_id: str = PathParam(..., description="Request ID")):
+    """
+    Get execution status for a file upload job.
+    
+    Args:
+        request_id: Request ID from the queue
+        
+    Returns:
+        JSONResponse with job status (NEW, PROCESSING, DONE, FAILED, CANCELLED)
+    """
+    try:
+        from backend.modules.common.db_table_utils import _detect_db_type
+        from backend.modules.helper_functions import _get_table_ref
+        
+        metadata_conn = create_metadata_connection()
+        cursor = metadata_conn.cursor()
+        db_type = _detect_db_type(metadata_conn)
+        
+        try:
+            table_name = _get_table_ref(cursor, db_type, "DMS_PRCREQ")
+            
+            # Query for the specific request
+            if db_type == "POSTGRESQL":
+                query = f"""
+                    SELECT request_id, status, result_payload, requested_at
+                    FROM {table_name}
+                    WHERE request_id = %s
+                """
+                cursor.execute(query, (request_id,))
+            else:  # Oracle
+                query = f"""
+                    SELECT request_id, status, result_payload, requested_at
+                    FROM {table_name}
+                    WHERE request_id = :1
+                """
+                cursor.execute(query, [request_id])
+            
+            row = cursor.fetchone()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Request {request_id} not found")
+            
+            columns = [desc[0].lower() for desc in cursor.description]
+            result = dict(zip(columns, row))
+            
+            status = result.get('status', 'UNKNOWN').upper()
+            result_payload = result.get('result_payload')
+            
+            # Parse result_payload if it's a string
+            if isinstance(result_payload, str):
+                try:
+                    result_payload = json.loads(result_payload)
+                except:
+                    result_payload = {}
+            
+            # Map status values
+            status_map = {
+                'NEW': 'NEW',
+                'PROCESSING': 'PROCESSING',
+                'DONE': 'DONE',
+                'FAILED': 'FAILED',
+                'CANCELLED': 'CANCELLED',
+            }
+            
+            mapped_status = status_map.get(status, status)
+            
+            response_data = {
+                "success": True,
+                "status": mapped_status,
+                "request_id": request_id,
+                "requested_at": str(result.get('requested_at', '')),
+            }
+            
+            # Add result data if job is complete
+            if mapped_status in ('DONE', 'FAILED', 'CANCELLED'):
+                if result_payload:
+                    response_data["data"] = result_payload
+                    if isinstance(result_payload, dict):
+                        response_data["completed_at"] = result_payload.get("completed_at")
+                        response_data["message"] = result_payload.get("message", "")
+            
+            return JSONResponse(status_code=200, content=response_data)
+        finally:
+            cursor.close()
+            metadata_conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"Error getting execution status: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting execution status: {str(e)}")
+
+
+@router.get("/active-jobs")
+async def get_all_active_jobs():
+    """
+    Get all active (queued or processing) file upload jobs.
+    
+    Returns:
+        JSONResponse with list of active jobs grouped by flupldref
+    """
+    try:
+        import json
+        from backend.modules.common.db_table_utils import _detect_db_type
+        from backend.modules.helper_functions import _get_table_ref
+        
+        metadata_conn = create_metadata_connection()
+        cursor = metadata_conn.cursor()
+        db_type = _detect_db_type(metadata_conn)
+        
+        try:
+            table_name = _get_table_ref(cursor, db_type, "DMS_PRCREQ")
+            
+            # Only select columns that definitely exist in the table
+            # Based on INSERT statements: request_id, mapref, request_type, status, payload, requested_at
+            # Note: started_at and completed_at may not exist in all database versions
+            # Exclude CANCELLED and DONE jobs from active jobs list
+            # Include CLAIMED status as it indicates a job is being processed
+            # Use UPPER() for case-insensitive comparison in case of case sensitivity issues
+            if db_type == "POSTGRESQL":
+                query = f"""
+                    SELECT request_id, mapref, request_type, status, payload, requested_at
+                    FROM {table_name}
+                    WHERE UPPER(request_type) = 'FILE_UPLOAD'
+                      AND UPPER(status) IN ('NEW', 'PROCESSING', 'QUEUED', 'CLAIMED')
+                    ORDER BY requested_at DESC
+                """
+                cursor.execute(query)
+            else:  # Oracle
+                query = f"""
+                    SELECT request_id, mapref, request_type, status, payload, requested_at
+                    FROM {table_name}
+                    WHERE UPPER(request_type) = 'FILE_UPLOAD'
+                      AND UPPER(status) IN ('NEW', 'PROCESSING', 'QUEUED', 'CLAIMED')
+                    ORDER BY requested_at DESC
+                """
+                cursor.execute(query)
+            
+            rows = cursor.fetchall()
+            
+            debug(f"[ActiveJobs] Query returned {len(rows)} rows")
+            
+            # Also query ALL file upload jobs to see what statuses exist
+            if db_type == "POSTGRESQL":
+                debug_query = f"""
+                    SELECT request_id, mapref, request_type, status, requested_at
+                    FROM {table_name}
+                    WHERE request_type = 'FILE_UPLOAD'
+                    ORDER BY requested_at DESC
+                    LIMIT 10
+                """
+            else:  # Oracle
+                debug_query = f"""
+                    SELECT request_id, mapref, request_type, status, requested_at
+                    FROM {table_name}
+                    WHERE request_type = 'FILE_UPLOAD'
+                      AND ROWNUM <= 10
+                    ORDER BY requested_at DESC
+                """
+            cursor.execute(debug_query)
+            all_rows = cursor.fetchall()
+            debug(f"[ActiveJobs] Total FILE_UPLOAD jobs (last 10): {len(all_rows)}")
+            for row in all_rows:
+                row_dict = dict(zip([desc[0].lower() for desc in cursor.description], row))
+                debug(f"[ActiveJobs] Job: mapref={row_dict.get('mapref')}, status={row_dict.get('status')}, request_id={row_dict.get('request_id')}")
+            
+            columns = [desc[0].lower() for desc in cursor.description]
+            jobs_by_ref = {}
+            
+            for row in rows:
+                result = dict(zip(columns, row))
+                # Parse payload if it's a string
+                if isinstance(result.get('payload'), str):
+                    try:
+                        result['payload'] = json.loads(result['payload'])
+                    except:
+                        pass
+                
+                # Extract flupldref from mapref (format: FLUPLD:flupldref)
+                mapref = result.get('mapref', '')
+                debug(f"[ActiveJobs] Processing row: mapref={mapref}, status={result.get('status')}")
+                
+                if mapref.startswith('FLUPLD:'):
+                    flupldref = mapref.replace('FLUPLD:', '')
+                    if flupldref not in jobs_by_ref:
+                        jobs_by_ref[flupldref] = []
+                    
+                    # Extract progress information from payload if available
+                    payload = result.get('payload', {})
+                    progress_info = {}
+                    
+                    # Try to get progress from payload (if it's a dict with progress data)
+                    if isinstance(payload, dict):
+                        # Check for progress information in payload
+                        if 'rows_processed' in payload:
+                            progress_info['rows_processed'] = payload.get('rows_processed', 0)
+                        if 'rows_successful' in payload:
+                            progress_info['rows_successful'] = payload.get('rows_successful', 0)
+                        if 'total_rows' in payload:
+                            progress_info['total_rows'] = payload.get('total_rows', 0)
+                        if 'table_created' in payload:
+                            progress_info['table_created'] = payload.get('table_created', False)
+                        # Calculate percentage if we have both processed and total
+                        if progress_info.get('rows_processed') and progress_info.get('total_rows'):
+                            progress_info['percentage'] = min(100, int((progress_info['rows_processed'] / progress_info['total_rows']) * 100))
+                    
+                    jobs_by_ref[flupldref].append({
+                        "request_id": result.get('request_id', ''),
+                        "status": result.get('status', 'UNKNOWN'),
+                        "requested_at": str(result.get('requested_at', '')) if result.get('requested_at') else None,
+                        "payload": payload,
+                        "progress": progress_info
+                    })
+                    debug(f"[ActiveJobs] Added job to jobs_by_ref: flupldref={flupldref}, status={result.get('status')}, progress={progress_info}")
+                else:
+                    debug(f"[ActiveJobs] Skipping row - mapref doesn't start with 'FLUPLD:': {mapref}")
+            
+            debug(f"[ActiveJobs] Final jobs_by_ref: {jobs_by_ref}")
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "active_jobs": jobs_by_ref,
+                    "total_count": sum(len(jobs) for jobs in jobs_by_ref.values())
+                }
+            )
+        finally:
+            cursor.close()
+            metadata_conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"Error getting active jobs: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting active jobs: {str(e)}")
+
+
+@router.post("/cancel-job/{request_id}")
+async def cancel_file_upload_job(request_id: str):
+    """
+    Cancel a queued or processing file upload job.
+    
+    Args:
+        request_id: Request ID of the job to cancel
+        
+    Returns:
+        JSONResponse with cancellation status
+    """
+    try:
+        from backend.modules.common.db_table_utils import _detect_db_type
+        from backend.modules.helper_functions import _get_table_ref
+        
+        metadata_conn = create_metadata_connection()
+        cursor = metadata_conn.cursor()
+        db_type = _detect_db_type(metadata_conn)
+        
+        try:
+            table_name = _get_table_ref(cursor, db_type, "DMS_PRCREQ")
+            
+            # First, check if the job exists and is cancellable
+            if db_type == "POSTGRESQL":
+                check_query = f"""
+                    SELECT request_id, status, mapref
+                    FROM {table_name}
+                    WHERE request_id = %s
+                """
+                cursor.execute(check_query, (request_id,))
+            else:  # Oracle
+                check_query = f"""
+                    SELECT request_id, status, mapref
+                    FROM {table_name}
+                    WHERE request_id = :1
+                """
+                cursor.execute(check_query, [request_id])
+            
+            job = cursor.fetchone()
+            
+            if not job:
+                raise HTTPException(status_code=404, detail=f"Job {request_id} not found")
+            
+            columns = [desc[0].lower() for desc in cursor.description]
+            job_dict = dict(zip(columns, job))
+            current_status = job_dict.get('status', '').upper()
+            
+            # Allow cancellation of NEW, QUEUED, PROCESSING, or CLAIMED jobs
+            # (CLAIMED is included as a safety measure in case any jobs are still in that state)
+            if current_status not in ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED'):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot cancel job with status '{current_status}'. Only NEW, QUEUED, PROCESSING, or CLAIMED jobs can be cancelled."
+                )
+            
+            # Update status to CANCELLED
+            if db_type == "POSTGRESQL":
+                # Try uppercase first, fallback to lowercase
+                try:
+                    update_query = f"""
+                        UPDATE {table_name}
+                        SET "STATUS" = 'CANCELLED',
+                            "RESULT_PAYLOAD" = %s
+                        WHERE "REQUEST_ID" = %s
+                    """
+                    cursor.execute(
+                        update_query,
+                        (
+                            json.dumps({"message": "Job cancelled by user", "cancelled_at": datetime.now().isoformat()}, default=str),
+                            request_id,
+                        ),
+                    )
+                except Exception:
+                    # Fallback to lowercase
+                    update_query = f"""
+                        UPDATE {table_name}
+                        SET status = 'CANCELLED',
+                            result_payload = %s
+                        WHERE request_id = %s
+                    """
+                    cursor.execute(
+                        update_query,
+                        (
+                            json.dumps({"message": "Job cancelled by user", "cancelled_at": datetime.now().isoformat()}, default=str),
+                            request_id,
+                        ),
+                    )
+            else:  # Oracle
+                update_query = f"""
+                    UPDATE {table_name}
+                    SET status = 'CANCELLED',
+                        result_payload = :result_payload
+                    WHERE request_id = :request_id
+                """
+                cursor.execute(
+                    update_query,
+                    {
+                        "result_payload": json.dumps({"message": "Job cancelled by user", "cancelled_at": datetime.now().isoformat()}, default=str),
+                        "request_id": request_id,
+                    },
+                )
+            
+            metadata_conn.commit()
+            
+            info(f"File upload job {request_id} cancelled successfully")
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": f"Job {request_id} has been cancelled",
+                    "request_id": request_id,
+                    "previous_status": current_status
+                }
+            )
+        finally:
+            cursor.close()
+            metadata_conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"Error cancelling job: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error cancelling job: {str(e)}")
 
 
 @router.get("/runs")
@@ -1402,4 +1919,159 @@ async def save_file_upload_schedule(payload: FileUploadScheduleRequest):
                 conn.close()
             except Exception:
                 pass
+
+
+@router.put("/schedules/{schedule_id}")
+async def update_file_upload_schedule(schedule_id: int, payload: Dict[str, Any]):
+    """
+    Update a file upload schedule status (e.g., pause/stop).
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+        table_name = _get_table_ref(cursor, db_type, "DMS_FLUPLD_SCHD")
+
+        # Validate schedule exists
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"SELECT schdid FROM {table_name} WHERE schdid = %s",
+                (schedule_id,),
+            )
+        else:
+            cursor.execute(
+                f"SELECT SCHDID FROM {table_name} WHERE SCHDID = :1",
+                [schedule_id],
+            )
+
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Schedule {schedule_id} not found",
+            )
+
+        # Update schedule fields
+        if "stts" in payload:
+            stts = (payload.get("stts") or "ACTIVE").upper()
+            if db_type == "POSTGRESQL":
+                cursor.execute(
+                    f"""
+                    UPDATE {table_name}
+                    SET stts = %s, uptdt = CURRENT_TIMESTAMP
+                    WHERE schdid = %s
+                    """,
+                    (stts, schedule_id),
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    UPDATE {table_name}
+                    SET STTS = :1, UPTDT = SYSTIMESTAMP
+                    WHERE SCHDID = :2
+                    """,
+                    [stts, schedule_id],
+                )
+
+        conn.commit()
+        return {
+            "success": True,
+            "data": {
+                "scheduleId": schedule_id,
+                "message": "Schedule updated successfully"
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        error(f"Error updating file upload schedule: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating file upload schedule: {str(e)}",
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.delete("/schedules/{schedule_id}")
+async def delete_file_upload_schedule(schedule_id: int):
+    """
+    Delete/stop a file upload schedule by setting CURFLG to 'N' and status to INACTIVE.
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+        table_name = _get_table_ref(cursor, db_type, "DMS_FLUPLD_SCHD")
+
+        # Validate schedule exists
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"SELECT schdid FROM {table_name} WHERE schdid = %s",
+                (schedule_id,),
+            )
+        else:
+            cursor.execute(
+                f"SELECT SCHDID FROM {table_name} WHERE SCHDID = :1",
+                [schedule_id],
+            )
+
+        if not cursor.fetchone():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Schedule {schedule_id} not found",
+            )
+
+        # Soft delete: set CURFLG to 'N' and status to INACTIVE
+        if db_type == "POSTGRESQL":
+            cursor.execute(
+                f"""
+                UPDATE {table_name}
+                SET curflg = 'N', stts = 'INACTIVE', uptdt = CURRENT_TIMESTAMP
+                WHERE schdid = %s
+                """,
+                (schedule_id,),
+            )
+        else:
+            cursor.execute(
+                f"""
+                UPDATE {table_name}
+                SET CURFLG = 'N', STTS = 'INACTIVE', UPTDT = SYSTIMESTAMP
+                WHERE SCHDID = :1
+                """,
+                [schedule_id],
+            )
+
+        conn.commit()
+        return {
+            "success": True,
+            "data": {
+                "scheduleId": schedule_id,
+                "message": "Schedule stopped successfully"
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        error(f"Error deleting file upload schedule: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error deleting file upload schedule: {str(e)}",
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 

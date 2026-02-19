@@ -13,7 +13,7 @@
 
 ### 2. Updated All Metadata Connection Calls
 Changed all `create_oracle_connection()` calls to `create_metadata_connection()` in:
-- `backend/modules/type_mapping/parameter_mapping.py`
+- `backend/modules/parameters/fastapi_parameter_mapping.py`
 - `backend/modules/dashboard/dashboard.py`
 - `backend/modules/jobs/jobs.py`
 - `backend/modules/jobs/scheduler_service.py`

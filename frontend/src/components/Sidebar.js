@@ -7,7 +7,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/app/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, History, Upload } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, History, Upload, Clock } from 'lucide-react';
 import CustomDbIcon from './CustomDbIcon';
 import CustomParameterIcon from './CustomParameterIcon';
 import CustomJobsIcon from './CustomJobsIcon';
@@ -176,7 +176,7 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
   return (
     <motion.div 
       className={`
-        fixed top-0 left-0 h-full z-40
+        fixed top-0 left-0 h-full z-40 flex flex-col
         ${darkMode 
           ? 'bg-gray-900/95 border-r border-gray-800' 
           : 'bg-white/95 border-r border-gray-100'}
@@ -193,9 +193,9 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
         mass: 0.8
       }}
     >
-      {/* Logo Section */}
+      {/* Logo Section - Fixed */}
       <div className={`
-        h-14 flex items-center justify-center px-3 border-b
+        h-14 flex items-center justify-center px-3 border-b flex-shrink-0
         ${darkMode ? 'border-gray-800' : 'border-gray-100'}
       `}>
         <motion.div 
@@ -221,8 +221,8 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
         </motion.div>
       </div>
 
-      {/* Main Navigation */}
-      <nav className="mt-4 px-1 space-y-0.5">
+      {/* Main Navigation - Scrollable */}
+      <nav className="flex-1 overflow-y-auto scroll-smooth mt-4 px-1 space-y-0.5">
         {/* Home - always visible */}
         {isItemVisible({}) && (
         <SidebarItem 
@@ -322,6 +322,17 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
         />
         )}
 
+        {/* Scheduler Status - requires 'job_status_and_logs' access (same as Logs & Status) */}
+        {isItemVisible({ accessKey: 'job_status_and_logs' }) && (
+        <SidebarItem 
+          icon={<Clock />} 
+          text="Scheduler Status" 
+          active={pathname === '/scheduler_status'} 
+          expanded={sidebarOpen}
+          href="/scheduler_status"
+        />
+        )}
+
         {/* Dashboard - requires 'dashboard' access */}
         {isItemVisible({ accessKey: 'dashboard' }) && (
         <SidebarItem 
@@ -338,9 +349,9 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
         <SidebarItem
           icon={<CustomParameterIcon size={18} />}
           text="Parameters"
-          active={pathname === '/type_mapper'}
+          active={pathname === '/parameters'}
           expanded={sidebarOpen}
-          href="/type_mapper"
+          href="/parameters"
         />
         )}
 
@@ -379,8 +390,8 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
 
       </nav>
 
-      {/* Toggle Button */}
-      <div className="absolute bottom-6 left-0 right-0 flex justify-center">
+      {/* Toggle Button - Fixed */}
+      <div className="flex justify-center flex-shrink-0 py-4 px-2">
         <motion.button
           onClick={() => setSidebarOpen(!sidebarOpen)}
           className={`

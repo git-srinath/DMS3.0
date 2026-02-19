@@ -34,9 +34,9 @@ except ImportError:  # Fallback
     )
 
 try:
-    from backend.modules.logger import info, error, debug
+    from backend.modules.logger import info, error, debug, warning
 except ImportError:  # Fallback
-    from modules.logger import info, error, debug  # type: ignore
+    from modules.logger import info, error, debug, warning  # type: ignore
 
 from backend.modules.jobs.pkgdwprc_python import (
     JobSchedulerService,
@@ -47,6 +47,8 @@ from backend.modules.jobs.pkgdwprc_python import (
     SchedulerRepositoryError,
     SchedulerError,
 )
+from backend.modules.helper_functions import _get_table_ref
+from fastapi.responses import JSONResponse
 
 
 router = APIRouter(tags=["jobs"])
@@ -142,11 +144,11 @@ async def get_all_jobs():
         cursor = conn.cursor()
         db_type = _detect_db_type(conn)
 
-        info(f"[get_all_jobs] Database type detected: {db_type}")
+        debug(f"[get_all_jobs] Database type detected: {db_type}")
 
         # Get schema name from environment
         schema = os.getenv("DMS_SCHEMA", "TRG")
-        info(f"[get_all_jobs] Using schema: {schema}")
+        debug(f"[get_all_jobs] Using schema: {schema}")
 
         # Get table references for PostgreSQL (handles case sensitivity)
         if db_type == "POSTGRESQL":
@@ -161,7 +163,7 @@ async def get_all_jobs():
                 dms_jobsch_table = get_postgresql_table_name(
                     cursor, schema_lower, "DMS_JOBSCH"
                 )
-                info(
+                debug(
                     "[get_all_jobs] PostgreSQL table names - "
                     f"JOB: {dms_job_table}, JOBFLW: {dms_jobflw_table}, "
                     f"JOBSCH: {dms_jobsch_table}"
@@ -196,7 +198,7 @@ async def get_all_jobs():
             dms_jobflw_full = f"{schema_prefix}{dms_jobflw_ref}"
             dms_jobsch_full = f"{schema_prefix}{dms_jobsch_ref}"
 
-            info(
+            debug(
                 "[get_all_jobs] Full table references - "
                 f"JOB: {dms_job_full}, JOBFLW: {dms_jobflw_full}, "
                 f"JOBSCH: {dms_jobsch_full}"
@@ -324,17 +326,17 @@ async def get_all_jobs():
                 ORDER BY j.RECCRDT DESC
             """
 
-        info("[get_all_jobs] Executing query...")
+        debug("[get_all_jobs] Executing query...")
         cursor.execute(query_job_flow)
         columns = [col[0] for col in cursor.description]
         raw_jobs = cursor.fetchall()
 
-        info(f"[get_all_jobs] Query executed successfully. Found {len(raw_jobs)} rows.")
-        info(f"[get_all_jobs] Column names from query: {columns}")
+        debug(f"[get_all_jobs] Query executed successfully. Found {len(raw_jobs)} rows.")
+        debug(f"[get_all_jobs] Column names from query: {columns}")
 
         # Normalize column names to uppercase for consistency (PostgreSQL returns lowercase)
         columns_upper = [col.upper() if col else col for col in columns]
-        info(f"[get_all_jobs] Normalized column names: {columns_upper}")
+        debug(f"[get_all_jobs] Normalized column names: {columns_upper}")
 
         # Convert rows into list of dictionaries (JSON-serialisable)
         jobs: List[Dict[str, Any]] = []
@@ -356,8 +358,8 @@ async def get_all_jobs():
                 job_dict[column] = value
 
             if row_idx == 0:
-                info(f"[get_all_jobs] First job keys: {list(job_dict.keys())}")
-                info(
+                debug(f"[get_all_jobs] First job keys: {list(job_dict.keys())}")
+                debug(
                     "[get_all_jobs] First job JOBFLWID: "
                     f"{job_dict.get('JOBFLWID')}, MAPREF: {job_dict.get('MAPREF')}"
                 )
@@ -672,6 +674,98 @@ async def save_job_schedule(payload: SaveJobScheduleRequest):
             conn.close()
 
 
+class DisableJobScheduleRequest(BaseModel):
+    MAPREF: str
+
+
+@router.post("/schedule/{mapref}/disable")
+async def disable_job_schedule(mapref: str):
+    """
+    Disable/stop a recurring job schedule.
+    Prevents the job from being scheduled for future runs.
+    Mirrors Flask endpoint: POST /job/schedule/{mapref}/disable
+    """
+    conn = None
+    try:
+        if not mapref:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "message": "Missing required parameter: MAPREF"},
+            )
+        
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        service.enable_disable_schedule(mapref, "D")
+        
+        return {
+            "success": True,
+            "message": f"Schedule for {mapref} has been disabled successfully.",
+        }
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in disable_job_schedule: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Unexpected error: {str(exc)}"},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/schedule/{mapref}/enable")
+async def enable_job_schedule(mapref: str):
+    """
+    Enable a previously disabled recurring job schedule.
+    Allows the job to be scheduled for future runs again.
+    Mirrors Flask endpoint: POST /job/schedule/{mapref}/enable
+    """
+    conn = None
+    try:
+        if not mapref:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "message": "Missing required parameter: MAPREF"},
+            )
+        
+        conn = create_metadata_connection()
+        service = JobSchedulerService(conn)
+        service.enable_disable_schedule(mapref, "E")
+        
+        return {
+            "success": True,
+            "message": f"Schedule for {mapref} has been enabled successfully.",
+        }
+    except SchedulerValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
+    except Exception as exc:
+        error(f"Error in enable_job_schedule: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Unexpected error: {str(exc)}"},
+        )
+    finally:
+        if conn:
+            conn.close()
+
+
 class SaveParentChildJobRequest(BaseModel):
     PARENT_MAP_REFERENCE: str
     CHILD_MAP_REFERENCE: str
@@ -940,19 +1034,30 @@ class ScheduleJobImmediatelyRequest(BaseModel):
 def _call_schedule_regular_job_async(p_mapref: str, truncate_load: str = "N"):
     conn = None
     try:
+        info(f"_call_schedule_regular_job_async: mapref={p_mapref}, truncate_load={truncate_load}")
         conn = create_metadata_connection()
         service = JobSchedulerService(conn)
         # Pass truncate_flag in params for regular load
         params = {"truncate_flag": truncate_load} if truncate_load == "Y" else {}
+        info(f"Calling queue_immediate_job with mapref={p_mapref}, params={params}")
         request_id = service.queue_immediate_job(
             ImmediateJobRequest(mapref=p_mapref, params=params)
         )
         truncate_msg = " (with truncate)" if truncate_load == "Y" else ""
+        info(f"Successfully queued job {p_mapref} with request_id={request_id}")
         return True, f"Job {p_mapref} queued for immediate execution{truncate_msg} (request_id={request_id})"
-    except SchedulerError as exc:
-        return False, str(exc)
+    except SchedulerValidationError as exc:
+        # Re-raise validation errors so they can be converted to HTTP 400
+        error(f"Validation error in _call_schedule_regular_job_async: {exc}")
+        raise
+    except SchedulerRepositoryError as exc:
+        # Re-raise repository errors so they can be converted to HTTP 500
+        error(f"Repository error in _call_schedule_regular_job_async: {exc}", exc_info=True)
+        raise
     except Exception as exc:
-        return False, str(exc)
+        # Re-raise other exceptions so they can be handled properly
+        error(f"Unexpected error in _call_schedule_regular_job_async: {exc}", exc_info=True)
+        raise
     finally:
         if conn:
             conn.close()
@@ -978,10 +1083,15 @@ def _call_schedule_history_job_async(
             f"History job {p_mapref} queued "
             f"(request_id={request_id}, {p_strtdt} to {p_enddt})",
         )
-    except SchedulerError as exc:
-        return False, str(exc)
+    except SchedulerValidationError as exc:
+        # Re-raise validation errors so they can be converted to HTTP 400
+        raise
+    except SchedulerRepositoryError as exc:
+        # Re-raise repository errors so they can be converted to HTTP 500
+        raise
     except Exception as exc:
-        return False, str(exc)
+        # Re-raise other exceptions so they can be handled properly
+        raise
     finally:
         if conn:
             conn.close()
@@ -993,12 +1103,22 @@ async def schedule_job_immediately(payload: ScheduleJobImmediatelyRequest):
     Schedule a regular or history job for immediate execution.
     Mirrors Flask endpoint: POST /job/schedule-job-immediately
     """
-    data = payload.model_dump()
+    try:
+        data = payload.model_dump()
+    except Exception as e:
+        error(f"Error parsing payload in schedule_job_immediately: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": f"Invalid request payload: {str(e)}"},
+        )
+    
     p_mapref = data.get("mapref")
     load_type = data.get("loadType", "regular")
     start_date = data.get("startDate")
     end_date = data.get("endDate")
     truncate_load = data.get("truncateLoad", "N")
+
+    debug(f"schedule_job_immediately called: mapref={p_mapref}, loadType={load_type}, truncateLoad={truncate_load}, startDate={start_date}, endDate={end_date}")
 
     if not p_mapref:
         raise HTTPException(
@@ -1035,9 +1155,26 @@ async def schedule_job_immediately(payload: ScheduleJobImmediatelyRequest):
         return {"success": success, "message": message}
     except HTTPException:
         raise
+    except SchedulerValidationError as exc:
+        # Convert validation errors to HTTP 400
+        error(f"Validation error in schedule_job_immediately: {exc}")
+        raise HTTPException(
+            status_code=400,
+            detail={"success": False, "message": str(exc)},
+        )
+    except SchedulerRepositoryError as exc:
+        # Convert repository errors to HTTP 500
+        error(f"Database error in schedule_job_immediately: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Database error: {str(exc)}"},
+        )
     except Exception as e:
-        error(f"Error in schedule_job_immediately: {e}")
-        raise HTTPException(status_code=500, detail={"error": str(e)})
+        error(f"Error in schedule_job_immediately: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"success": False, "message": f"Unexpected error: {str(e)}"},
+        )
     finally:
         if conn:
             conn.close()
@@ -1086,6 +1223,69 @@ async def stop_running_job(payload: StopRunningJobRequest):
         service = JobSchedulerService(conn)
         request_id = service.request_job_stop(p_mapref, start_dt, p_force)
         info(f"Stop requested for job {p_mapref} (request_id={request_id})")
+        
+        # Also directly update DMS_PRCLOG status to STOPPED for stalled jobs
+        # This ensures the status is updated even if the job isn't actively processing
+        try:
+            cursor = conn.cursor()
+            db_type = _detect_db_type(conn)
+            schema = os.getenv("DMS_SCHEMA", "TRG")
+            
+            if db_type == "POSTGRESQL":
+                schema_lower = schema.lower() if schema else "public"
+                dms_prclog_table = get_postgresql_table_name(cursor, schema_lower, "DMS_PRCLOG")
+                dms_prclog_ref = f'"{dms_prclog_table}"' if dms_prclog_table != dms_prclog_table.lower() else dms_prclog_table
+                schema_prefix = f"{schema_lower}." if schema else ""
+                dms_prclog_full = f"{schema_prefix}{dms_prclog_ref}"
+                
+                # Update status to FL (failed) for jobs matching mapref and start timestamp
+                # DMS_PRCLOG.status is 2 characters, so use 'FL' instead of 'STOPPED'
+                cursor.execute(
+                    f"""
+                    UPDATE {dms_prclog_full}
+                    SET status = 'FL',
+                        enddt = CURRENT_TIMESTAMP,
+                        recupdt = CURRENT_TIMESTAMP,
+                        msg = 'Job stopped by user request'
+                    WHERE mapref = %s
+                      AND status IN ('IP', 'CLAIMED')
+                      AND strtdt >= %s - INTERVAL '1 hour'
+                      AND strtdt <= %s + INTERVAL '1 hour'
+                    """,
+                    (p_mapref, start_dt, start_dt),
+                )
+            else:  # Oracle
+                schema_prefix = f"{schema}." if schema else ""
+                cursor.execute(
+                    f"""
+                    UPDATE {schema_prefix}DMS_PRCLOG
+                    SET status = 'FL',
+                        enddt = SYSTIMESTAMP,
+                        recupdt = SYSTIMESTAMP,
+                        msg = 'Job stopped by user request'
+                    WHERE mapref = :mapref
+                      AND status IN ('IP', 'CLAIMED')
+                      AND strtdt >= :start_ts - INTERVAL '1' HOUR
+                      AND strtdt <= :start_ts + INTERVAL '1' HOUR
+                    """,
+                    {
+                        "mapref": p_mapref,
+                        "start_ts": start_dt,
+                    },
+                )
+            
+            rows_updated = cursor.rowcount
+            conn.commit()
+            cursor.close()
+            
+            if rows_updated > 0:
+                info(f"Updated {rows_updated} job record(s) to FL status for {p_mapref}")
+            else:
+                debug(f"No running job found to stop for {p_mapref} (may be processed by scheduler)")
+        except Exception as e:
+            warning(f"Error updating DMS_PRCLOG status directly: {e}. Stop request still queued.")
+            # Don't fail the stop request if direct status update fails
+        
         return {
             "success": True,
             "message": f"Stop request queued (request_id={request_id})",
@@ -1531,4 +1731,220 @@ async def get_error_details(job_id: str):
             conn.close()
 
 
+@router.get("/scheduler-status")
+async def get_scheduler_status():
+    """
+    Get current scheduler status and summary of active jobs.
+    
+    Returns:
+        JSONResponse with scheduler status, active job counts by type, and recent activity
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        db_type = _detect_db_type(conn)
+        schema = os.getenv('DMS_SCHEMA', 'TRG')
+        
+        # Get table reference (pass schema for explicit handling)
+        table_name = _get_table_ref(cursor, db_type, "DMS_PRCREQ", schema_name=schema)
+        
+        debug(f"[scheduler-status] Database type: {db_type}, Schema: {schema}, Table: {table_name}")
+        
+        # Query for active jobs (NEW, QUEUED, PROCESSING, CLAIMED)
+        # All column names are lowercase in metadata database
+        if db_type == "POSTGRESQL":
+            status_query = f"""
+                SELECT 
+                    CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END as request_type,
+                    UPPER(status) as status,
+                    COUNT(*) as count
+                FROM {table_name}
+                WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED')
+                GROUP BY CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END, UPPER(status)
+            """
+        else:  # Oracle
+            status_query = f"""
+                SELECT 
+                    CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END as request_type,
+                    UPPER(status) as status,
+                    COUNT(*) as count
+                FROM {table_name}
+                WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED')
+                GROUP BY CASE 
+                        WHEN mapref LIKE 'FLUPLD:%%' THEN 'FILE_UPLOAD'
+                        WHEN mapref LIKE 'REPORT:%%' THEN 'REPORT'
+                        ELSE 'JOBS'
+                    END, UPPER(status)
+            """
+        
+        debug(f"[scheduler-status] Executing status query: {status_query}")
+        cursor.execute(status_query)
+        
+        # Fetch status results
+        status_rows = cursor.fetchall()
+        status_columns = [desc[0].lower() for desc in cursor.description]
+        
+        debug(f"[scheduler-status] Status query returned {len(status_rows)} rows")
+        debug(f"[scheduler-status] Status columns: {status_columns}")
+        if status_rows:
+            for idx, row in enumerate(status_rows):
+                row_dict = dict(zip(status_columns, row))
+                debug(f"[scheduler-status] Row {idx}: {row_dict}")
+        else:
+            debug(f"[scheduler-status] No status rows returned - no active jobs found")
+        
+        # Initialize counters
+        job_counts = {
+            'FILE_UPLOAD': {'NEW': 0, 'QUEUED': 0, 'PROCESSING': 0, 'CLAIMED': 0, 'total': 0},
+            'REPORT': {'NEW': 0, 'QUEUED': 0, 'PROCESSING': 0, 'CLAIMED': 0, 'total': 0},
+            'JOBS': {'NEW': 0, 'QUEUED': 0, 'PROCESSING': 0, 'CLAIMED': 0, 'total': 0},
+        }
+        
+        total_active = 0
+        for row in status_rows:
+            row_dict = dict(zip(status_columns, row))
+            
+            # Request type is determined in the SQL query using CASE statement
+            req_type = (row_dict.get('request_type', '') or '').upper().strip()
+            status = (row_dict.get('status', '') or '').upper().strip()
+            count = int(row_dict.get('count', 0) or 0)
+            
+            debug(f"[scheduler-status] Processing: req_type={req_type}, status={status}, count={count}")
+            
+            if req_type in job_counts:
+                job_counts[req_type][status] = count
+                job_counts[req_type]['total'] += count
+                total_active += count
+            else:
+                debug(f"[scheduler-status] Unknown request_type: {req_type}, skipping")
+        
+        debug(f"[scheduler-status] Total active jobs: {total_active}")
+        debug(f"[scheduler-status] File upload counts: {job_counts['FILE_UPLOAD']}")
+        
+        # Get recent activity (last 10 jobs) - using lowercase column names
+        if db_type == "POSTGRESQL":
+            recent_query = f"""
+                SELECT 
+                    request_id,
+                    mapref,
+                    status,
+                    requested_at
+                FROM {table_name}
+                WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED', 'DONE', 'FAILED')
+                ORDER BY requested_at DESC
+                LIMIT 10
+            """
+        else:  # Oracle
+            recent_query = f"""
+                SELECT 
+                    request_id,
+                    mapref,
+                    status,
+                    requested_at
+                FROM (
+                    SELECT 
+                        request_id,
+                        mapref,
+                        status,
+                        requested_at
+                    FROM {table_name}
+                    WHERE UPPER(status) IN ('NEW', 'QUEUED', 'PROCESSING', 'CLAIMED', 'DONE', 'FAILED')
+                    ORDER BY requested_at DESC
+                )
+                WHERE ROWNUM <= 10
+            """
+        
+        debug(f"[scheduler-status] Executing recent activity query")
+        cursor.execute(recent_query)
+        recent_rows = cursor.fetchall()
+        recent_columns = [desc[0].lower() for desc in cursor.description]
+        
+        debug(f"[scheduler-status] Recent activity query returned {len(recent_rows)} rows")
+        
+        recent_jobs = []
+        for row in recent_rows:
+            row_dict = dict(zip(recent_columns, row))
+            mapref = (row_dict.get('mapref', '') or '').strip()
+            # Determine request_type from mapref pattern
+            if mapref.startswith('FLUPLD:'):
+                req_type = 'FILE_UPLOAD'
+            elif mapref.startswith('REPORT:'):
+                req_type = 'REPORT'
+            else:
+                req_type = 'JOBS'
+            
+            recent_jobs.append({
+                'request_id': row_dict.get('request_id', ''),
+                'mapref': mapref,
+                'request_type': req_type,
+                'status': row_dict.get('status', ''),
+                'requested_at': str(row_dict.get('requested_at', '')) if row_dict.get('requested_at') else None
+            })
+        
+        # Determine scheduler status
+        scheduler_status = "WAITING" if total_active == 0 else "PROCESSING"
+        
+        # Calculate summary
+        file_upload_active = job_counts['FILE_UPLOAD']['total']
+        report_active = job_counts['REPORT']['total']
+        mapper_active = job_counts.get('JOBS', {'total': 0})['total']
+        
+        debug(f"[scheduler-status] Returning: scheduler_status={scheduler_status}, total_active={total_active}")
+        debug(f"[scheduler-status] file_uploads: active={file_upload_active}, processing={job_counts['FILE_UPLOAD']['PROCESSING'] + job_counts['FILE_UPLOAD']['CLAIMED']}")
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "scheduler_status": scheduler_status,
+                "total_active_jobs": total_active,
+                "job_counts": {
+                    "file_uploads": {
+                        "active": file_upload_active,
+                        "new": job_counts['FILE_UPLOAD']['NEW'],
+                        "queued": job_counts['FILE_UPLOAD']['QUEUED'],
+                        "processing": job_counts['FILE_UPLOAD']['PROCESSING'] + job_counts['FILE_UPLOAD']['CLAIMED']
+                    },
+                    "reports": {
+                        "active": report_active,
+                        "new": job_counts['REPORT']['NEW'],
+                        "queued": job_counts['REPORT']['QUEUED'],
+                        "processing": job_counts['REPORT']['PROCESSING'] + job_counts['REPORT']['CLAIMED']
+                    },
+                    "mapper_jobs": {
+                        "active": mapper_active,
+                        "new": job_counts.get('JOBS', {'NEW': 0})['NEW'],
+                        "queued": job_counts.get('JOBS', {'QUEUED': 0})['QUEUED'],
+                        "processing": job_counts.get('JOBS', {'PROCESSING': 0})['PROCESSING'] + job_counts.get('JOBS', {'CLAIMED': 0})['CLAIMED']
+                    }
+                },
+                "recent_activity": recent_jobs
+            }
+        )
+    
+    except Exception as e:
+        error(f"Error getting scheduler status: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting scheduler status: {str(e)}"
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 

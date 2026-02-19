@@ -53,13 +53,14 @@ import {
   ToggleOff as ToggleOffIcon,
   Warning as WarningIcon,
   RemoveRedEye as EyeIcon,
-  Schedule as ScheduleIcon
+  Schedule as ScheduleIcon,
+  Stop as StopIcon
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { useTheme } from '@/context/ThemeContext';
 import JobDetailsDialog from './JobDetailsDialog';
 import ScheduleConfiguration from './ScheduleConfiguration';
-import { Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
+import { Dialog, DialogTitle, DialogContent, DialogActions, DialogContentText } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -339,6 +340,10 @@ const JobsPage = () => {
   
   // State for schedule dialog
   const [scheduleDialog, setScheduleDialog] = useState({ open: false, job: null });
+  
+  // State for stop schedule dialog
+  const [stopScheduleDialog, setStopScheduleDialog] = useState({ open: false, job: null });
+  const [stoppingSchedule, setStoppingSchedule] = useState(false);
   
   // State for filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -818,6 +823,61 @@ const JobsPage = () => {
   // Handle close schedule dialog
   const closeScheduleDialog = () => {
     setScheduleDialog({ open: false, job: null });
+  };
+
+  // Handle open stop schedule dialog
+  const handleOpenStopScheduleDialog = (job) => {
+    if (job.JOBSCHID || job.JOB_SCHEDULE_STATUS === 'Scheduled') {
+      setStopScheduleDialog({ open: true, job });
+    }
+  };
+
+  // Handle close stop schedule dialog
+  const handleCloseStopScheduleDialog = () => {
+    setStopScheduleDialog({ open: false, job: null });
+  };
+
+  // Handle stop schedule
+  const handleStopSchedule = async () => {
+    if (!stopScheduleDialog.job) return;
+
+    setStoppingSchedule(true);
+    try {
+      const token = localStorage.getItem('token');
+      const mapref = stopScheduleDialog.job.MAPREF;
+      
+      if (!mapref) {
+        setError('Job MAPREF not found');
+        return;
+      }
+
+      const response = await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/job/schedule/${mapref}/disable`,
+        {},
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+        }
+      );
+
+      if (response.data?.success) {
+        setSuccessMessage('Schedule stopped successfully');
+        setStopScheduleDialog({ open: false, job: null });
+        fetchJobs();
+      } else {
+        setError(response.data?.message || 'Failed to stop schedule');
+      }
+    } catch (error) {
+      console.error('Error stopping schedule:', error);
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          'Failed to stop schedule';
+      setError(errorMessage);
+    } finally {
+      setStoppingSchedule(false);
+    }
   };
 
   // Handle save schedule from dialog
@@ -1607,7 +1667,29 @@ const JobsPage = () => {
       }
     } catch (err) {
       console.error('Error executing job:', err);
-      setError(err.response?.data?.message || 'Failed to execute job. Please try again.');
+      // FastAPI HTTPException returns error in detail field
+      let errorMessage = 'Failed to execute job. Please try again.';
+      if (err.response?.data) {
+        // Check for detail.message (when detail is an object)
+        if (err.response.data.detail?.message) {
+          errorMessage = err.response.data.detail.message;
+        }
+        // Check for detail as string
+        else if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+        // Check for message directly
+        else if (err.response.data.message) {
+          errorMessage = err.response.data.message;
+        }
+        // Check for error field
+        else if (err.response.data.error) {
+          errorMessage = err.response.data.error;
+        }
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      setError(errorMessage);
     } finally {
       // Reset the executing state in the dialog if callback is provided
       if (resetExecutingState && typeof resetExecutingState === 'function') {
@@ -2078,6 +2160,18 @@ const JobsPage = () => {
                           <CodeIcon fontSize="small" />
                         </ActionButton>
                       </Tooltip>
+                      {job.JOB_SCHEDULE_STATUS === 'Scheduled' && job.JOBSCHID && (
+                        <Tooltip title="Stop Schedule">
+                          <ActionButton 
+                            size="small" 
+                            onClick={() => handleOpenStopScheduleDialog(job)}
+                            darkMode={darkMode}
+                            color="error"
+                          >
+                            <StopIcon fontSize="small" />
+                          </ActionButton>
+                        </Tooltip>
+                      )}
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -2145,6 +2239,35 @@ const JobsPage = () => {
         darkMode={darkMode}
         saving={scheduleDialog.job ? (scheduleSaving[scheduleDialog.job.JOBFLWID] || false) : false}
       />
+
+      {/* Stop Schedule Dialog */}
+      <Dialog
+        open={stopScheduleDialog.open}
+        onClose={handleCloseStopScheduleDialog}
+      >
+        <DialogTitle>Stop Schedule</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            Are you sure you want to stop the schedule for job "{stopScheduleDialog.job?.MAPREF}"?
+          </DialogContentText>
+          <Typography variant="body2" color="warning.main" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <WarningIcon fontSize="small" />
+            This will disable automatic execution for this job schedule.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseStopScheduleDialog} disabled={stoppingSchedule}>Cancel</Button>
+          <Button 
+            onClick={handleStopSchedule} 
+            color="error" 
+            variant="contained"
+            disabled={stoppingSchedule}
+            startIcon={stoppingSchedule ? <CircularProgress size={16} /> : <StopIcon />}
+          >
+            Stop Schedule
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Notification Snackbar */}
       <Snackbar

@@ -6,6 +6,7 @@ import './fonts/fonts.css'; // Import local fonts CSS
 import LayoutWrapper from '@/components/LayoutWrapper';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
+import { SaveProvider } from '@/context/SaveContext';
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -57,7 +58,9 @@ export default function RootLayout({ children }) {
       <body className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} antialiased font-sans`}>
         <ThemeProvider>
           <AuthProvider>
-            <LayoutWrapper>{children}</LayoutWrapper>
+            <SaveProvider>
+              <LayoutWrapper>{children}</LayoutWrapper>
+            </SaveProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

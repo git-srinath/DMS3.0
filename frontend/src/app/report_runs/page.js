@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import { useSearchParams } from "next/navigation";
 import {
   Box,
   Typography,
@@ -30,6 +31,7 @@ import { useTheme } from "@/context/ThemeContext";
 const ReportRunsPage = () => {
   const { darkMode } = useTheme();
   const apiBase = process.env.NEXT_PUBLIC_API_URL;
+  const searchParams = useSearchParams();
 
   const [runs, setRuns] = useState([]);
   const [reports, setReports] = useState([]);
@@ -94,6 +96,12 @@ const ReportRunsPage = () => {
   useEffect(() => {
     // Load reports list once on mount
     fetchReports();
+    
+    // Check if reportId is in URL query params and set it as initial filter
+    const reportIdParam = searchParams.get("reportId");
+    if (reportIdParam) {
+      setSelectedReportId(reportIdParam);
+    }
   }, []);
 
   useEffect(() => {
@@ -103,10 +111,7 @@ const ReportRunsPage = () => {
 
   return (
     <Box sx={{ p: 2.5 }}>
-      <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h5" fontWeight={600}>
-          Report Runs
-        </Typography>
+      <Stack direction={{ xs: "column", md: "row" }} justifyContent="flex-end" alignItems="center" mb={2}>
         <Stack direction="row" spacing={1} alignItems="center">
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="report-filter-label">Report</InputLabel>

@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Optional
 import datetime
 import io
 import traceback
+import re
+import difflib
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
@@ -19,6 +21,7 @@ from backend.modules.helper_functions import (
     get_mapping_ref,
     get_mapping_details,
     get_parameter_mapping_datatype,
+    get_parameter_mapping_datatype_for_db,  # Phase 3: Import Phase 2A function for DB-specific datatypes
     get_parameter_mapping_scd_type,
     check_if_job_already_created,
     create_update_mapping,
@@ -65,6 +68,65 @@ TABLE_FIELDS = [
     "mapCombineCode",
     "execSequence",
 ]
+
+
+def _detect_db_type_from_connection(conn) -> str:
+    """
+    Lightweight database type detection based on connection module.
+    Duplicated here to avoid circular imports.
+    """
+    module_name = type(conn).__module__
+    if "psycopg" in module_name or "pg8000" in module_name:
+        return "POSTGRESQL"
+    if "oracledb" in module_name or "cx_Oracle" in module_name:
+        return "ORACLE"
+    # Default to ORACLE for backward compatibility
+    return "ORACLE"
+
+
+def _normalize_sql(sql: str) -> str:
+    """
+    Normalize SQL for comparison:
+    - Remove comments
+    - Collapse whitespace
+    - Uppercase
+    """
+    if not sql:
+        return ""
+
+    # Remove single-line comments --
+    sql_no_single = re.sub(r"--.*?$", "", sql, flags=re.MULTILINE)
+    # Remove /* */ comments
+    sql_no_comments = re.sub(r"/\*.*?\*/", "", sql_no_single, flags=re.DOTALL)
+    # Collapse whitespace
+    sql_spaced = re.sub(r"\s+", " ", sql_no_comments).strip()
+    return sql_spaced.upper()
+
+
+def _calculate_sql_similarity(a: str, b: str) -> float:
+    """
+    Calculate similarity between two SQL strings using difflib.
+    Returns a float between 0 and 1.
+    """
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _build_wrapped_sql(original_sql: str, db_type: str) -> str:
+    """
+    Wrap the user SQL so we can safely fetch column metadata without
+    loading a large result set.
+    """
+    original_sql = original_sql.strip().rstrip(";")
+    if not original_sql:
+        raise ValueError("SQL content is empty")
+
+    # Use WHERE 1=0 to avoid fetching data while still getting metadata
+    if db_type == "POSTGRESQL":
+        return f"SELECT * FROM ({original_sql}) AS subq WHERE 1=0"
+    # Oracle and others
+    return f"SELECT * FROM ({original_sql}) subq WHERE 1=0"
 
 
 @router.get("/get-parameter-mapping-datatype")
@@ -123,7 +185,7 @@ async def get_connections() -> List[Dict[str, Any]]:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT conid, connm, dbhost, dbsrvnm
+                SELECT conid, connm, dbhost, dbsrvnm, usrnm
                 FROM DMS_DBCONDTLS
                 WHERE curflg = 'Y'
                 ORDER BY connm
@@ -138,6 +200,7 @@ async def get_connections() -> List[Dict[str, Any]]:
                         "connm": row[1],
                         "dbhost": row[2],
                         "dbsrvnm": row[3],
+                        "usrnm": row[4] if len(row) > 4 else None,
                     }
                 )
 
@@ -217,6 +280,13 @@ async def get_by_reference(reference: str):
                     main_result.get("CHKPNTENBLD") == "Y"
                     if main_result.get("CHKPNTENBLD")
                     else True
+                ),
+                # Optional: persisted base/source SQL text for this mapping (if BASESQL/SRCSQL column exists)
+                "baseSql": (
+                    main_result.get("BASESQL")
+                    or main_result.get("basesql")
+                    or main_result.get("SRCSQL")
+                    or ""
                 ),
             }
 
@@ -331,11 +401,39 @@ async def save_to_db(payload: SaveToDbRequest):
                 "Y" if form_data.get("checkpointEnabled", True) else "N"
             )
 
+            # Get targetSchema with fallback - auto-populate from connection if missing
+            target_schema = form_data.get("targetSchema", "").strip() if form_data.get("targetSchema") else ""
+            
+            # If targetSchema is empty but targetConnectionId is provided, fetch username from connection
+            if not target_schema and target_connection_id:
+                try:
+                    cursor = conn.cursor()
+                    db_type = _detect_db_type_from_connection(conn)
+                    # Use table name directly - DMS_DBCONDTLS should work for both Oracle and PostgreSQL
+                    # For PostgreSQL, we'll let the database handle case sensitivity
+                    table_name = "DMS_DBCONDTLS"
+                    
+                    if db_type == "POSTGRESQL":
+                        query = f'SELECT usrnm FROM "{table_name}" WHERE conid = %s AND curflg = %s'
+                        cursor.execute(query, (target_connection_id, 'Y'))
+                    else:  # Oracle
+                        query = f"SELECT usrnm FROM {table_name} WHERE conid = :conid AND curflg = 'Y'"
+                        cursor.execute(query, {"conid": target_connection_id})
+                    
+                    result = cursor.fetchone()
+                    cursor.close()
+                    
+                    if result and result[0]:
+                        target_schema = str(result[0]).strip().upper()
+                except Exception as e:
+                    warning(f"Could not fetch username from connection {target_connection_id}: {str(e)}")
+                    # Continue with empty target_schema - validation will handle it
+            
             mapid = create_update_mapping(
                 conn,
                 form_data["reference"],
                 form_data["description"],
-                form_data["targetSchema"],
+                target_schema,
                 form_data["tableType"],
                 form_data["tableName"],
                 form_data["freqCode"],
@@ -350,6 +448,43 @@ async def save_to_db(payload: SaveToDbRequest):
                 p_chkpntclnm=checkpoint_column,
                 p_chkpntenbld=checkpoint_enabled,
             )
+
+            # Optionally persist base/source SQL text for this mapping.
+            base_sql = form_data.get("baseSql")
+            if base_sql:
+                try:
+                    cur2 = conn.cursor()
+                    db_type = _detect_db_type_from_connection(conn)
+                    if db_type == "POSTGRESQL":
+                        # Preferred: BASESQL (new name)
+                        try:
+                            cur2.execute(
+                                "UPDATE DMS_MAPR SET BASESQL = %s WHERE MAPID = %s",
+                                (base_sql, int(mapid)),
+                            )
+                        except Exception:
+                            # Backward-compat: fallback to SRCSQL if BASESQL not present
+                            cur2.execute(
+                                "UPDATE DMS_MAPR SET SRCSQL = %s WHERE MAPID = %s",
+                                (base_sql, int(mapid)),
+                            )
+                    else:
+                        try:
+                            cur2.execute(
+                                "UPDATE DMS_MAPR SET BASESQL = :base_sql WHERE MAPID = :mapid",
+                                {"base_sql": base_sql, "mapid": int(mapid)},
+                            )
+                        except Exception:
+                            cur2.execute(
+                                "UPDATE DMS_MAPR SET SRCSQL = :base_sql WHERE MAPID = :mapid",
+                                {"base_sql": base_sql, "mapid": int(mapid)},
+                            )
+                    cur2.close()
+                except Exception as e:
+                    # Do not fail the save if the column is not present yet
+                    warning(
+                        f"save_to_db: unable to persist base SQL for mapping {form_data.get('reference')}: {e}"
+                    )
 
             processed_rows: List[Dict[str, Any]] = []
             for idx, row in enumerate(rows):
@@ -410,6 +545,593 @@ async def save_to_db(payload: SaveToDbRequest):
             status_code=500,
             detail=f"An error occurred while saving the mapping data: {str(e)}",
         )
+
+
+class ExtractSqlColumnsRequest(BaseModel):
+    sql_code: Optional[str] = None
+    sql_content: Optional[str] = None
+    connection_id: Optional[int] = None
+    target_dbtype: Optional[str] = None  # Phase 3: Optional target database type for datatype filtering
+
+
+class ExtractedColumn(BaseModel):
+    column_name: str
+    source_data_type: Optional[str] = None
+    source_precision: Optional[int] = None
+    source_scale: Optional[int] = None
+    suggested_data_type: Optional[str] = None
+    suggested_data_type_options: List[str] = []
+    nullable: Optional[bool] = None
+    is_primary_key: Optional[bool] = None
+
+
+class ExtractSqlColumnsResponse(BaseModel):
+    success: bool
+    message: str
+    columns: List[ExtractedColumn]
+    source_table: Optional[str] = None
+    source_schema: Optional[str] = None
+    sql_content: str
+
+
+@router.post("/extract-sql-columns", response_model=ExtractSqlColumnsResponse)
+async def extract_sql_columns(payload: ExtractSqlColumnsRequest):
+    """
+    Given a SQL code or raw SQL, execute a lightweight wrapped query to discover
+    column metadata and suggest target data types using the parameter table.
+
+    This endpoint is designed for the mapper SQL prefill dialog.
+    """
+    data = payload.model_dump()
+    sql_code = data.get("sql_code")
+    sql_content = data.get("sql_content")
+    connection_id = data.get("connection_id")
+    target_dbtype = data.get("target_dbtype")  # Phase 3: Extract target database type
+
+    if not sql_code and not sql_content:
+        raise HTTPException(
+            status_code=400,
+            detail="Either sql_code or sql_content must be provided",
+        )
+
+    metadata_conn = None
+    source_conn = None
+    try:
+        # Step 1: Resolve SQL content (use Manage SQL table if only code is provided)
+        metadata_conn = create_metadata_connection()
+        if not metadata_conn:
+            raise HTTPException(
+                status_code=500, detail="Failed to create metadata connection"
+            )
+
+        db_type_meta = _detect_db_type_from_connection(metadata_conn)
+
+        if sql_code and not sql_content:
+            cursor = metadata_conn.cursor()
+            try:
+                if db_type_meta == "POSTGRESQL":
+                    query = (
+                        "SELECT MAPRSQL, SQLCONID "
+                        "FROM DMS_MAPRSQL WHERE MAPRSQLCD = %s AND CURFLG = 'Y'"
+                    )
+                    cursor.execute(query, (sql_code,))
+                else:
+                    query = (
+                        "SELECT MAPRSQL, SQLCONID "
+                        "FROM DMS_MAPRSQL WHERE MAPRSQLCD = :sql_code AND CURFLG = 'Y'"
+                    )
+                    cursor.execute(query, {"sql_code": sql_code})
+
+                row = cursor.fetchone()
+                if not row:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"No SQL logic found for code: {sql_code}",
+                    )
+
+                sql_value = row[0]
+                # Handle CLOB vs plain string
+                sql_content = (
+                    sql_value.read() if hasattr(sql_value, "read") else str(sql_value)
+                )
+                # If connection_id not explicitly provided, try to use SQLCONID
+                if connection_id is None and row[1] is not None:
+                    try:
+                        connection_id = int(row[1])
+                    except (TypeError, ValueError):
+                        connection_id = None
+            finally:
+                cursor.close()
+
+        if not sql_content:
+            raise HTTPException(
+                status_code=400, detail="Resolved SQL content is empty"
+            )
+
+        # Step 2: Create source connection (target or metadata)
+        if connection_id is not None:
+            try:
+                source_conn = create_target_connection(connection_id)
+            except Exception as e:
+                error(
+                    f"extract_sql_columns: failed to create target connection "
+                    f"(connection_id={connection_id}): {str(e)}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"Failed to connect to selected database for SQL analysis "
+                        f"(connection_id={connection_id})"
+                    ),
+                )
+        else:
+            source_conn = metadata_conn
+
+        if not source_conn:
+            raise HTTPException(
+                status_code=500, detail="Failed to create source connection"
+            )
+
+        db_type_source = _detect_db_type_from_connection(source_conn)
+
+        # Step 3: Build wrapped SQL and execute to obtain column metadata
+        wrapped_sql = _build_wrapped_sql(sql_content, db_type_source)
+        info(
+            f"extract_sql_columns: executing wrapped SQL for metadata only "
+            f"(db_type={db_type_source})"
+        )
+
+        src_cursor = source_conn.cursor()
+        try:
+            src_cursor.execute(wrapped_sql)
+            description = src_cursor.description or []
+        finally:
+            src_cursor.close()
+
+        if not description:
+            return ExtractSqlColumnsResponse(
+                success=False,
+                message="No columns found in SQL result",
+                columns=[],
+                source_table=None,
+                source_schema=None,
+                sql_content=sql_content,
+            )
+
+        # Step 4: Fetch all available target data types from parameter table  
+        # Phase 3: Use database-specific datatypes if target_dbtype provided
+        if target_dbtype:
+            datatype_rows = get_parameter_mapping_datatype_for_db(metadata_conn, target_dbtype)
+            info(f"Loaded {len(datatype_rows)} datatype options for target DBTYPE={target_dbtype}")
+        else:
+            datatype_rows = get_parameter_mapping_datatype(metadata_conn)
+            info(f"Loaded {len(datatype_rows)} datatype options (no target DB type specified)")
+        
+        # dataTypeOptions are dictionaries with keys like PRCD, PRDESC, PRVAL, DBTYP (Phase 3)
+        # We expose PRCD as the canonical code
+        all_type_codes = [str(row.get("PRCD")) for row in datatype_rows if row.get("PRCD")]
+
+        # Build parsed option buckets using both PRCD (code) and PRVAL (database type)
+        # to drive "closest fit" suggestions.
+        import re
+
+        def _parse_int(value) -> Optional[int]:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        # Buckets
+        string_buckets: list[tuple[int, str]] = []  # (length, PRCD)
+        numeric_buckets: list[tuple[int, int, str]] = []  # (precision, scale, PRCD)
+        generic_string_codes: list[str] = []
+        integer_like_codes: list[str] = []
+        bigint_like_codes: list[str] = []
+        decimal_like_codes: list[str] = []  # Generic DECIMAL/NUMERIC/NUMBER without explicit p,s
+        date_like_codes: list[str] = []
+        timestamp_like_codes: list[str] = []
+        time_like_codes: list[str] = []
+
+        for row in datatype_rows:
+            code_raw = row.get("PRCD")
+            val_raw = row.get("PRVAL")
+            if not code_raw:
+                continue
+            code = str(code_raw)
+            val = str(val_raw) if val_raw is not None else ""
+            cu = code.upper()
+            vu = val.upper()
+
+            # Identify date/time
+            if "TIMESTAMP" in cu or "TIMESTAMP" in vu:
+                timestamp_like_codes.append(code)
+            if "DATE" in cu or "DATE" in vu:
+                date_like_codes.append(code)
+            if " TIME" in cu or " TIME" in vu:  # avoid matching 'TIMESTAMP' here
+                time_like_codes.append(code)
+
+            # Identify generic families
+            if any(tok in cu for tok in ["INTEGER", " INT"]):  # ' INT' avoids capturing 'BIGINT' here
+                if "BIGINT" not in cu:
+                    integer_like_codes.append(code)
+            if "BIGINT" in cu:
+                bigint_like_codes.append(code)
+            if any(tok in cu for tok in ["DECIMAL", "NUMERIC", "NUMBER"]):
+                decimal_like_codes.append(code)
+            if any(tok in cu for tok in ["CHAR", "VARCHAR", "STRING", "TEXT", "CLOB", "NCHAR", "NVARCHAR"]):
+                generic_string_codes.append(code)
+
+            # Parse PRVAL patterns
+            # String length patterns, e.g. VARCHAR2(30), VARCHAR(50), CHAR(10)
+            m_len = re.search(r"(VARCHAR2|VARCHAR|CHAR|NCHAR|NVARCHAR|TEXT|CLOB)\s*\(\s*(\d+)\s*\)", vu)
+            if m_len:
+                length = _parse_int(m_len.group(2))
+                if length:
+                    string_buckets.append((length, code))
+
+            # Numeric patterns, e.g. DECIMAL(10,2), NUMBER(22), NUMERIC(18,0)
+            m_num = re.search(r"(NUMBER|NUMERIC|DECIMAL)\s*\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)", vu)
+            if m_num:
+                prec = _parse_int(m_num.group(2))
+                sca = _parse_int(m_num.group(3)) if m_num.group(3) is not None else 0
+                if prec is not None:
+                    numeric_buckets.append((prec, sca or 0, code))
+                continue  # done with PRVAL parsing
+
+            # Parse PRCD patterns as a fallback, e.g. String20, Number22, Decimal10_2, "money 10"
+            # StringN
+            m_code_len = re.search(r"(STRING|CHAR|VARCHAR|NCHAR|NVARCHAR)\s*[_ ]?\s*(\d+)$", cu)
+            if m_code_len:
+                length = _parse_int(m_code_len.group(2))
+                if length:
+                    string_buckets.append((length, code))
+
+            # Decimal10_2 / Number22 / Money 10
+            m_code_num = re.search(r"(DECIMAL|NUMERIC|NUMBER|MONEY)\s*(_|\s)?\s*(\d+)(?:[_\s,]+(\d+))?$", cu)
+            if m_code_num:
+                prec = _parse_int(m_code_num.group(3))
+                sca = _parse_int(m_code_num.group(4)) if m_code_num.group(4) is not None else 0
+                if prec is not None:
+                    numeric_buckets.append((prec, sca or 0, code))
+
+        def suggest_type_for_source(
+            source_type: str,
+            source_precision: Optional[int],
+            source_scale: Optional[int],
+        ) -> Optional[str]:
+            """
+            Heuristic mapping from source type + precision/scale to one of the
+            available target type codes (PRCD) from DMS_PARAMS (PRTYP='Datatype').
+
+            This is designed to work well with common PRCD conventions like:
+            - String5, String20, String255
+            - Integer, BigInt, Number, Decimal10_2
+            - Date, Timestamp
+            """
+            if not source_type or not all_type_codes:
+                return None
+
+            st = str(source_type).upper()
+            sp = source_precision
+            ss = source_scale
+
+            # Build quick lookup structures once per call
+            codes_upper = [(c, str(c).upper()) for c in all_type_codes]
+
+            # 1) Date / time
+            if any(tok in st for tok in ["DATE", "TIMESTAMP", "TIME"]):
+                # Prefer TIMESTAMP when source indicates it
+                if "TIMESTAMP" in st:
+                    for c, cu in codes_upper:
+                        if "TIMESTAMP" in cu or cu in ("TS",):
+                            return c
+                # Otherwise prefer DATE
+                for c, cu in codes_upper:
+                    if cu == "DATE" or "DATE" in cu:
+                        return c
+                # Fallback: any time-like option
+                for c, cu in codes_upper:
+                    if any(k in cu for k in ["TIME", "TS"]):
+                        return c
+
+            # 2) Character / string (use length/precision to choose nearest bucket like String20)
+            if any(tok in st for tok in ["CHAR", "VARCHAR", "TEXT", "CLOB", "STRING", "NCHAR", "NVARCHAR"]):
+                if string_buckets and isinstance(sp, int) and sp > 0:
+                    # Choose the smallest StringN that can fit (>= length). If none, choose max.
+                    string_buckets_sorted = sorted(string_buckets, key=lambda x: x[0])
+                    for n, code in string_buckets_sorted:
+                        if n >= sp:
+                            return code
+                    return string_buckets_sorted[-1][1]
+
+                # No size buckets available - fallback to a generic string-ish code
+                for code in generic_string_codes:
+                    return code
+                for c, cu in codes_upper:
+                    if any(k in cu for k in ["STRING", "CHAR", "VARCHAR", "TEXT", "CLOB", "NCHAR", "NVARCHAR"]):
+                        return c
+
+            # 3) Numeric
+            if any(tok in st for tok in ["NUMBER", "NUMERIC", "DECIMAL", "INT", "BIGINT", "SMALLINT", "FLOAT", "DOUBLE", "MONEY"]):
+                # If scale exists and is > 0, prefer a DECIMAL/NUMERIC style code
+                if isinstance(ss, int) and ss > 0:
+                    # Find a numeric bucket with both precision and scale that can fit
+                    candidates = [
+                        (p, s, code) for (p, s, code) in numeric_buckets
+                        if p is not None and p >= (sp or 0) and s is not None and s >= ss
+                    ]
+                    if candidates:
+                        p, s, code = sorted(candidates, key=lambda x: (x[0], x[1]))[0]
+                        return code
+                    # Fallback to any decimal-like code
+                    for code in decimal_like_codes:
+                        return code
+
+                # Integer-like if scale is 0/None
+                if isinstance(sp, int) and sp > 0:
+                    # Try integer/bigint preferences based on typical thresholds
+                    if sp <= 9 and integer_like_codes:
+                        return integer_like_codes[0]
+                    if sp <= 18 and bigint_like_codes:
+                        return bigint_like_codes[0]
+
+                    # If there are precision-based numeric buckets like Number22/Decimal22, choose nearest >=
+                    candidates = [
+                        (p, s, code) for (p, s, code) in numeric_buckets
+                        if p is not None and p >= sp and (s is None or s == 0)
+                    ]
+                    if candidates:
+                        p, s, code = sorted(candidates, key=lambda x: (x[0], x[1]))[0]
+                        return code
+
+                # Last resort: any numeric-ish code
+                for code in decimal_like_codes or integer_like_codes or bigint_like_codes:
+                    return code
+                for c, cu in codes_upper:
+                    if any(k in cu for k in ["NUM", "DEC", "INT", "NUMBER", "BIGINT"]):
+                        return c
+
+            # 4) Fallback: no suggestion
+            return None
+
+        # Step 5: Build column list (including precision/scale where available)
+        columns: List[ExtractedColumn] = []
+        for col in description:
+            # Cursor description structure is driver-specific; we only rely on name and type object
+            col_name = str(col[0]) if col and col[0] is not None else ""
+
+            source_type_str: Optional[str] = None
+            source_precision: Optional[int] = None
+            source_scale: Optional[int] = None
+
+            # Common pattern: description is a sequence with type object at index 1
+            type_obj = col[1] if len(col) > 1 else None
+            if type_obj is not None:
+                source_type_str = str(type_obj)
+                # Try Oracle-style type object attributes
+                if hasattr(type_obj, "precision"):
+                    try:
+                        source_precision = int(type_obj.precision) if type_obj.precision is not None else None
+                    except (TypeError, ValueError):
+                        source_precision = None
+                if hasattr(type_obj, "scale"):
+                    try:
+                        source_scale = int(type_obj.scale) if type_obj.scale is not None else None
+                    except (TypeError, ValueError):
+                        source_scale = None
+                # For character types, some drivers expose length via .size
+                if source_precision is None and hasattr(type_obj, "size"):
+                    try:
+                        size_val = getattr(type_obj, "size", None)
+                        if isinstance(size_val, int) and size_val > 0:
+                            source_precision = size_val
+                    except Exception:
+                        pass
+
+            # Psycopg2-style: precision/scale at fixed positions (4, 5)
+            if source_precision is None and len(col) > 4:
+                try:
+                    prec_val = col[4]
+                    source_precision = int(prec_val) if prec_val is not None else None
+                except (TypeError, ValueError):
+                    source_precision = None
+            if source_scale is None and len(col) > 5:
+                try:
+                    scale_val = col[5]
+                    source_scale = int(scale_val) if scale_val is not None else None
+                except (TypeError, ValueError):
+                    source_scale = None
+
+            # Fallback for character types where precision is not populated:
+            # use display/internal size from the cursor description if available.
+            if (
+                source_precision is None
+                and source_type_str
+                and any(tok in source_type_str.upper() for tok in ["CHAR", "VARCHAR", "TEXT", "CLOB", "NCHAR", "NVARCHAR"])
+            ):
+                # Many DB-API descriptions are: (name, type_code, display_size, internal_size, precision, scale, null_ok)
+                # Try display_size (index 2) or internal_size (index 3).
+                try:
+                    if len(col) > 2 and isinstance(col[2], int) and col[2] > 0:
+                        source_precision = col[2]
+                    elif len(col) > 3 and isinstance(col[3], int) and col[3] > 0:
+                        source_precision = col[3]
+                except Exception:
+                    pass
+
+            suggested_type = suggest_type_for_source(
+                source_type_str or "",
+                source_precision,
+                source_scale,
+            )
+
+            columns.append(
+                ExtractedColumn(
+                    column_name=col_name,
+                    source_data_type=source_type_str,
+                    source_precision=source_precision,
+                    source_scale=source_scale,
+                    suggested_data_type=suggested_type,
+                    suggested_data_type_options=all_type_codes,
+                    nullable=None,
+                    is_primary_key=None,
+                )
+            )
+
+        return ExtractSqlColumnsResponse(
+            success=True,
+            message=f"Successfully extracted {len(columns)} columns from SQL",
+            columns=columns,
+            source_table=None,
+            source_schema=None,
+            sql_content=sql_content,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"extract_sql_columns: unexpected error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while extracting SQL columns: {str(e)}",
+        )
+    finally:
+        # Only close metadata_conn if it's not the same as source_conn
+        try:
+            if metadata_conn and metadata_conn is not source_conn:
+                metadata_conn.close()
+        except Exception:
+            pass
+        # If source_conn is a separate target connection, close it
+        try:
+            if source_conn and source_conn is not metadata_conn:
+                source_conn.close()
+        except Exception:
+            pass
+
+
+class CheckSqlDuplicateRequest(BaseModel):
+    sql_content: str
+    connection_id: Optional[int] = None
+    similarity_threshold: float = 0.7
+
+
+class SimilarQuery(BaseModel):
+    sql_code: str
+    similarity_score: float
+    sql_content: str
+
+
+class CheckSqlDuplicateResponse(BaseModel):
+    has_exact_match: bool
+    exact_match_code: Optional[str] = None
+    similar_queries: List[SimilarQuery] = []
+
+
+@router.post("/check-sql-duplicate", response_model=CheckSqlDuplicateResponse)
+async def check_sql_duplicate(payload: CheckSqlDuplicateRequest):
+    """
+    Check if a given SQL already exists (exactly or similarly) in DMS_MAPRSQL.
+
+    Uses simplified normalization + string similarity (difflib) and returns
+    any matches above the provided similarity threshold (default: 0.7).
+    """
+    data = payload.model_dump()
+    sql_content = (data.get("sql_content") or "").strip()
+    similarity_threshold = float(data.get("similarity_threshold") or 0.7)
+
+    if not sql_content:
+        raise HTTPException(
+            status_code=400, detail="sql_content must not be empty"
+        )
+
+    normalized_new = _normalize_sql(sql_content)
+    if not normalized_new:
+        raise HTTPException(
+            status_code=400,
+            detail="Normalized SQL content is empty; please provide a valid SQL",
+        )
+
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        if not conn:
+            raise HTTPException(
+                status_code=500, detail="Failed to create metadata connection"
+            )
+
+        db_type = _detect_db_type_from_connection(conn)
+        cursor = conn.cursor()
+        try:
+            if db_type == "POSTGRESQL":
+                query = (
+                    "SELECT MAPRSQLCD, MAPRSQL "
+                    "FROM DMS_MAPRSQL WHERE CURFLG = 'Y'"
+                )
+                cursor.execute(query)
+            else:
+                query = (
+                    "SELECT MAPRSQLCD, MAPRSQL "
+                    "FROM DMS_MAPRSQL WHERE CURFLG = 'Y'"
+                )
+                cursor.execute(query)
+
+            rows = cursor.fetchall() or []
+        finally:
+            cursor.close()
+
+        has_exact_match = False
+        exact_match_code: Optional[str] = None
+        similar: List[SimilarQuery] = []
+
+        for row in rows:
+            code = str(row[0])
+            sql_value = row[1]
+            existing_sql = (
+                sql_value.read() if hasattr(sql_value, "read") else str(sql_value)
+            )
+            normalized_existing = _normalize_sql(existing_sql)
+            if not normalized_existing:
+                continue
+
+            if normalized_existing == normalized_new:
+                has_exact_match = True
+                exact_match_code = code
+                # Even if exact match is found, continue to collect other similar queries
+
+            score = _calculate_sql_similarity(normalized_new, normalized_existing)
+            if score >= similarity_threshold:
+                similar.append(
+                    SimilarQuery(
+                        sql_code=code,
+                        similarity_score=round(score, 4),
+                        sql_content=existing_sql,
+                    )
+                )
+
+        # Sort similar queries by descending similarity
+        similar_sorted = sorted(
+            similar, key=lambda x: x.similarity_score, reverse=True
+        )
+
+        return CheckSqlDuplicateResponse(
+            has_exact_match=has_exact_match,
+            exact_match_code=exact_match_code,
+            similar_queries=similar_sorted[:5],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        error(f"check_sql_duplicate: unexpected error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while checking SQL duplicates: {str(e)}",
+        )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 class ValidateLogicRequest(BaseModel):
@@ -1293,6 +2015,3 @@ async def upload_file(file: UploadFile = File(...)):
         return response_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error in upload_file: {str(e)}")
-
-
-

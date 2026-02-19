@@ -6,6 +6,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
 import { useClickOutside } from '@/hooks/useClickOutside';
 import { useAuth } from '@/app/context/AuthContext';
+import { useSaveContext } from '@/context/SaveContext';
+import { Save as SaveIcon, ArrowBack as ArrowBackIcon } from '@mui/icons-material';
 import { 
   LightModeOutlined,
   DarkModeOutlined,
@@ -29,7 +31,7 @@ const getPageTitle = (pathname) => {
       return 'Data Management Solution';
     case '/jobs':
       return 'Jobs';
-    case '/type_mapper':
+    case '/parameters':
       return 'Parameters';
     case '/admin':
       return 'Admin';
@@ -56,6 +58,9 @@ const getPageTitle = (pathname) => {
     case '/file_upload_module':
       return 'File Upload';
     case '/file_upload_history':
+      return 'File Upload History';
+    case '/scheduler_status':
+      return 'Scheduler Status';
       return 'Upload History';
     default:
       return 'Menu';
@@ -72,7 +77,7 @@ const getGreeting = () => {
 const getIcon = (pathname) => {
   switch (pathname) {
     case '/mapper_module':
-    case '/type_mapper':
+    case '/parameters':
       return <SpeedOutlined className="w-4 h-4" />;
     case '/home':
       return <HomeOutlined className="w-4 h-4" />;
@@ -98,6 +103,7 @@ const NavBar = ({ userProfile, showProfile, setShowProfile, sidebarOpen }) => {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const saveContext = useSaveContext();
   const pageTitle = getPageTitle(pathname);
   const [greeting, setGreeting] = useState(getGreeting());
   const pageIcon = getIcon(pathname);
@@ -179,6 +185,52 @@ const NavBar = ({ userProfile, showProfile, setShowProfile, sidebarOpen }) => {
         
         {/* Right section */}
         <div className="flex items-center space-x-2">
+          {/* Save and Back buttons from SaveContext */}
+          {saveContext && saveContext.onSave && (
+            <>
+              {saveContext?.onBack && (
+                <button
+                  onClick={saveContext.onBack}
+                  disabled={!saveContext.canBack}
+                  className={`
+                    px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200
+                    flex items-center space-x-1.5
+                    ${darkMode
+                      ? saveContext.canBack
+                        ? 'bg-gray-800 text-gray-200 hover:bg-gray-700 border border-gray-700'
+                        : 'bg-gray-800/50 text-gray-500 border border-gray-800 cursor-not-allowed'
+                      : saveContext.canBack
+                        ? 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
+                        : 'bg-gray-50 text-gray-400 border border-gray-200 cursor-not-allowed'
+                    }
+                  `}
+                >
+                  <ArrowBackIcon className="w-3.5 h-3.5" />
+                  <span>Back</span>
+                </button>
+              )}
+              <button
+                onClick={saveContext.onSave}
+                disabled={!saveContext.canSave}
+                className={`
+                  px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200
+                  flex items-center space-x-1.5
+                  ${darkMode
+                    ? saveContext.canSave
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-blue-600/50 text-blue-300/50 cursor-not-allowed'
+                    : saveContext.canSave
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-blue-400 text-white/70 cursor-not-allowed'
+                  }
+                `}
+              >
+                <SaveIcon className="w-3.5 h-3.5" />
+                <span>{saveContext.label || 'Save'}</span>
+              </button>
+            </>
+          )}
+          
           {/* Fullscreen Toggle Button */}
           <button
             onClick={toggleFullscreen}

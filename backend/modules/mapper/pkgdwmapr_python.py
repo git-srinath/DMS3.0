@@ -393,13 +393,14 @@ def create_update_mapping(connection, p_mapref, p_mapdesc, p_trgschm, p_trgtbtyp
             w_msg = 'Invalid verification flag (Valid: Y,N).'
         elif not p_srcsystm:
             w_msg = 'Source system not provided.'
-        elif not p_trgschm:
+        elif not p_trgschm and not p_trgconid:
+            # Allow empty targetSchema if targetConnectionId is provided
             w_msg = 'Target Schema name not provided.'
-        elif ' ' in p_trgschm:
+        elif p_trgschm and ' ' in p_trgschm:
             w_msg = 'Target schema name must not contain blank spaces'
-        elif re.search(r'[^A-Za-z0-9_]', p_trgschm):
+        elif p_trgschm and re.search(r'[^A-Za-z0-9_]', p_trgschm):
             w_msg = 'Special characters not allowed to form target schema name.'
-        elif re.match(r'^\d', p_trgschm):
+        elif p_trgschm and re.match(r'^\d', p_trgschm):
             w_msg = 'Target schema name must not start with number.'
         elif ' ' in p_trgtbnm:
             w_msg = 'Target table name must not contain blank spaces'

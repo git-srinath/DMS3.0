@@ -61,7 +61,10 @@ class ProgressTracker:
         self.callback = callback
         self.update_interval = update_interval
         
-        self._lock = threading.Lock()
+        # Use RLock (reentrant lock) to allow nested lock acquisition
+        # This is needed because _maybe_trigger_callback() calls get_snapshot()
+        # which also needs the lock, and it's called from within update_chunk_started()
+        self._lock = threading.RLock()
         self._start_time = time.time()
         self._last_callback_time = 0.0
         

@@ -24,6 +24,7 @@ try:
         SchedulerRepositoryError,
     )
     from backend.modules.jobs.scheduler_models import QueueRequest
+    from backend.modules.common.db_adapter import get_db_adapter
 except ImportError:  # When running Flask app.py directly inside backend
     from modules.common.db_table_utils import (  # type: ignore
         get_postgresql_table_name,
@@ -37,6 +38,7 @@ except ImportError:  # When running Flask app.py directly inside backend
         SchedulerRepositoryError,
     )
     from modules.jobs.scheduler_models import QueueRequest  # type: ignore
+    from modules.common.db_adapter import get_db_adapter  # type: ignore
 
 
 def _read_lob(value):
@@ -102,70 +104,62 @@ class JobExecutionEngine:
             if not job_flow:
                 raise SchedulerRepositoryError(f"No active job flow found for {mapref}")
 
-            # Get source connection if SQLCONID is specified
             sqlconid = job_flow.get("SQLCONID")
-            debug(f"SQLCONID from job flow: {sqlconid}")
-            if sqlconid:
-                try:
-                    # Support both FastAPI (package import) and legacy Flask (relative import) contexts
-                    try:
-                        from backend.database.dbconnect import create_target_connection
-                    except ImportError:  # When running Flask app.py directly inside backend
-                        from database.dbconnect import create_target_connection  # type: ignore
-                    source_conn = create_target_connection(sqlconid)
-                    if source_conn:
-                        info(f"Using source connection (ID: {sqlconid}) for SELECT queries")
-                    else:
-                        warning(f"Source connection ID {sqlconid} not found, using metadata connection for source")
-                except Exception as e:
-                    error(f"Failed to create source connection {sqlconid}: {e}. Using metadata connection for source.")
-                    import traceback
-                    debug(f"Source connection creation traceback: {traceback.format_exc()}")
-            else:
-                debug("No SQLCONID specified in job flow, using metadata connection for source queries")
-            
-            # Get target connection if TRGCONID is specified
             trgconid = job_flow.get("TRGCONID")
+            debug(f"SQLCONID from job flow: {sqlconid}")
             debug(f"TRGCONID from job flow: {trgconid}")
-            if trgconid:
+
+            if not sqlconid:
+                raise SchedulerRepositoryError(
+                    f"Missing SQLCONID for {mapref}. Source connection (Oracle) is required."
+                )
+            if not trgconid:
+                raise SchedulerRepositoryError(
+                    f"Missing TRGCONID for {mapref}. Target connection (MySQL) is required."
+                )
+            if str(sqlconid) == str(trgconid):
+                raise SchedulerRepositoryError(
+                    f"Invalid job flow for {mapref}: SQLCONID and TRGCONID must be different."
+                )
+
+            try:
+                # Support both FastAPI (package import) and legacy Flask (relative import) contexts
                 try:
-                    # Support both FastAPI (package import) and legacy Flask (relative import) contexts
-                    try:
-                        from backend.database.dbconnect import create_target_connection
-                    except ImportError:  # When running Flask app.py directly inside backend
-                        from database.dbconnect import create_target_connection  # type: ignore
-                    target_conn = create_target_connection(trgconid)
-                    if target_conn:
-                        # Verify the target connection can access the schema
-                        try:
-                            target_db_type = _detect_db_type(target_conn)
-                            test_cursor = target_conn.cursor()
-                            
-                            # Try to query the current user/schema with database-specific syntax
-                            if target_db_type == "POSTGRESQL":
-                                test_cursor.execute("SELECT current_user")
-                                current_user = test_cursor.fetchone()[0]
-                                test_cursor.execute("SELECT current_schema()")
-                                current_schema = test_cursor.fetchone()[0]
-                            else:  # Oracle
-                                test_cursor.execute("SELECT USER FROM DUAL")
-                                current_user = test_cursor.fetchone()[0]
-                                test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
-                                current_schema = test_cursor.fetchone()[0]
-                            
-                            test_cursor.close()
-                            info(f"Using target connection (ID: {trgconid}) - Current user: {current_user}, Current schema: {current_schema}")
-                        except Exception as test_e:
-                            warning(f"Could not verify target connection schema: {test_e}")
-                            info(f"Using target connection (ID: {trgconid}) for job execution")
-                    else:
-                        warning(f"Target connection ID {trgconid} not found, using metadata connection")
-                except Exception as e:
-                    error(f"Failed to create target connection {trgconid}: {e}. Using metadata connection.")
-                    import traceback
-                    debug(f"Target connection creation traceback: {traceback.format_exc()}")
-            else:
-                debug("No TRGCONID specified in job flow, using metadata connection for target operations")
+                    from backend.database.dbconnect import create_target_connection
+                except ImportError:  # When running Flask app.py directly inside backend
+                    from database.dbconnect import create_target_connection  # type: ignore
+
+                source_conn = create_target_connection(sqlconid)
+                if not source_conn:
+                    raise SchedulerRepositoryError(
+                        f"Source connection ID {sqlconid} not found or inactive for {mapref}."
+                    )
+                target_conn = create_target_connection(trgconid)
+                if not target_conn:
+                    raise SchedulerRepositoryError(
+                        f"Target connection ID {trgconid} not found or inactive for {mapref}."
+                    )
+            except SchedulerRepositoryError:
+                raise
+            except Exception as e:
+                raise SchedulerRepositoryError(
+                    f"Failed to initialize source/target connections for {mapref}: {e}"
+                ) from e
+
+            source_db_type = _detect_db_type(source_conn)
+            target_db_type = _detect_db_type(target_conn)
+
+            if source_db_type != "ORACLE":
+                raise SchedulerRepositoryError(
+                    f"Invalid source DB type for {mapref}: expected ORACLE, got {source_db_type}."
+                )
+            if target_db_type != "MYSQL":
+                raise SchedulerRepositoryError(
+                    f"Invalid target DB type for {mapref}: expected MYSQL, got {target_db_type}."
+                )
+
+            info(f"Using source connection (ID: {sqlconid}, type: {source_db_type}) for SELECT queries")
+            info(f"Using target connection (ID: {trgconid}, type: {target_db_type}) for DML/DDL operations")
 
             # Handle truncate & load if requested
             truncate_flag = params.get("truncate_flag", "N")
@@ -176,14 +170,29 @@ class JobExecutionEngine:
                     target_db = target_conn if target_conn else conn
                     try:
                         target_db_type = _detect_db_type(target_db)
+                        debug(f"[truncate] Detected target DB type: {target_db_type}, schema: {target_schema}, table: {target_table}")
                         t_cursor = target_db.cursor()
-                        if target_db_type == "POSTGRESQL":
-                            # Use quoted identifiers to handle case-sensitive names
-                            full_name = f'"{target_schema}"."{target_table}"' if target_schema else f'"{target_table}"'
-                            t_cursor.execute(f"TRUNCATE TABLE {full_name}")
-                        else:  # Oracle
-                            full_name = f"{target_schema}.{target_table}" if target_schema else target_table
-                            t_cursor.execute(f"TRUNCATE TABLE {full_name}")
+                        
+                        # Use database adapter to format table name correctly for each DB type
+                        try:
+                            adapter = get_db_adapter(target_db_type)
+                            adapter_name = type(adapter).__name__
+                            debug(f"[truncate] Using adapter: {adapter_name}")
+                            full_name = adapter.format_table_ref(target_schema, target_table)
+                            debug(f"[truncate] Formatted table name: {full_name}")
+                        except Exception as adapter_err:
+                            # Fallback to simple formatting if adapter fails
+                            warning(f"[truncate] Failed to get adapter for {target_db_type}, using fallback: {adapter_err}")
+                            if target_db_type == "POSTGRESQL":
+                                full_name = f'"{target_schema}"."{target_table}"' if target_schema else f'"{target_table}"'
+                            elif target_db_type == "MYSQL":
+                                # MySQL: use backticks and table name only
+                                full_name = f"`{target_table}`"
+                            else:
+                                full_name = f"{target_schema}.{target_table}" if target_schema else target_table
+                        
+                        debug(f"[truncate] Executing: TRUNCATE TABLE {full_name}")
+                        t_cursor.execute(f"TRUNCATE TABLE {full_name}")
                         target_db.commit()
                         info(f"[truncate] Cleared target table before load: {full_name}")
                     except Exception as trunc_err:
@@ -238,7 +247,6 @@ class JobExecutionEngine:
             )
             
             debug(f"Code type detection - Python: {is_python}, PL/SQL: {is_plsql}")
-            debug(f"First 500 chars of code: {code[:500]}")
             
             # Default to Python if unclear (new code is Python)
             if is_plsql:
@@ -337,7 +345,6 @@ class JobExecutionEngine:
                     raise RuntimeError(f"Syntax error in generated code for {mapref}: {e}") from e
                 except Exception as e:
                     error(f"Error executing generated code for {mapref}: {type(e).__name__}: {e}")
-                    error(f"First 500 chars of code:\n{code[:500]}")
                     import traceback
                     error(f"Traceback:\n{traceback.format_exc()}")
                     raise RuntimeError(f"Error executing generated code for {mapref}: {e}") from e
@@ -422,68 +429,30 @@ class JobExecutionEngine:
                             sys.stdout = stdout_capture
                             
                             # Log to captured output (will be visible in logs)
-                            print(f"[EXECUTION ENGINE] About to call execute_job for {mapref}")
+                            debug(f"[EXECUTION ENGINE] About to call execute_job for {mapref}")
                             
                             # Determine which connection(s) to use based on function signature
                             if param_count == 2:
                                 # Old signature: execute_job(connection, session_params)
-                                # Use target connection if available, else metadata connection
-                                execution_conn = target_conn if target_conn else conn
+                                # Pass target connection for backward compatibility
+                                execution_conn = target_conn
                                 debug(f"Using old signature (2 params): execute_job(connection, session_params)")
-                                if target_conn:
-                                    debug(f"Using TARGET connection for old signature")
-                                    # Verify target connection schema access
-                                    try:
-                                        target_db_type = _detect_db_type(target_conn)
-                                        test_cursor = target_conn.cursor()
-                                        
-                                        # Use database-specific syntax
-                                        if target_db_type == "POSTGRESQL":
-                                            test_cursor.execute("SELECT current_user")
-                                            conn_user = test_cursor.fetchone()[0]
-                                            test_cursor.execute("SELECT current_schema()")
-                                            conn_schema = test_cursor.fetchone()[0]
-                                        else:  # Oracle
-                                            test_cursor.execute("SELECT USER FROM DUAL")
-                                            conn_user = test_cursor.fetchone()[0]
-                                            test_cursor.execute("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL")
-                                            conn_schema = test_cursor.fetchone()[0]
-                                        
-                                        test_cursor.close()
-                                        debug(f"Target connection user: {conn_user}, schema: {conn_schema}")
-                                    except Exception as e:
-                                        debug(f"Could not verify target connection details: {e}")
-                                else:
-                                    debug(f"Using METADATA connection (no target connection available)")
+                                debug(f"Using TARGET connection for old signature")
                                 return execute_job(execution_conn, execution_args) or {}
                             elif param_count == 3:
                                 # Old signature: execute_job(metadata_connection, target_connection, session_params)
-                                # Use source connection for source if available, else metadata
                                 metadata_exec_conn = conn  # Always use metadata connection for logging
-                                source_exec_conn = source_conn if source_conn else conn  # Use source if available, else metadata
-                                target_exec_conn = target_conn if target_conn else conn  # Use target if available, else metadata
+                                target_exec_conn = target_conn
                                 debug(f"Using signature (3 params): execute_job(metadata_connection, target_connection, session_params)")
-                                debug(f"Note: This is backward compatibility mode - source and target may be same connection")
-                                if target_conn:
-                                    debug(f"Using separate connections: metadata for logging, target for data")
-                                else:
-                                    debug(f"Using metadata connection for both (no target connection specified)")
-                                # For backward compatibility, pass metadata as source and target as target
                                 return execute_job(metadata_exec_conn, target_exec_conn, execution_args) or {}
                             elif param_count == 4:
                                 # New signature: execute_job(metadata_connection, source_connection, target_connection, session_params)
                                 metadata_exec_conn = conn  # Always use metadata connection for logging
-                                source_exec_conn = source_conn if source_conn else conn  # Use source if available, else metadata
-                                target_exec_conn = target_conn if target_conn else conn  # Use target if available, else metadata
+                                source_exec_conn = source_conn
+                                target_exec_conn = target_conn
                                 debug(f"Using new signature (4 params): execute_job(metadata_connection, source_connection, target_connection, session_params)")
-                                if source_conn:
-                                    debug(f"Using SOURCE connection (ID: {sqlconid}) for SELECT queries")
-                                else:
-                                    debug(f"Using metadata connection for source queries (no SQLCONID specified)")
-                                if target_conn:
-                                    debug(f"Using TARGET connection (ID: {trgconid}) for INSERT/UPDATE operations")
-                                else:
-                                    debug(f"Using metadata connection for target operations (no TRGCONID specified)")
+                                debug(f"Using SOURCE connection (ID: {sqlconid}) for SELECT queries")
+                                debug(f"Using TARGET connection (ID: {trgconid}) for INSERT/UPDATE operations")
                                 return execute_job(metadata_exec_conn, source_exec_conn, target_exec_conn, execution_args) or {}
                             else:
                                 raise RuntimeError(f"execute_job has unexpected signature: {param_count} parameters (expected 2, 3, or 4)")
@@ -711,20 +680,147 @@ class JobExecutionEngine:
     def _handle_stop_request(self, request: QueueRequest) -> Dict[str, Any]:
         """
         Handle stop request for a running job.
+        Updates DMS_PRCLOG status to 'STOPPED' for stalled jobs that aren't actively processing.
         The actual cancellation happens in the generated job code which checks for stop requests
-        during batch processing. This handler just acknowledges the request.
+        during batch processing.
         """
         info(
             f"Stop request received for {request.mapref} (request_id={request.request_id})"
         )
         
-        # The stop request stays in DMS_PRCREQ with status 'CLAIMED' until the running job
-        # acknowledges it and marks it as DONE. The generated job code polls for stop requests
-        # and performs the actual cancellation.
+        # Extract start_timestamp from payload to match the job
+        start_timestamp = None
+        force = "N"
+        if request.payload:
+            import json
+            if isinstance(request.payload, str):
+                payload = json.loads(request.payload)
+            else:
+                payload = request.payload
+            
+            if "start_timestamp" in payload:
+                from datetime import datetime
+                start_timestamp = datetime.fromisoformat(payload["start_timestamp"].replace("Z", "+00:00"))
+            force = payload.get("force", "N")
+        
+        # Update DMS_PRCLOG status to 'STOPPED' for matching job
+        # This handles stalled jobs that aren't actively processing
+        try:
+            with self._db_connection() as (conn, cursor):
+                db_type = _detect_db_type(conn)
+                schema = os.getenv("DMS_SCHEMA", "TRG")
+                
+                if db_type == "POSTGRESQL":
+                    from backend.modules.common.db_table_utils import get_postgresql_table_name
+                    schema_lower = schema.lower() if schema else "public"
+                    dms_prclog_table = get_postgresql_table_name(cursor, schema_lower, "DMS_PRCLOG")
+                    dms_prclog_ref = f'"{dms_prclog_table}"' if dms_prclog_table != dms_prclog_table.lower() else dms_prclog_table
+                    schema_prefix = f"{schema_lower}." if schema else ""
+                    dms_prclog_full = f"{schema_prefix}{dms_prclog_ref}"
+                    
+                    # Update status to FL (failed) for jobs matching mapref and start timestamp
+                    # DMS_PRCLOG.status is 2 characters, so use 'FL' instead of 'STOPPED'
+                    if start_timestamp:
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prclog_full}
+                            SET status = 'FL',
+                                enddt = CURRENT_TIMESTAMP,
+                                recupdt = CURRENT_TIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = %s
+                              AND status IN ('IP', 'CLAIMED')
+                              AND strtdt >= %s - INTERVAL '1 hour'
+                              AND strtdt <= %s + INTERVAL '1 hour'
+                            """,
+                            (request.mapref, start_timestamp, start_timestamp),
+                        )
+                    else:
+                        # If no timestamp, update most recent running job
+                        cursor.execute(
+                            f"""
+                            UPDATE {dms_prclog_full}
+                            SET status = 'FL',
+                                enddt = CURRENT_TIMESTAMP,
+                                recupdt = CURRENT_TIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = %s
+                              AND status IN ('IP', 'CLAIMED')
+                              AND prcid = (
+                                  SELECT prcid
+                                  FROM {dms_prclog_full}
+                                  WHERE mapref = %s
+                                    AND status IN ('IP', 'CLAIMED')
+                                  ORDER BY strtdt DESC
+                                  LIMIT 1
+                              )
+                            """,
+                            (request.mapref, request.mapref),
+                        )
+                else:  # Oracle
+                    schema_prefix = f"{schema}." if schema else ""
+                    if start_timestamp:
+                        cursor.execute(
+                            f"""
+                            UPDATE {schema_prefix}DMS_PRCLOG
+                            SET status = 'FL',
+                                enddt = SYSTIMESTAMP,
+                                recupdt = SYSTIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = :mapref
+                              AND status IN ('IP', 'CLAIMED')
+                              AND strtdt >= :start_ts - INTERVAL '1' HOUR
+                              AND strtdt <= :start_ts + INTERVAL '1' HOUR
+                            """,
+                            {
+                                "mapref": request.mapref,
+                                "start_ts": start_timestamp,
+                            },
+                        )
+                    else:
+                        # If no timestamp, update most recent running job
+                        cursor.execute(
+                            f"""
+                            UPDATE {schema_prefix}DMS_PRCLOG
+                            SET status = 'FL',
+                                enddt = SYSTIMESTAMP,
+                                recupdt = SYSTIMESTAMP,
+                                msg = 'Job stopped by user request'
+                            WHERE mapref = :mapref
+                              AND status IN ('IP', 'CLAIMED')
+                              AND prcid = (
+                                  SELECT prcid
+                                  FROM (
+                                      SELECT prcid
+                                      FROM {schema_prefix}DMS_PRCLOG
+                                      WHERE mapref = :mapref2
+                                        AND status IN ('IP', 'CLAIMED')
+                                      ORDER BY strtdt DESC
+                                  )
+                                  WHERE ROWNUM = 1
+                              )
+                            """,
+                            {
+                                "mapref": request.mapref,
+                                "mapref2": request.mapref,
+                            },
+                        )
+                
+                rows_updated = cursor.rowcount
+                conn.commit()
+                
+                if rows_updated > 0:
+                    info(f"Updated {rows_updated} job record(s) to FL status for {request.mapref}")
+                else:
+                    warning(f"No running job found to stop for {request.mapref} (may have already completed or stopped)")
+        
+        except Exception as e:
+            error(f"Error updating DMS_PRCLOG status for stop request: {e}", exc_info=True)
+            # Don't fail the stop request if status update fails
         
         return {
-            "status": "ACKNOWLEDGED",
-            "message": f"Stop request acknowledged for {request.mapref}. Job will stop at next batch boundary.",
+            "status": "FL",
+            "message": f"Stop request processed for {request.mapref}. Job status updated to FL (failed).",
         }
 
     # ------------------------------------------------------------------ #

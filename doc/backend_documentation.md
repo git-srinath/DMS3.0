@@ -44,7 +44,7 @@ backend/
 │   ├── login/              # Authentication module
 │   ├── manage_sql/         # SQL management module
 │   ├── mapper/             # Data mapping module
-│   └── type_mapping/       # Data type mapping module
+│   └── parameters/         # Parameters module
 ```
 
 ## Core Components

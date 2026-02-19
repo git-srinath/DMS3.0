@@ -28,6 +28,7 @@ import {
   EventNote,
   History as HistoryIcon,
   Archive as ArchiveIcon,
+  Schedule,
 } from '@mui/icons-material'
 
 const Page = () => {
@@ -123,7 +124,7 @@ const Page = () => {
     },
     {
       title: 'Parameters',
-      path: '/type_mapper',
+      path: '/parameters',
       gradient: 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)',
       description: 'Create and Manage Parameters.',
       icon: <AutoFixHigh sx={{ fontSize: '2rem', color: '#fff' }} />,
@@ -183,6 +184,15 @@ const Page = () => {
       delay: 0.8,
     },
     {
+      title: 'Scheduler Status',
+      accessKey: 'job_status_and_logs',
+      path: '/scheduler_status',
+      gradient: 'linear-gradient(135deg, #7DD3FC 0%, #0EA5E9 100%)',
+      description: 'Monitor scheduler activity and job statuses.',
+      icon: <Schedule sx={{ fontSize: '2rem', color: '#fff' }} />,
+      delay: 0.85,
+    },
+    {
       title: 'Security',
       path: '/security',
       gradient: 'linear-gradient(135deg, #64748B 0%, #475569 100%)',
@@ -219,6 +229,7 @@ const Page = () => {
   const logsStatusDashboardTitles = [
     'Logs & Status',
     'Dashboard',
+    'Scheduler Status',
   ];
 
   const mapCardsByTitles = (titles) =>

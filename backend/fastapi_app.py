@@ -12,7 +12,7 @@ if sys.platform == 'win32':
     multiprocessing.set_start_method('spawn', force=True)
 
 from backend.modules.login.fastapi_login import router as auth_router
-from backend.modules.type_mapping.fastapi_parameter_mapping import (
+from backend.modules.parameters.fastapi_parameter_mapping import (
     router as parameter_mapping_router,
 )
 from backend.modules.db_connections.fastapi_crud_dbconnections import (

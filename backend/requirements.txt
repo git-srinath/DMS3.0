@@ -3,6 +3,9 @@ flask_cors
 fastapi
 uvicorn
 email-validator
+PyJWT
+python-multipart
+getmac
 oracledb
 psycopg2-binary
 sqlalchemy
@@ -11,6 +14,7 @@ pandas
 openpyxl
 APScheduler
 pyarrow
+mysql-connector-python
 # File upload parsers (optional - parsers will work with fallbacks if not installed)
 lxml
 pdfplumber
