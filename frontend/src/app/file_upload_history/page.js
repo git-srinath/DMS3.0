@@ -24,7 +24,6 @@ import {
   Alert,
   Tooltip,
   Grid,
-  Collapse,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -37,7 +36,6 @@ import {
 } from "@mui/material";
 import {
   Refresh,
-  FilterList,
   Clear,
   CheckCircleOutline,
   ErrorOutline,
@@ -66,7 +64,6 @@ const FileUploadHistoryPage = () => {
   const [startDate, setStartDate] = useState("");
   const [limit, setLimit] = useState(50);
   const [loading, setLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(true); // Default to visible
   const [notification, setNotification] = useState({ open: false, message: "", severity: "info" });
   
   // Sorting state
@@ -253,7 +250,6 @@ const FileUploadHistoryPage = () => {
       const flupldrefParam = urlParams.get("flupldref");
       if (flupldrefParam) {
         setSelectedFlupldref(flupldrefParam);
-        setShowFilters(true);
       }
     }
   }, []);
@@ -445,34 +441,6 @@ const FileUploadHistoryPage = () => {
 
   return (
     <Box sx={{ p: 2.5 }}>
-      <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h5" fontWeight={600}>
-          File Upload History
-        </Typography>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button
-            variant={showFilters ? "contained" : "outlined"}
-            startIcon={<FilterList />}
-            onClick={() => setShowFilters(!showFilters)}
-            color={hasActiveFilters() ? "primary" : "inherit"}
-          >
-            Filters {hasActiveFilters() && `(${[selectedFlupldref, status, targetConnectionId, loadMode, fileType, fileName, startDate].filter(Boolean).length})`}
-          </Button>
-          <TextField
-            size="small"
-            type="number"
-            label="Limit"
-            value={limit}
-            onChange={(e) => setLimit(Number(e.target.value) || 10)}
-            sx={{ width: 100 }}
-            inputProps={{ min: 1, max: 500 }}
-          />
-          <Button variant="outlined" startIcon={<Refresh />} onClick={fetchRuns}>
-            Refresh
-          </Button>
-        </Stack>
-      </Stack>
-
       {/* Active Jobs Progress Section - Prominent Display */}
       {(() => {
         // More robust check - handle null/undefined and ensure we have actual jobs
@@ -544,26 +512,39 @@ const FileUploadHistoryPage = () => {
       )}
 
       {/* Filters Section */}
-      <Collapse in={showFilters}>
-        <Paper
-          elevation={darkMode ? 0 : 1}
-          sx={{
-            p: 2,
-            mb: 2,
-            borderRadius: 2,
-            border: darkMode ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(0,0,0,0.05)",
-          }}
-        >
-          <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-            <Typography variant="subtitle1" fontWeight={600}>
-              Filter Options
-            </Typography>
+      <Paper
+        elevation={darkMode ? 0 : 1}
+        sx={{
+          p: 2,
+          mb: 2,
+          borderRadius: 2,
+          border: darkMode ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(0,0,0,0.05)",
+        }}
+      >
+        <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="subtitle1" fontWeight={600}>
+            Filter Options
+          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <TextField
+              size="small"
+              type="number"
+              label="Limit"
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value) || 10)}
+              sx={{ width: 100 }}
+              inputProps={{ min: 1, max: 500 }}
+            />
+            <Button variant="outlined" startIcon={<Refresh />} onClick={fetchRuns}>
+              Refresh
+            </Button>
             {hasActiveFilters() && (
               <Button size="small" startIcon={<Clear />} onClick={clearFilters}>
                 Clear All
               </Button>
             )}
           </Stack>
+        </Stack>
           <Grid container spacing={2}>
             {/* 1. File Reference */}
             <Grid item xs={12} sm={6} md={3}>
@@ -653,7 +634,6 @@ const FileUploadHistoryPage = () => {
             </Grid>
           </Grid>
         </Paper>
-      </Collapse>
 
       <Paper
         elevation={darkMode ? 0 : 1}

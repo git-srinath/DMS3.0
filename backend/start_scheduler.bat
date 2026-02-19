@@ -16,8 +16,18 @@ set SCRIPT_DIR=%~dp0
 REM Change to backend directory
 cd /d "%SCRIPT_DIR%"
 
+REM Prefer project-root virtual environment Python
+set "VENV_PYTHON=%SCRIPT_DIR%..\.venv\Scripts\python.exe"
+if exist "%VENV_PYTHON%" (
+    set "PYTHON_CMD=%VENV_PYTHON%"
+    echo Using Python from project venv: %PYTHON_CMD%
+) else (
+    set "PYTHON_CMD=python"
+    echo Project venv not found, falling back to system Python
+)
+
 REM Check if Python is available
-python --version >nul 2>&1
+%PYTHON_CMD% --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Python is not installed or not in PATH
     echo Please install Python 3.8+ and add it to your PATH
@@ -57,7 +67,7 @@ echo Press Ctrl+C to stop the service
 echo ============================================
 echo.
 
-python -m modules.jobs.scheduler_service
+%PYTHON_CMD% -m modules.jobs.scheduler_service
 
 if errorlevel 1 (
     echo.

@@ -37,7 +37,7 @@ def process_scd_batch(
         target_conn: Target database connection
         target_schema: Target schema name
         target_table: Target table name
-        full_table_name: Full table name (schema.table)
+        full_table_name: Full table name (schema.table) - legacy, not used for formatting
         rows_to_insert: List of new rows to insert
         rows_to_update_scd1: List of rows to update (SCD Type 1)
         rows_to_update_scd2: List of SKEY values to expire (SCD Type 2)
@@ -54,24 +54,28 @@ def process_scd_batch(
     updated_count = 0
     expired_count = 0
     
+    # Format table name correctly for this database type
+    adapter = create_adapter_from_type(db_type)
+    formatted_table_name = adapter.format_table_name(target_schema, target_table)
+    
     try:
         # Process SCD Type 2 expiration first (before inserts)
         if rows_to_update_scd2:
             expired_count = _expire_scd2_records(
-                cursor, full_table_name, rows_to_update_scd2, db_type
+                cursor, formatted_table_name, rows_to_update_scd2, db_type
             )
         
         # Process SCD Type 1 updates
         if rows_to_update_scd1:
             updated_count = _update_scd1_records(
-                cursor, full_table_name, rows_to_update_scd1, all_columns, db_type
+                cursor, formatted_table_name, rows_to_update_scd1, all_columns, db_type
             )
         
         # Process inserts
         if rows_to_insert:
             inserted_count = _insert_records(
-                cursor, full_table_name, rows_to_insert, all_columns, 
-                target_type, db_type
+                cursor, formatted_table_name, rows_to_insert, all_columns, 
+                target_type, db_type, target_schema, target_table
             )
         
         cursor.close()
@@ -187,11 +191,13 @@ def _update_scd1_records(
 
 def _insert_records(
     cursor,
-    full_table_name: str,
+    formatted_table_name: str,
     rows_to_insert: List[Dict[str, Any]],
     all_columns: List[str],
     target_type: str,
-    db_type: str
+    db_type: str,
+    target_schema: str = None,
+    target_table: str = None
 ) -> int:
     """Insert new records."""
     if not rows_to_insert:
@@ -207,8 +213,11 @@ def _insert_records(
         
         cols_str = ", ".join(insert_cols)
         
-        # Get sequence nextval syntax
-        seq_name = full_table_name + "_SEQ"
+        # Get sequence nextval syntax - use schema.table for sequence name
+        if target_schema and target_table:
+            seq_name = f"{target_schema}.{target_table}_SEQ"
+        else:
+            seq_name = formatted_table_name + "_SEQ"
         seq_nextval = adapter.get_sequence_nextval(seq_name)
         
         if adapter.supports_named_parameters():
@@ -219,7 +228,7 @@ def _insert_records(
                 params.append(param_row)
             
             query = f"""
-                INSERT INTO {full_table_name} (SKEY, {cols_str}, RECCRDT, RECUPDT)
+                INSERT INTO {formatted_table_name} (SKEY, {cols_str}, RECCRDT, RECUPDT)
                 VALUES ({seq_nextval}, {vals_str}, {timestamp}, {timestamp})
             """
         else:
@@ -231,7 +240,7 @@ def _insert_records(
                 params.append(tuple(param_row))
             
             query = f"""
-                INSERT INTO {full_table_name} (SKEY, {cols_str}, RECCRDT, RECUPDT)
+                INSERT INTO {formatted_table_name} (SKEY, {cols_str}, RECCRDT, RECUPDT)
                 VALUES ({seq_nextval}, {vals_str}, {timestamp}, {timestamp})
             """
         

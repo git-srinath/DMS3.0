@@ -18,9 +18,11 @@ import traceback
 try:
     from backend.modules.logger import info, error, debug
     from backend.modules.common.id_provider import next_id as get_next_id
+    from backend.modules.common.db_adapter import get_db_adapter
 except ImportError:  # Fallback for Flask-style imports
     from modules.logger import info, error, debug  # type: ignore
     from modules.common.id_provider import next_id as get_next_id  # type: ignore
+    from modules.common.db_adapter import get_db_adapter  # type: ignore
 
 # Optional Oracle driver: allow scheduler to run even if oracledb is not installed.
 # Oracle-specific features will check for this at runtime.
@@ -57,11 +59,14 @@ def _detect_db_type(connection):
     module_name = builtins.type(connection).__module__
     connection_type = builtins.type(connection).__name__
     info(f"Detecting DB type - module: {module_name}, type: {connection_type}")
+    module_lower = module_name.lower()
     
-    if "psycopg" in module_name or "pg8000" in module_name:
+    if "psycopg" in module_lower or "pg8000" in module_lower:
         detected = "POSTGRESQL"
-    elif "oracledb" in module_name or "cx_Oracle" in module_name:
+    elif "oracledb" in module_lower or "cx_oracle" in module_lower:
         detected = "ORACLE"
+    elif "mysql" in module_lower:
+        detected = "MYSQL"
     else:
         detected = "ORACLE"  # Default fallback
     
@@ -201,7 +206,37 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
         # The target schema will come from job configuration (trgschm)
         metadata_schema = os.getenv('DMS_SCHEMA', 'TRG')
         
+        # Get database connection info to determine target database type for datatype lookup
+        # Phase 3: Support database-specific datatypes
+        target_dbtype = 'GENERIC'  # Default fallback
+        try:
+            if metadata_db_type == "POSTGRESQL":
+                dbtype_query = f"""
+                    SELECT COALESCE(dc.dbtyp, 'GENERIC')
+                    FROM {metadata_schema}.DMS_JOB j
+                    LEFT JOIN {metadata_schema}.DMS_DBCONNECT dc ON dc.conid = j.trgconid
+                    WHERE j.mapref = %s
+                """
+                cursor.execute(dbtype_query, (p_mapref,))
+            else:  # Oracle
+                dbtype_query = f"""
+                    SELECT COALESCE(dc.DBTYP, 'GENERIC')
+                    FROM {metadata_schema}.DMS_JOB j
+                    LEFT JOIN {metadata_schema}.DMS_DBCONNECT dc ON dc.CONID = j.TRGCONID
+                    WHERE j.MAPREF = :mapref
+                """
+                cursor.execute(dbtype_query, {'mapref': p_mapref})
+            
+            dbtype_row = cursor.fetchone()
+            if dbtype_row:
+                target_dbtype = dbtype_row[0] or 'GENERIC'
+        except Exception as dbtype_err:
+            # Fallback to GENERIC if we can't determine target database type
+            print(f"Warning: Could not determine target database type, using GENERIC: {str(dbtype_err)}")
+            target_dbtype = 'GENERIC'
+        
         # Query to get job details with column information
+        # Phase 3: Updated to filter datatypes by target database type
         if metadata_db_type == "POSTGRESQL":
             query = f"""
                 SELECT jd.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
@@ -209,12 +244,14 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                        p.prval
                 FROM {metadata_schema}.DMS_JOB j
                 JOIN {metadata_schema}.DMS_JOBDTL jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
-                JOIN {metadata_schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                JOIN {metadata_schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' 
+                                                    AND p.prcd = jd.trgcldtyp
+                                                    AND (p.dbtyp = %s OR p.dbtyp = 'GENERIC')
                 WHERE j.mapref = %s
                   AND j.curflg = 'Y'
-                ORDER BY jd.excseq
+                ORDER BY jd.excseq, p.dbtyp DESC NULLS LAST
             """
-            cursor.execute(query, (p_mapref,))
+            cursor.execute(query, (target_dbtype, p_mapref))
         else:  # Oracle
             query = f"""
                 SELECT jd.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm,
@@ -222,12 +259,14 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                        p.prval
                 FROM {metadata_schema}.DMS_JOB j
                 JOIN {metadata_schema}.DMS_JOBDTL jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
-                JOIN {metadata_schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                JOIN {metadata_schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' 
+                                                    AND p.prcd = jd.trgcldtyp
+                                                    AND (p.dbtyp = :dbtyp OR p.dbtyp = 'GENERIC')
                 WHERE j.mapref = :mapref
                   AND j.curflg = 'Y'
-                ORDER BY jd.excseq
+                ORDER BY jd.excseq, p.dbtyp DESC
             """
-            cursor.execute(query, {'mapref': p_mapref})
+            cursor.execute(query, {'dbtyp': target_dbtype, 'mapref': p_mapref})
         rows = cursor.fetchall()
         
         if not rows:
@@ -255,16 +294,17 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                 if target_connection is None:
                     raise Exception(f"Failed to create target connection for CONID {p_trgconid}")
                 
-                # Detect target database type
-                target_db_type = _detect_db_type(target_connection)
+                # Prefer DBTYP from metadata if available; fallback to connection detection
+                if target_dbtype and str(target_dbtype).upper() != "GENERIC":
+                    target_db_type = str(target_dbtype).upper()
+                else:
+                    target_db_type = _detect_db_type(target_connection)
+                adapter = get_db_adapter(target_db_type)
                 
                 # Validate connection is active by pinging the database
                 try:
                     test_cursor = target_connection.cursor()
-                    if target_db_type == "POSTGRESQL":
-                        test_cursor.execute("SELECT 1")
-                    else:  # Oracle
-                        test_cursor.execute("SELECT 1 FROM DUAL")
+                    test_cursor.execute(adapter.ping_sql())
                     test_cursor.fetchone()
                     test_cursor.close()
                     print(f"Target connection {p_trgconid} validated successfully")
@@ -283,6 +323,7 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
             target_connection = connection
             target_cursor = cursor
             target_db_type = metadata_db_type  # Same as metadata when using metadata connection
+            adapter = get_db_adapter(target_db_type)
             print(f"Using metadata connection for table operations (no target connection specified)")
         
         # Ensure target_cursor is set before use
@@ -290,31 +331,7 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
             raise Exception("Target cursor not initialized")
         
         # Check if table exists in target schema
-        if target_db_type == "POSTGRESQL":
-            # PostgreSQL: Use information_schema
-            target_cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = %s AND table_name = %s
-            """, (w_trgschm.lower(), w_trgtbnm.lower()))
-        else:  # Oracle
-            # Oracle: Use all_tables or user_tables
-            if p_trgconid:
-                # When using target connection, check using all_tables filtered by owner
-                target_cursor.execute("""
-                    SELECT table_name 
-                    FROM all_tables 
-                    WHERE owner = :owner AND table_name = :tbnm
-                """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper()})
-            else:
-                # When using metadata connection, check user_tables
-                target_cursor.execute("""
-                    SELECT table_name 
-                    FROM user_tables 
-                    WHERE table_name = :tbnm
-                """, {'tbnm': w_trgtbnm.upper()})
-        
-        table_exists = target_cursor.fetchone()
+        table_exists = adapter.table_exists(target_cursor, w_trgschm, w_trgtbnm)
         w_flg = 'Y' if table_exists else 'N'
         
         if w_flg == 'Y':
@@ -331,32 +348,7 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
             
             # Check if column exists in target table
             if w_flg == 'Y':  # Only check if table exists
-                if target_db_type == "POSTGRESQL":
-                    # PostgreSQL: Use information_schema
-                    target_cursor.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_schema = %s AND table_name = %s AND column_name = %s
-                    """, (w_trgschm.lower(), w_trgtbnm.lower(), trgclnm.lower()))
-                else:  # Oracle
-                    if p_trgconid:
-                        # Check using all_tab_columns filtered by owner
-                        target_cursor.execute("""
-                            SELECT column_name 
-                            FROM all_tab_columns 
-                            WHERE owner = :owner AND table_name = :tbnm AND column_name = :colnm
-                        """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper(), 'colnm': trgclnm.upper()})
-                    else:
-                        # Check using user_tab_columns
-                        target_cursor.execute("""
-                            SELECT column_name 
-                            FROM user_tab_columns 
-                            WHERE table_name = :tbnm AND column_name = :colnm
-                        """, {'tbnm': w_trgtbnm.upper(), 'colnm': trgclnm.upper()})
-                
-                column_exists = target_cursor.fetchone()
-                
-                if not column_exists:
+                if not adapter.column_exists(target_cursor, w_trgschm, w_trgtbnm, trgclnm):
                     missing_columns.append((trgclnm, prval))
             else:
                 # Table doesn't exist - collect all columns
@@ -385,88 +377,37 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
         if w_flg == 'N':
             # New table - add SKEY, RWHKEY, business columns, and audit columns
             if w_ddl:
-                # Start building CREATE TABLE statement
-                create_ddl = f"CREATE TABLE {w_tbnm} (\n"
-                
-                # Add SKEY and RWHKEY for DIM, FCT, MRT tables
-                if w_tbtyp in ('DIM', 'FCT', 'MRT'):
-                    if target_db_type == "POSTGRESQL":
-                        create_ddl += "  SKEY BIGINT PRIMARY KEY,\n"
-                        create_ddl += "  RWHKEY VARCHAR(32),\n"
-                    else:  # Oracle
-                        create_ddl += "  SKEY NUMBER(20) PRIMARY KEY,\n"
-                        create_ddl += "  RWHKEY VARCHAR2(32),\n"
-                
-                # Add business columns (already collected in w_ddl from the loop above)
-                create_ddl += w_ddl
-                
-                # Add dimension-specific columns (SCD Type 2)
+                create_columns = []
+                skey_col = adapter.get_skey_column(w_tbtyp)
+                if skey_col:
+                    create_columns.append(skey_col)
+                rwhkey_col = adapter.get_rwhkey_column(w_tbtyp)
+                if rwhkey_col:
+                    create_columns.append(rwhkey_col)
+
+                for trgclnm, prval in missing_columns:
+                    create_columns.append(f"{trgclnm} {prval}")
+
                 if w_tbtyp == 'DIM':
-                    if target_db_type == "POSTGRESQL":
-                        create_ddl += "  CURFLG VARCHAR(1),\n"
-                        create_ddl += "  FROMDT TIMESTAMP,\n"
-                        create_ddl += "  TODT TIMESTAMP,\n"
-                    else:  # Oracle
-                        create_ddl += "  CURFLG VARCHAR2(1),\n"
-                        create_ddl += "  FROMDT DATE,\n"
-                        create_ddl += "  TODT DATE,\n"
-                
-                # Add audit columns
-                if target_db_type == "POSTGRESQL":
-                    create_ddl += "  RECCRDT TIMESTAMP,\n"
-                    create_ddl += "  RECUPDT TIMESTAMP\n"
-                else:  # Oracle
-                    create_ddl += "  RECCRDT DATE,\n"
-                    create_ddl += "  RECUPDT DATE\n"
-                create_ddl += ")"
-                
-                # Replace w_ddl with complete CREATE statement
-                w_ddl = create_ddl
+                    create_columns.extend(adapter.get_dim_scd_columns())
+
+                create_columns.extend(adapter.get_audit_columns())
+
+                w_ddl = adapter.build_create_table(w_trgschm, w_trgtbnm, create_columns)
         else:
             # Existing table - add missing columns
             if w_ddl:
-                # Check if RWHKEY exists in target table
-                if target_db_type == "POSTGRESQL":
-                    target_cursor.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_schema = %s AND table_name = %s AND column_name = 'rwhkey'
-                    """, (w_trgschm.lower(), w_trgtbnm.lower()))
-                else:  # Oracle
-                    if p_trgconid:
-                        # Check using all_tab_columns filtered by owner
-                        target_cursor.execute("""
-                            SELECT column_name 
-                            FROM all_tab_columns 
-                            WHERE owner = :owner AND table_name = :tbnm AND column_name = 'RWHKEY'
-                        """, {'owner': w_trgschm.upper(), 'tbnm': w_trgtbnm.upper()})
-                    else:
-                        # Check using user_tab_columns
-                        target_cursor.execute("""
-                            SELECT column_name 
-                            FROM user_tab_columns 
-                            WHERE table_name = :tbnm AND column_name = 'RWHKEY'
-                        """, {'tbnm': w_trgtbnm.upper()})
-                
-                rwhkey_exists = target_cursor.fetchone()
-                
-                alter_cols = w_ddl.rstrip(',\n')
-                
-                # Add RWHKEY if it doesn't exist and table has SKEY
+                rwhkey_exists = adapter.column_exists(target_cursor, w_trgschm, w_trgtbnm, "RWHKEY")
+
+                alter_columns = [f"{trgclnm} {prval}" for trgclnm, prval in missing_columns]
+
                 if not rwhkey_exists and w_tbtyp in ('DIM', 'FCT', 'MRT'):
-                    if alter_cols:
-                        alter_cols += ",\n"
-                    if target_db_type == "POSTGRESQL":
-                        alter_cols += "  RWHKEY VARCHAR(32)"
-                    else:  # Oracle
-                        alter_cols += "  RWHKEY VARCHAR2(32)"
-                
-                if alter_cols:
-                    if target_db_type == "POSTGRESQL":
-                        # PostgreSQL: Use ADD COLUMN syntax (no parentheses)
-                        w_ddl = f"ALTER TABLE {w_tbnm} ADD COLUMN " + alter_cols.replace(',\n', ',\nADD COLUMN ').replace('\n', ' ')
-                    else:  # Oracle
-                        w_ddl = f"ALTER TABLE {w_tbnm} ADD (\n{alter_cols}\n)"
+                    rwhkey_col = adapter.get_rwhkey_column(w_tbtyp)
+                    if rwhkey_col:
+                        alter_columns.append(rwhkey_col)
+
+                if alter_columns:
+                    w_ddl = adapter.build_alter_table(w_trgschm, w_trgtbnm, alter_columns)
                 else:
                     w_ddl = None
         
@@ -479,57 +420,17 @@ def create_target_table(connection, p_mapref: str, p_trgconid: int = None) -> st
                 w_return = 'N'
                 _raise_error(w_procnm, '103', f"{w_parm}::DDL={w_ddl[:200]}", e)
         
-        # Create sequence for SKEY if needed (PostgreSQL uses SERIAL/BIGSERIAL, Oracle uses sequences)
-        if w_tbtyp in ('DIM', 'FCT', 'MRT'):
-            if target_db_type == "POSTGRESQL":
-                # PostgreSQL: Check if sequence exists
-                w_seq_name = f"{w_trgtbnm}_skey_seq"  # PostgreSQL auto-generated sequence name
-                try:
-                    target_cursor.execute("""
-                        SELECT sequence_name 
-                        FROM information_schema.sequences 
-                        WHERE sequence_schema = %s AND sequence_name = %s
-                    """, (w_trgschm.lower(), w_seq_name.lower()))
-                    seq_exists = target_cursor.fetchone()
-                    # Note: In PostgreSQL, sequences are auto-created with SERIAL/BIGSERIAL
-                    # So we don't need to create them manually
-                    if seq_exists:
-                        print(f"Sequence {w_trgschm}.{w_seq_name} already exists")
-                except Exception as e:
-                    info(f"Could not check for sequence {w_seq_name}: {str(e)}")
-            else:  # Oracle
-                w_seq_name = f"{w_trgtbnm}_SEQ"  # Sequence name only (for checking)
-                w_seq_full = f"{w_trgschm}.{w_seq_name}"  # Fully qualified name (for creation)
-                try:
-                    # Check if sequence exists
-                    if p_trgconid:
-                        # Check using all_sequences filtered by owner
-                        target_cursor.execute("""
-                            SELECT sequence_name 
-                            FROM all_sequences 
-                            WHERE sequence_owner = :owner AND sequence_name = :seq
-                        """, {'owner': w_trgschm.upper(), 'seq': w_seq_name.upper()})
-                    else:
-                        # Check using user_sequences
-                        target_cursor.execute("""
-                            SELECT sequence_name 
-                            FROM user_sequences 
-                            WHERE sequence_name = :seq
-                        """, {'seq': w_seq_name.upper()})
-                    
-                    seq_exists = target_cursor.fetchone()
-                    
-                    if not seq_exists:
-                        seq_ddl = f"CREATE SEQUENCE {w_seq_full} START WITH 1 INCREMENT BY 1"
-                        target_cursor.execute(seq_ddl)
-                        print(f"Sequence {w_seq_full} created successfully")
-                except Exception as e:
-                    _raise_error(w_procnm, '104', f"{w_parm}::SEQ={w_seq_full}", e)
+        # Create sequence for SKEY if needed (Oracle uses sequences)
+        if w_tbtyp in ('DIM', 'FCT', 'MRT') and adapter.supports_sequence():
+            try:
+                adapter.ensure_sequence(target_cursor, w_trgschm, w_trgtbnm, bool(p_trgconid))
+            except Exception as e:
+                _raise_error(w_procnm, '104', f"{w_parm}::SEQ={w_trgschm}.{w_trgtbnm}", e)
         
         # Commit on target connection
         if target_db_type == "POSTGRESQL" and not getattr(target_connection, 'autocommit', False):
             target_connection.commit()
-        elif target_db_type == "ORACLE":
+        elif hasattr(target_connection, "commit"):
             target_connection.commit()
         return w_return
         

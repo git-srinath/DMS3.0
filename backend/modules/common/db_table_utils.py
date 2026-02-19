@@ -18,7 +18,7 @@ def _detect_db_type(connection):
     if connection is None:
         # Fallback to environment variable
         db_type_env = os.getenv("DB_TYPE", "ORACLE").upper()
-        return "POSTGRESQL" if db_type_env == "POSTGRESQL" else "ORACLE"
+        return db_type_env if db_type_env in ["POSTGRESQL", "MYSQL", "MSSQL", "ORACLE"] else "ORACLE"
     
     connection_type = builtins.type(connection)
     module_name = connection_type.__module__
@@ -27,19 +27,29 @@ def _detect_db_type(connection):
     # Check module name first (most reliable)
     if "psycopg" in module_name or "pg8000" in module_name:
         return "POSTGRESQL"
+    elif "mysql" in module_name.lower():
+        return "MYSQL"
+    elif "pyodbc" in module_name:
+        # pyodbc is used for MSSQL and Sybase - need to check connection string or driver
+        # For now, return MSSQL as it's most common
+        return "MSSQL"
     elif "oracledb" in module_name or "cx_Oracle" in module_name:
         return "ORACLE"
     
     # Check class name as fallback
     if "psycopg" in class_name.lower() or "postgres" in class_name.lower():
         return "POSTGRESQL"
+    elif "mysql" in class_name.lower():
+        return "MYSQL"
     elif "oracle" in class_name.lower():
         return "ORACLE"
+    elif "pyodbc" in class_name.lower():
+        return "MSSQL"
     
     # Last resort: check environment variable
     db_type_env = os.getenv("DB_TYPE", "ORACLE").upper()
-    if db_type_env == "POSTGRESQL":
-        return "POSTGRESQL"
+    if db_type_env in ["POSTGRESQL", "MYSQL", "MSSQL"]:
+        return db_type_env
     
     # Default fallback to Oracle
     return "ORACLE"

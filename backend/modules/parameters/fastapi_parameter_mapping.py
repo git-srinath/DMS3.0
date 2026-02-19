@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 from backend.database.dbconnect import create_metadata_connection
 from backend.modules.helper_functions import (
@@ -21,6 +21,8 @@ from backend.modules.helper_functions import (
     sync_datatype_changes,
     get_datatype_usage_statistics,
     suggest_missing_datatypes,
+    _detect_db_type_from_connection,
+    _get_table_ref,
 )
 
 
@@ -38,7 +40,7 @@ class ParameterCreateRequest(BaseModel):
 class DatabaseTypeRequest(BaseModel):
     DBTYP: str
     DBDESC: str
-    DBVRSN: str
+    DBVRSN: Optional[str] = None
 
 
 class DatatypeCloneRequest(BaseModel):
@@ -51,6 +53,14 @@ class DatatypeUpdateRequest(BaseModel):
     PRCD: str
     DBTYP: str
     NEW_PRVAL: str
+    REASON: Optional[str] = None
+
+
+class DatatypeCreateRequest(BaseModel):
+    PRCD: str
+    DBTYP: str
+    PRVAL: str
+    PRDESC: Optional[str] = None
     REASON: Optional[str] = None
 
 
@@ -408,8 +418,11 @@ async def check_parameter_delete(prcd: str):
 # PHASE 2A: ADVANCED API ENDPOINTS FOR DATATYPE MANAGEMENT
 # ============================================================================
 
-@router.post("/mapping/datatype_suggestions")
-async def get_datatype_suggestions_endpoint(target_dbtype: str, based_on_usage: bool = True):
+@router.post("/datatype_suggestions")
+async def get_datatype_suggestions_endpoint(
+    target_dbtype: str = Query(..., description="Target database type (e.g., SNOWFLAKE, MYSQL, ORACLE)"),
+    based_on_usage: bool = Query(True, description="If True, considers actual usage patterns in mappings")
+):
     """
     Get AI-generated datatype suggestions for a new database.
     
@@ -448,7 +461,7 @@ async def get_datatype_suggestions_endpoint(target_dbtype: str, based_on_usage: 
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/mapping/datatype_update")
+@router.put("/datatype_update")
 async def update_datatype(payload: DatatypeUpdateRequest, request: Request):
     """
     Update/edit an existing datatype parameter.
@@ -524,8 +537,88 @@ async def update_datatype(payload: DatatypeUpdateRequest, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/mapping/datatype_remove")
-async def delete_datatype(prcd: str, dbtyp: str, request: Request):
+@router.post("/datatype_add")
+async def add_datatype(payload: DatatypeCreateRequest, request: Request):
+    """
+    Add a new custom datatype for a specific database.
+    """
+    try:
+        prcd = (payload.PRCD or "").strip()
+        dbtyp = (payload.DBTYP or "").strip()
+        prval = (payload.PRVAL or "").strip()
+        prdesc = (payload.PRDESC or "").strip() or f"Custom datatype {prcd}"
+
+        if not all([prcd, dbtyp, prval]):
+            raise HTTPException(status_code=400, detail="PRCD, DBTYP, and PRVAL are required")
+
+        if dbtyp.upper() == "GENERIC":
+            raise HTTPException(
+                status_code=403,
+                detail="GENERIC datatypes are reference records and cannot be added via UI"
+            )
+
+        conn = create_metadata_connection()
+        try:
+            cursor = conn.cursor()
+            db_type = _detect_db_type_from_connection(conn)
+            dms_params_ref = _get_table_ref(cursor, db_type, 'DMS_PARAMS')
+
+            if db_type == "POSTGRESQL":
+                dup_query = f"""
+                    SELECT COUNT(*)
+                    FROM {dms_params_ref}
+                    WHERE PRTYP = 'Datatype'
+                      AND UPPER(PRCD) = UPPER(%s)
+                      AND UPPER(DBTYP) = UPPER(%s)
+                """
+                cursor.execute(dup_query, (prcd, dbtyp))
+            else:  # Oracle
+                dup_query = f"""
+                    SELECT COUNT(*)
+                    FROM {dms_params_ref}
+                    WHERE PRTYP = 'Datatype'
+                      AND UPPER(PRCD) = UPPER(:1)
+                      AND UPPER(DBTYP) = UPPER(:2)
+                """
+                cursor.execute(dup_query, [prcd, dbtyp])
+
+            if cursor.fetchone()[0] > 0:
+                cursor.close()
+                raise HTTPException(status_code=409, detail=f"Datatype {prcd} already exists for {dbtyp}")
+
+            if db_type == "POSTGRESQL":
+                insert_query = f"""
+                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT)
+                    VALUES ('Datatype', %s, %s, %s, %s, NOW(), NOW())
+                """
+                cursor.execute(insert_query, (prcd, prdesc, prval, dbtyp))
+            else:  # Oracle
+                insert_query = f"""
+                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT)
+                    VALUES ('Datatype', :1, :2, :3, :4, SYSDATE, SYSDATE)
+                """
+                cursor.execute(insert_query, [prcd, prdesc, prval, dbtyp])
+
+            conn.commit()
+            cursor.close()
+
+            return {
+                "status": "success",
+                "created": True,
+                "datatype": prcd,
+                "database": dbtyp,
+                "message": f"Datatype {prcd} added for {dbtyp}"
+            }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/datatype_remove")
+async def delete_datatype(request: Request, prcd: str = Query(...), dbtyp: str = Query(...)):
     """
     Safely delete a datatype with comprehensive validation.
     
@@ -548,38 +641,86 @@ async def delete_datatype(prcd: str, dbtyp: str, request: Request):
     }
     """
     try:
-        prcd_upper = prcd.upper()
-        dbtyp_upper = dbtyp.upper()
+        prcd_value = (prcd or "").strip()
+        dbtyp_value = (dbtyp or "").strip()
+        dbtyp_upper = dbtyp_value.upper()
         username = _current_username(request)
+        
+        # Protect GENERIC datatypes from deletion
+        if dbtyp_upper == 'GENERIC':
+            import json
+            raise HTTPException(
+                status_code=403,
+                detail=json.dumps({
+                    "status": "error",
+                    "deletable": False,
+                    "blocking_references": 0,
+                    "reason": "GENERIC datatypes are reference records and cannot be deleted through the UI. Please delete directly from the database if required."
+                })
+            )
         
         conn = create_metadata_connection()
         try:
             # Validate parameter can be deleted
-            safe, blocking_count, message = validate_parameter_delete(conn, prcd_upper)
+            safe, blocking_count, message = validate_parameter_delete(conn, prcd_value)
             
             if not safe:
+                import json
                 raise HTTPException(
                     status_code=409,
-                    detail={
+                    detail=json.dumps({
                         "status": "error",
                         "deletable": False,
                         "blocking_references": blocking_count,
                         "reason": message
-                    }
+                    })
                 )
             
-            # Actually delete would happen here in full implementation
-            # For Phase 2A, just return success validation
+            # Actually delete the datatype record
+            cursor = conn.cursor()
+            db_type = _detect_db_type_from_connection(conn)
+            dms_params_ref = _get_table_ref(cursor, db_type, 'DMS_PARAMS')
             
-            return {
-                "status": "success",
-                "deletable": True,
-                "datatype": prcd_upper,
-                "database": dbtyp_upper,
-                "reason": "Datatype not in use - safe to delete",
-                "blocking_references": 0,
-                "message": f"Datatype {prcd_upper} for {dbtyp_upper} can be safely deleted"
-            }
+            try:
+                if db_type == "POSTGRESQL":
+                    delete_query = f"""
+                        DELETE FROM {dms_params_ref}
+                        WHERE PRTYP = 'Datatype'
+                          AND UPPER(PRCD) = UPPER(%s)
+                          AND UPPER(DBTYP) = UPPER(%s)
+                    """
+                    cursor.execute(delete_query, (prcd_value, dbtyp_value))
+                else:  # Oracle
+                    delete_query = f"""
+                        DELETE FROM {dms_params_ref}
+                        WHERE PRTYP = 'Datatype'
+                          AND UPPER(PRCD) = UPPER(:1)
+                          AND UPPER(DBTYP) = UPPER(:2)
+                    """
+                    cursor.execute(delete_query, [prcd_value, dbtyp_value])
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                cursor.close()
+                
+                if deleted_count == 0:
+                    raise HTTPException(status_code=404, detail=f"Datatype {prcd_value} for {dbtyp_value} not found")
+                
+                return {
+                    "status": "success",
+                    "deletable": True,
+                    "deleted": True,
+                    "datatype": prcd_value,
+                    "database": dbtyp_value,
+                    "reason": "Datatype successfully deleted",
+                    "blocking_references": 0,
+                    "message": f"Datatype {prcd_value} for {dbtyp_value} deleted successfully"
+                }
+            except Exception as e:
+                conn.rollback()
+                if cursor:
+                    cursor.close()
+                raise
         finally:
             conn.close()
     except HTTPException:
@@ -706,8 +847,8 @@ async def get_usage_stats(dbtype: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/mapping/validate_all_mappings")
-async def validate_bulk(dbtype: str):
+@router.post("/validate_all_mappings")
+async def validate_bulk(dbtype: str = Query(...)):
     """
     Validate ALL mappings against specific database type.
     Use before deploying database schema changes or migrations.
@@ -762,3 +903,207 @@ async def validate_bulk(dbtype: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================================
+# Phase 2B: Datatype Suggestions & Advanced API Endpoints
+# ============================================================================
+
+class DatatypeSuggestionsResponse(BaseModel):
+    """Response model for datatype suggestions endpoint"""
+    suggestions: List[Dict[str, Any]]
+    target_dbtype: str
+    based_on_usage: bool
+    source: str
+
+
+@router.post("/datatype_suggestions")
+async def datatype_suggestions(
+    target_dbtype: str = Query(..., description="Target database type"),
+    based_on_usage: bool = Query(True, description="Get suggestions based on usage")
+) -> DatatypeSuggestionsResponse:
+    """
+    Get datatype suggestions for a target database.
+    Can be based on actual usage in the system or all available types.
+    
+    Phase 2B: Datatypes Management
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        
+        # Get datatypes for target database
+        suggestions = get_parameter_mapping_datatype_for_db(conn, target_dbtype)
+        
+        if not suggestions:
+            # Fallback to generic if nothing found
+            suggestions = get_parameter_mapping_datatype(conn)
+            source = "GENERIC_FALLBACK"
+        else:
+            source = "TARGET_DB_SPECIFIC"
+        
+        # If based_on_usage, try to filter by actual usage in jobs
+        if based_on_usage:
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT DISTINCT prcd, prval
+                    FROM DMS_PARAMS p
+                    WHERE PRTYP = 'Datatype' AND (DBTYP = %s OR DBTYP = 'GENERIC')
+                    AND prcd IN (
+                        SELECT DISTINCT dtyp FROM DMS_MAPDETAIL WHERE dtyp IS NOT NULL
+                    )
+                    ORDER BY prval
+                """, (target_dbtype,))
+                
+                usage_based = []
+                for row in cursor.fetchall():
+                    for sugg in suggestions:
+                        if sugg.get('PRCD') == row[0]:
+                            usage_based.append(sugg)
+                            break
+                cursor.close()
+                
+                if usage_based:
+                    suggestions = usage_based
+                    source += "_WITH_USAGE_FILTER"
+            except Exception as usage_err:
+                # DMS_MAPDETAIL may not exist in metadata DB - use all suggestions instead
+                source += "_WITHOUT_USAGE_FILTER"
+        
+        from backend.modules.logger import info
+        info(f"Generated {len(suggestions)} suggestions for {target_dbtype}")
+        
+        return DatatypeSuggestionsResponse(
+            suggestions=suggestions,
+            target_dbtype=target_dbtype,
+            based_on_usage=based_on_usage,
+            source=source
+        )
+    except Exception as e:
+        from backend.modules.logger import error
+        error(f"Error in datatype_suggestions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.get("/datatype_impact_analysis")
+async def datatype_impact_analysis(
+    prcd: str = Query(..., description="Parameter code"),
+    new_prval: str = Query(..., description="New parameter value"),
+    dbtype: str = Query(..., description="Database type")
+) -> Dict[str, Any]:
+    """
+    Analyze the impact of changing a datatype.
+    Shows all mappings and mapping details affected by this change.
+    
+    Phase 2B: Datatypes Management
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        
+        # Find all mapping details using this datatype
+        cursor.execute("""
+            SELECT DISTINCT
+                md.mapid,
+                mr.mapref,
+                md.mapdtlid,
+                md.fldnm,
+                md.dtyp as current_datatype
+            FROM DMS_MAPDETAIL md
+            JOIN DMS_MAPREFS mr ON md.mapid = mr.mapid
+            WHERE md.dtyp = %s
+            ORDER BY mr.mapref, md.mapdtlid
+        """, (prcd,))
+        
+        affected_mappings = []
+        for row in cursor.fetchall():
+            affected_mappings.append({
+                "mapping_id": str(row[0]),
+                "mapping_ref": row[1],
+                "detail_id": str(row[2]),
+                "field_name": row[3],
+                "current_datatype": row[4]
+            })
+        cursor.close()
+        
+        return {
+            "parameter_code": prcd,
+            "new_value": new_prval,
+            "database_type": dbtype,
+            "affected_mappings_count": len(affected_mappings),
+            "affected_mappings": affected_mappings,
+            "impact_level": "HIGH" if len(affected_mappings) > 10 else "MEDIUM" if len(affected_mappings) > 0 else "LOW"
+        }
+    except Exception as e:
+        from backend.modules.logger import error
+        error(f"Error in datatype_impact_analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+@router.get("/datatype_usage_stats")
+async def datatype_usage_stats(dbtype: str = Query(None, description="Optional database type filter")) -> Dict[str, Any]:
+    """
+    Get datatype usage statistics across all mappings.
+    Can filter by specific database type.
+    
+    Phase 2B: Datatypes Management
+    """
+    conn = None
+    try:
+        conn = create_metadata_connection()
+        cursor = conn.cursor()
+        
+        # Get usage statistics
+        if dbtype:
+            cursor.execute("""
+                SELECT p.prval, COUNT(md.dtyp) as usage_count
+                FROM DMS_PARAMS p
+                LEFT JOIN DMS_MAPDETAIL md ON p.prcd = md.dtyp
+                WHERE p.PRTYP = 'Datatype' AND (p.DBTYP = %s OR p.DBTYP = 'GENERIC')
+                GROUP BY p.prval
+                ORDER BY usage_count DESC
+            """, (dbtype,))
+        else:
+            cursor.execute("""
+                SELECT p.prval, COUNT(md.dtyp) as usage_count
+                FROM DMS_PARAMS p
+                LEFT JOIN DMS_MAPDETAIL md ON p.prcd = md.dtyp
+                WHERE p.PRTYP = 'Datatype'
+                GROUP BY p.prval
+                ORDER BY usage_count DESC
+            """)
+        
+        stats = [
+            {"datatype": row[0], "usage_count": row[1]}
+            for row in cursor.fetchall()
+        ]
+        cursor.close()
+        
+        return {
+            "dbtype": dbtype or "ALL",
+            "stats": stats,
+            "total_mappings_using_datatypes": sum(s["usage_count"] for s in stats)
+        }
+    except Exception as e:
+        from backend.modules.logger import error
+        error(f"Error in datatype_usage_stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass

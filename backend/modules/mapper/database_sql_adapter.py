@@ -215,6 +215,10 @@ class DatabaseSQLAdapter:
             
         Returns:
             Formatted table name (e.g., 'schema.table', '"schema"."table"', '[schema].[table]')
+            
+        Note:
+            For MySQL, schema represents the database name which is already selected in the connection,
+            so only the table name is returned (no schema prefix).
         """
         if self.db_type == "POSTGRESQL" or self.db_type == "POSTGRES":
             schema_lower = schema.lower() if schema else 'public'
@@ -223,7 +227,9 @@ class DatabaseSQLAdapter:
                 return f'{schema_lower}."{table}"'
             return f'{schema_lower}.{table.lower()}'
         elif self.db_type == "MYSQL":
-            return f'`{schema}`.`{table}`'
+            # MySQL: database is selected in connection, so only use table name
+            # Use backticks for identifier quoting (MySQL standard)
+            return f'`{table}`'
         elif self.db_type in ["MSSQL", "SQL_SERVER", "SYBASE"]:
             return f'[{schema}].[{table}]'
         elif self.db_type in ["SNOWFLAKE", "DB2"]:

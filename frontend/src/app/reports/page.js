@@ -49,6 +49,8 @@ import {
   ArrowBack,
   Warning as WarningIcon,
   DeleteOutline,
+  History,
+  Schedule,
 } from "@mui/icons-material";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -778,11 +780,15 @@ const ReportsPage = () => {
 
   if (!showReportForm) {
     return (
-      <Box sx={{ p: 2.5 }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-          <Typography variant="h5" fontWeight={600}>
-            Reports
-          </Typography>
+      <Box
+        sx={{
+          p: 2.5,
+          borderRadius: 2,
+          backgroundColor: darkMode ? "rgba(17,24,39,0.35)" : "transparent",
+          color: darkMode ? "rgba(255,255,255,0.92)" : "inherit",
+        }}
+      >
+        <Stack direction="row" justifyContent="flex-end" alignItems="center" sx={{ mb: 2 }}>
           <Button variant="contained" startIcon={<Add />} onClick={handleCreateNewReport}>
             Add Report
           </Button>
@@ -795,7 +801,11 @@ const ReportsPage = () => {
           <TableContainer component={Paper} elevation={darkMode ? 0 : 1} sx={{ borderRadius: 2, border: darkMode ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(0,0,0,0.05)" }}>
             <Table size="small">
               <TableHead>
-                <TableRow>
+                <TableRow
+                  sx={{
+                    backgroundColor: darkMode ? "rgba(31,41,55,0.8)" : "rgba(0,0,0,0.03)",
+                  }}
+                >
                   <TableCell>Name</TableCell>
                   <TableCell>Target Connection</TableCell>
                   <TableCell align="center">Status</TableCell>
@@ -850,6 +860,16 @@ const ReportsPage = () => {
                         <Tooltip title="Run Report">
                           <IconButton size="small" color="primary" onClick={() => openRunDialog(report)} disabled={!report.isActive}>
                             <PlayArrow fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Schedule Report">
+                          <IconButton size="small" color="success" onClick={() => openScheduleDialog(report)}>
+                            <Schedule fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="View History">
+                          <IconButton size="small" color="info" onClick={() => window.location.href = `/report_runs?reportId=${report.reportId}`}>
+                            <History fontSize="small" />
                           </IconButton>
                         </Tooltip>
                         {report.scheduleFrequency && (
@@ -1209,7 +1229,14 @@ const ReportsPage = () => {
   }
 
   return (
-    <Box sx={{ px: 2.5, pb: 2.5, pt: 0 }}>
+    <Box
+      sx={{
+        px: 2.5,
+        pb: 2.5,
+        pt: 0,
+        color: darkMode ? "rgba(255,255,255,0.92)" : "inherit",
+      }}
+    >
       <Box
         sx={{
           position: "sticky",

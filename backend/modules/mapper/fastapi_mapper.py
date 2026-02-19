@@ -21,6 +21,7 @@ from backend.modules.helper_functions import (
     get_mapping_ref,
     get_mapping_details,
     get_parameter_mapping_datatype,
+    get_parameter_mapping_datatype_for_db,  # Phase 3: Import Phase 2A function for DB-specific datatypes
     get_parameter_mapping_scd_type,
     check_if_job_already_created,
     create_update_mapping,
@@ -550,6 +551,7 @@ class ExtractSqlColumnsRequest(BaseModel):
     sql_code: Optional[str] = None
     sql_content: Optional[str] = None
     connection_id: Optional[int] = None
+    target_dbtype: Optional[str] = None  # Phase 3: Optional target database type for datatype filtering
 
 
 class ExtractedColumn(BaseModel):
@@ -584,6 +586,7 @@ async def extract_sql_columns(payload: ExtractSqlColumnsRequest):
     sql_code = data.get("sql_code")
     sql_content = data.get("sql_content")
     connection_id = data.get("connection_id")
+    target_dbtype = data.get("target_dbtype")  # Phase 3: Extract target database type
 
     if not sql_code and not sql_content:
         raise HTTPException(
@@ -695,9 +698,16 @@ async def extract_sql_columns(payload: ExtractSqlColumnsRequest):
                 sql_content=sql_content,
             )
 
-        # Step 4: Fetch all available target data types from parameter table
-        datatype_rows = get_parameter_mapping_datatype(metadata_conn)
-        # dataTypeOptions are dictionaries with keys like PRCD, PRDESC, PRVAL
+        # Step 4: Fetch all available target data types from parameter table  
+        # Phase 3: Use database-specific datatypes if target_dbtype provided
+        if target_dbtype:
+            datatype_rows = get_parameter_mapping_datatype_for_db(metadata_conn, target_dbtype)
+            info(f"Loaded {len(datatype_rows)} datatype options for target DBTYPE={target_dbtype}")
+        else:
+            datatype_rows = get_parameter_mapping_datatype(metadata_conn)
+            info(f"Loaded {len(datatype_rows)} datatype options (no target DB type specified)")
+        
+        # dataTypeOptions are dictionaries with keys like PRCD, PRDESC, PRVAL, DBTYP (Phase 3)
         # We expose PRCD as the canonical code
         all_type_codes = [str(row.get("PRCD")) for row in datatype_rows if row.get("PRCD")]
 
@@ -2005,6 +2015,3 @@ async def upload_file(file: UploadFile = File(...)):
         return response_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error in upload_file: {str(e)}")
-
-
-

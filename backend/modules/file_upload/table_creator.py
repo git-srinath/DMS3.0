@@ -5,6 +5,7 @@ Creates target tables based on column mappings.
 import re
 from typing import List, Dict, Any, Optional
 from backend.modules.common.db_table_utils import _detect_db_type
+from backend.modules.common.db_adapter import get_db_adapter
 from backend.modules.helper_functions import _get_table_ref
 from backend.modules.logger import info, error, warning
 
@@ -14,7 +15,8 @@ def create_table_if_not_exists(
     schema: str,
     table: str,
     column_mappings: List[Dict[str, Any]],
-    metadata_connection=None
+    metadata_connection=None,
+    target_dbtype: str = 'GENERIC'
 ) -> bool:
     """
     Create target table if it doesn't exist, based on column mappings.
@@ -25,6 +27,7 @@ def create_table_if_not_exists(
         table: Target table name
         column_mappings: List of column mapping dictionaries from DMS_FLUPLDDTL
         metadata_connection: Metadata connection for querying DMS_PARAMS (optional)
+        target_dbtype: Target database type for DBTYP filtering (default: GENERIC)
         
     Returns:
         True if table was created, False if it already existed
@@ -39,8 +42,8 @@ def create_table_if_not_exists(
             info(f"Table {schema}.{table} already exists, skipping creation")
             return False
         
-        # Resolve data types from target database's DMS_PARAMS
-        dtype_map = _resolve_data_types(connection, db_type, metadata_connection)
+        # Resolve data types from target database's DMS_PARAMS (Phase 3)
+        dtype_map = _resolve_data_types(connection, db_type, metadata_connection, target_dbtype)
         
         # Build column definitions
         col_defs = []
@@ -211,53 +214,24 @@ def create_table_if_not_exists(
 def _check_table_exists(cursor, db_type: str, schema: str, table: str) -> bool:
     """Check if table exists in database."""
     try:
-        if db_type == "POSTGRESQL":
-            if schema:
-                query = """
-                    SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables 
-                        WHERE table_schema = %s AND table_name = %s
-                    )
-                """
-                cursor.execute(query, (schema.lower(), table.lower()))
-            else:
-                query = """
-                    SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables 
-                        WHERE table_schema = 'public' AND table_name = %s
-                    )
-                """
-                cursor.execute(query, (table.lower(),))
-        else:  # Oracle
-            if schema:
-                query = """
-                    SELECT COUNT(*) FROM all_tables 
-                    WHERE owner = UPPER(:1) AND table_name = UPPER(:2)
-                """
-                cursor.execute(query, [schema, table])
-            else:
-                query = """
-                    SELECT COUNT(*) FROM user_tables 
-                    WHERE table_name = UPPER(:1)
-                """
-                cursor.execute(query, [table])
-        
-        result = cursor.fetchone()
-        return result[0] > 0 if result else False
+        adapter = get_db_adapter(db_type)
+        return adapter.table_exists(cursor, schema, table)
     except Exception as e:
         warning(f"Error checking table existence: {str(e)}")
         return False
 
 
-def _resolve_data_types(connection, db_type: str, metadata_connection=None) -> Dict[str, str]:
+def _resolve_data_types(connection, db_type: str, metadata_connection=None, target_dbtype: str = 'GENERIC') -> Dict[str, str]:
     """
     Resolve generic data types to database-specific types from DMS_PARAMS.
     Queries the METADATA database's DMS_PARAMS table (not target database).
+    Filters by target database type for Phase 3 compatibility.
     
     Args:
         connection: Target database connection (not used, but kept for compatibility)
         db_type: Metadata database type
         metadata_connection: Metadata connection (required - DMS_PARAMS is in metadata DB)
+        target_dbtype: Target database type for DBTYP filtering (default: GENERIC)
         
     Returns:
         Dictionary mapping generic type codes to database-specific types
@@ -274,7 +248,7 @@ def _resolve_data_types(connection, db_type: str, metadata_connection=None) -> D
         metadata_cursor = metadata_connection.cursor()
         metadata_db_type = _detect_db_type(metadata_connection)
         
-        # Query DMS_PARAMS from metadata database
+        # Query DMS_PARAMS from metadata database with target DBTYP filter (Phase 3)
         if metadata_db_type == "POSTGRESQL":
             try:
                 dms_params_ref = _get_table_ref(metadata_cursor, metadata_db_type, 'DMS_PARAMS')
@@ -282,24 +256,28 @@ def _resolve_data_types(connection, db_type: str, metadata_connection=None) -> D
                     SELECT UPPER(TRIM(PRCD)), PRVAL 
                     FROM {dms_params_ref} 
                     WHERE PRTYP = 'Datatype'
+                      AND (DBTYP = %s OR DBTYP = 'GENERIC')
+                    ORDER BY DBTYP DESC NULLS LAST
                 """
-                metadata_cursor.execute(query)
+                metadata_cursor.execute(query, (target_dbtype,))
                 dtype_map = {row[0]: row[1] for row in metadata_cursor.fetchall()}
-                info(f"Loaded {len(dtype_map)} data type mappings from DMS_PARAMS (metadata DB - PostgreSQL)")
+                info(f"Loaded {len(dtype_map)} data type mappings from DMS_PARAMS (metadata DB - PostgreSQL) for DBTYP={target_dbtype}")
             except Exception as e:
-                warning(f"DMS_PARAMS not found in metadata database: {str(e)}, using defaults")
+                warning(f"DMS_PARAMS not found in metadata database or DBTYP column missing: {str(e)}, using defaults")
         else:  # Oracle, MySQL, etc.
             try:
                 query = """
                     SELECT UPPER(TRIM(PRCD)), PRVAL 
                     FROM DMS_PARAMS 
                     WHERE PRTYP = 'Datatype'
+                      AND (DBTYP = :dbtyp OR DBTYP = 'GENERIC')
+                    ORDER BY DBTYP DESC
                 """
-                metadata_cursor.execute(query)
+                metadata_cursor.execute(query, {'dbtyp': target_dbtype})
                 dtype_map = {row[0]: row[1] for row in metadata_cursor.fetchall()}
-                info(f"Loaded {len(dtype_map)} data type mappings from DMS_PARAMS (metadata DB - Oracle)")
+                info(f"Loaded {len(dtype_map)} data type mappings from DMS_PARAMS (metadata DB - Oracle) for DBTYP={target_dbtype}")
             except Exception as e:
-                warning(f"DMS_PARAMS not found in metadata database: {str(e)}, using defaults")
+                warning(f"DMS_PARAMS not found in metadata database or DBTYP column missing: {str(e)}, using defaults")
         
         # Add default mappings if not found
         default_mappings = {
@@ -333,68 +311,16 @@ def _build_create_table_sql(
     primary_keys: List[tuple]
 ) -> str:
     """Build CREATE TABLE SQL statement for specific database type."""
-    # Format table name
-    if schema:
-        if db_type == "POSTGRESQL":
-            table_ref = f'"{schema.lower()}"."{table.lower()}"'
-        elif db_type == "ORACLE":
-            table_ref = f"{schema.upper()}.{table.upper()}"
-        else:
-            table_ref = f"{schema}.{table}"
-    else:
-        table_ref = _quote_identifier(table, db_type)
-    
-    # Build column definitions
-    columns_sql = ",\n    ".join(col_defs)
-    
-    # Add primary key constraint if any
-    if primary_keys:
-        primary_keys.sort()  # Sort by sequence
-        pk_columns = [_quote_identifier(col, db_type) for _, col in primary_keys]
-        columns_sql += f",\n    PRIMARY KEY ({', '.join(pk_columns)})"
-    
-    # Build final SQL
-    create_sql = f"CREATE TABLE {table_ref} (\n    {columns_sql}\n)"
-    
-    return create_sql
+    adapter = get_db_adapter(db_type)
+    primary_keys.sort()
+    pk_columns = [col for _, col in primary_keys]
+    return adapter.build_create_table(schema, table, col_defs, pk_columns if pk_columns else None)
 
 
 def _quote_identifier(name: str, db_type: str) -> str:
     """Quote identifier based on database type."""
-    if db_type == "POSTGRESQL":
-        return f'"{name.lower()}"'
-    elif db_type == "ORACLE":
-        # Oracle: use uppercase and quote when necessary (reserved words, special chars)
-        import re
-
-        name_upper = name.upper()
-
-        # Basic pattern for unquoted identifiers: start with letter or underscore, then letters/digits/underscore
-        is_simple_identifier = re.match(r'^[A-Z_][A-Z0-9_]*$', name_upper) is not None
-
-        # Minimal reserved keyword set – extend as needed
-        reserved_keywords = {
-            "DATE",
-            "NUMBER",
-            "VARCHAR2",
-            "TIMESTAMP",
-            "USER",
-            "SESSION",
-            "LEVEL",
-            "ROWID",
-            "UID",
-            "SYSDATE",
-            "DOMAIN",
-            "VALUE",
-        }
-
-        # Quote if it's not a simple identifier or if it's a reserved keyword
-        if (not is_simple_identifier) or (name_upper in reserved_keywords):
-            return f'"{name_upper}"'
-
-        return name_upper
-    else:
-        return name
+    adapter = get_db_adapter(db_type)
+    return adapter.quote_identifier(name)
 
 
 def _resolve_single_data_type(generic_type: str, db_type: str, dtype_map: Dict[str, str]) -> str:

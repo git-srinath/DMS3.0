@@ -106,9 +106,12 @@ class FileUploadExecutor:
             if not trgtblnm:
                 raise ValueError(f"Target table name not specified for {flupldref}")
             
+            # NEW: Detect target database type for datatype filtering (Phase 3)
+            target_db_type = _detect_db_type(target_conn)
+            
             info(f"Creating/verifying target table: {trgschm}.{trgtblnm}")
             table_created = create_table_if_not_exists(
-                target_conn, trgschm, trgtblnm, column_mappings, metadata_conn
+                target_conn, trgschm, trgtblnm, column_mappings, metadata_conn, target_db_type
             )
             
             # Step 8: Determine load mode
@@ -126,8 +129,7 @@ class FileUploadExecutor:
                 batch_size = 100000
                 warning(f"Batch size too large for {flupldref}, capped at 100000")
             
-            # Database-specific limits
-            target_db_type = _detect_db_type(target_conn)
+            # Database-specific limits (target_db_type already detected for Phase 3)
             if target_db_type == "ORACLE" and batch_size > 1000:
                 batch_size = 1000
                 warning(f"Batch size capped at 1000 for Oracle database")

@@ -142,7 +142,7 @@ export default function SchedulerStatusPage() {
 
   if (error) {
     return (
-      <Box sx={{ p: 3 }}>
+      <Box sx={{ p: 3, color: 'text.primary' }}>
         <Paper sx={{ p: 3, textAlign: 'center' }}>
           <Typography color="error" variant="h6" gutterBottom>
             Error Loading Scheduler Status
@@ -163,18 +163,16 @@ export default function SchedulerStatusPage() {
   const { scheduler_status, total_active_jobs, job_counts, recent_activity } = schedulerData || {}
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" sx={{ fontWeight: 600 }}>
-          Scheduler Status
-        </Typography>
-        <IconButton onClick={fetchSchedulerStatus} color="primary" disabled={loading}>
-          <RefreshIcon />
-        </IconButton>
-      </Box>
-
+    <Box
+      sx={{
+        p: 3,
+        color: 'text.primary',
+        borderRadius: 2,
+        backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.25) : 'transparent',
+      }}
+    >
       {/* Scheduler Status Card */}
-      <Card sx={{ mb: 3, backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
+      <Card sx={{ mb: 3, color: 'text.primary', backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
             {getStatusIcon(scheduler_status)}
@@ -193,6 +191,9 @@ export default function SchedulerStatusPage() {
               color={getStatusColor(scheduler_status)}
               sx={{ ml: 'auto', fontWeight: 600 }}
             />
+            <IconButton onClick={fetchSchedulerStatus} color="primary" disabled={loading}>
+              <RefreshIcon />
+            </IconButton>
           </Box>
         </CardContent>
       </Card>
@@ -201,7 +202,7 @@ export default function SchedulerStatusPage() {
       <Grid container spacing={3} sx={{ mb: 3 }}>
         {/* File Uploads */}
         <Grid item xs={12} md={4}>
-          <Card sx={{ backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
+          <Card sx={{ color: 'text.primary', backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <CloudUploadIcon color="primary" />
@@ -262,7 +263,7 @@ export default function SchedulerStatusPage() {
 
         {/* Reports */}
         <Grid item xs={12} md={4}>
-          <Card sx={{ backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
+          <Card sx={{ color: 'text.primary', backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <ReportIcon color="secondary" />
@@ -293,7 +294,7 @@ export default function SchedulerStatusPage() {
 
         {/* Mapper Jobs */}
         <Grid item xs={12} md={4}>
-          <Card sx={{ backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
+          <Card sx={{ color: 'text.primary', backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <MapperIcon color="success" />
@@ -324,7 +325,7 @@ export default function SchedulerStatusPage() {
       </Grid>
 
       {/* Recent Activity */}
-      <Paper sx={{ backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
+      <Paper sx={{ color: 'text.primary', backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.8) : muiTheme.palette.background.paper }}>
         <Box sx={{ p: 2, borderBottom: `1px solid ${alpha(muiTheme.palette.divider, 0.5)}` }}>
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             Recent Activity
@@ -333,7 +334,7 @@ export default function SchedulerStatusPage() {
         <TableContainer>
           <Table>
             <TableHead>
-              <TableRow>
+              <TableRow sx={{ backgroundColor: darkMode ? alpha(muiTheme.palette.background.default, 0.55) : alpha(muiTheme.palette.grey[100], 0.7) }}>
                 <TableCell sx={{ fontWeight: 600 }}>Request ID</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Map Reference</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>

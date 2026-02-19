@@ -397,7 +397,9 @@ def execute_mapper_job(
                         target_cursor,
                         full_table_name,
                         pk_values,
-                        target_db_type
+                        target_db_type,
+                        target_schema,
+                        target_table
                     )
                     
                     # Generate hash
@@ -1060,7 +1062,9 @@ def _process_mapper_chunk(
                     target_cursor,
                     full_table_name,
                     pk_values,
-                    target_db_type
+                    target_db_type,
+                    target_schema,
+                    target_table
                 )
                 
                 # Generate hash
@@ -1197,40 +1201,71 @@ def _verify_target_table(cursor, full_table_name: str, schema: str, table: str, 
         adapter = create_adapter_from_type(db_type)
         limit_clause = adapter.get_limit_clause(1)
         
+        # Format table name using adapter (important for MySQL which doesn't use schema prefix)
+        formatted_table = adapter.format_table_name(schema, table)
+        
         # Build query with database-agnostic LIMIT/ROWNUM
         if "LIMIT" in limit_clause or "FETCH" in limit_clause:
             # PostgreSQL, MySQL, SQL Server 2012+, etc.
-            query = f"SELECT COUNT(*) FROM {full_table_name} {limit_clause}"
+            query = f"SELECT COUNT(*) FROM {formatted_table} {limit_clause}"
         else:
             # Oracle ROWNUM (embedded in WHERE)
-            query = f"SELECT COUNT(*) FROM {full_table_name} {limit_clause}"
+            query = f"SELECT COUNT(*) FROM {formatted_table} {limit_clause}"
         
+        debug(f"Verifying table accessibility with query: {query}")
         cursor.execute(query)
-        debug(f"Table {full_table_name} is accessible")
+        cursor.fetchone()
+        try:
+            cursor.fetchall()
+        except Exception:
+            pass
+        debug(f"Table {formatted_table} is accessible")
     except Exception as e:
         error_msg = f"Table {full_table_name} is not accessible: {str(e)}"
         error(error_msg)
         raise RuntimeError(error_msg) from e
 
 
-def _lookup_target_record(cursor, full_table_name: str, pk_values: Dict[str, Any], db_type: str) -> Optional[Dict[str, Any]]:
+def _lookup_target_record(cursor, full_table_name: str, pk_values: Dict[str, Any], db_type: str, schema: str = None, table: str = None) -> Optional[Dict[str, Any]]:
     """Lookup existing record in target table by primary key."""
     try:
         from backend.modules.mapper.database_sql_adapter import create_adapter_from_type
         adapter = create_adapter_from_type(db_type)
         
+        # Format table name using adapter (important for MySQL which doesn't use schema prefix)
+        if schema and table:
+            formatted_table = adapter.format_table_name(schema, table)
+        else:
+            # Fallback to full_table_name if schema/table not provided
+            formatted_table = full_table_name
+        
         pk_where = build_primary_key_where_clause(set(pk_values.keys()), db_type)
         
-        query = f"""
-            SELECT * FROM {full_table_name}
-            WHERE CURFLG = 'Y' AND {pk_where}
-        """
+        db_type_upper = (db_type or "").upper()
+        if db_type_upper == "MYSQL":
+            query = f"""
+                SELECT * FROM {formatted_table}
+                WHERE CURFLG = 'Y' AND {pk_where}
+                LIMIT 1
+            """
+        else:
+            query = f"""
+                SELECT * FROM {formatted_table}
+                WHERE CURFLG = 'Y' AND {pk_where}
+            """
         
         # Format parameters for database
         params = adapter.format_parameters(pk_values, use_named=True)
         cursor.execute(query, params)
         
         target_row = cursor.fetchone()
+
+        if db_type_upper == "MYSQL":
+            try:
+                cursor.fetchall()
+            except Exception:
+                pass
+
         if target_row:
             target_columns = [desc[0] for desc in cursor.description]
             return dict(zip(target_columns, target_row))

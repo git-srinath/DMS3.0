@@ -145,10 +145,7 @@ const ProfilePage = () => {
     <ProtectedRoute>
       <Box sx={{ 
         minHeight: '100vh', 
-        bgcolor: 'grey.50',
-        '@media (prefers-color-scheme: dark)': {
-          bgcolor: 'background.default',
-        },
+        bgcolor: theme.palette.mode === 'dark' ? 'background.default' : 'grey.50',
       }}>
         <Container maxWidth="xl" sx={{ py: 2 }}>
           <Box

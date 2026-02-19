@@ -31,6 +31,8 @@ import {
   DialogContent,
   DialogTitle,
   InputAdornment,
+  Tabs,
+  Tab,
 } from '@mui/material'
 import {
   Add as AddIcon,
@@ -41,10 +43,25 @@ import {
   Info as InfoIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
+  Dashboard as DashboardIcon,
+  Storage as StorageIcon,
+  Check as CheckIcon,
 } from '@mui/icons-material'
+import { useDatatypeAPI } from '../../hooks/useDatatypeAPI'
+import DatatypeForm from './DatatypeForm'
+import DatatypesTable from './DatatypesTable'
+import DatabaseWizard from './DatabaseWizard'
+import UsageDashboard from './UsageDashboard'
+import ValidationResults from './ValidationResults'
 
 export default function ParameterPage() {
   const theme = useTheme()
+  const { getSupportedDatabases, getDatatypesForDatabase } = useDatatypeAPI()
+  
+  // Tab state
+  const [currentTab, setCurrentTab] = useState(0)
+  
+  // Parameters tab state
   const [parameters, setParameters] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -52,6 +69,16 @@ export default function ParameterPage() {
   const [filterType, setFilterType] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [types, setTypes] = useState([])
+
+  // Datatypes tab state
+  const [databases, setDatabases] = useState([])
+  const [selectedDatabase, setSelectedDatabase] = useState('')
+  const [datatypes, setDatatypes] = useState([])
+  const [datatypesLoading, setDatatypesLoading] = useState(false)
+  const [datatypesError, setDatatypesError] = useState('')
+  const [showDatatypeForm, setShowDatatypeForm] = useState(false)
+  const [editingDatatype, setEditingDatatype] = useState(null)
+  const [showWizard, setShowWizard] = useState(false)
 
   // Form state
   const [newParameter, setNewParameter] = useState({
@@ -63,7 +90,76 @@ export default function ParameterPage() {
 
   useEffect(() => {
     fetchParameters()
+    loadDatabases()
   }, [])
+
+  // Load databases for datatypes tab
+  const loadDatabases = async () => {
+    try {
+      const data = await getSupportedDatabases()
+      // Deduplicate by DBTYP
+      const uniqueDatabases = Object.values(
+        (data.databases || []).reduce((acc, db) => {
+          if (!acc[db.DBTYP]) {
+            acc[db.DBTYP] = db
+          }
+          return acc
+        }, {})
+      )
+
+      // Hide GENERIC in Datatypes Management UI
+      const uiDatabases = uniqueDatabases.filter(
+        (db) => (db.DBTYP || '').toUpperCase() !== 'GENERIC'
+      )
+
+      setDatabases(uiDatabases)
+      if (uiDatabases.length > 0) {
+        setSelectedDatabase(uiDatabases[0].DBTYP)
+      } else {
+        setSelectedDatabase('')
+      }
+    } catch (err) {
+      console.error('Failed to load databases:', err)
+    }
+  }
+
+  // Load datatypes for selected database
+  const loadDatatypes = async (dbtype) => {
+    if (!dbtype) return
+    setDatatypesLoading(true)
+    setDatatypesError('')
+    try {
+      const data = await getDatatypesForDatabase(dbtype)
+      // Filter out any invalid/incomplete records as a safety measure
+      const validDatatypes = (data.datatypes || []).filter(dt =>
+        dt.PRCD && dt.PRCD.trim() !== '' &&
+        dt.DBTYP && dt.DBTYP.trim() !== ''
+      )
+
+      // Show only database-specific records in Datatypes Management (hide GENERIC fallback rows)
+      const selectedDbUpper = (dbtype || '').toUpperCase()
+      const dbSpecificDatatypes = validDatatypes.filter(
+        (dt) => (dt.DBTYP || '').toUpperCase() === selectedDbUpper
+      )
+
+      console.log(`[loadDatatypes] Loaded ${dbSpecificDatatypes.length} records for ${dbtype}`)
+      if (dbSpecificDatatypes.length < validDatatypes.length) {
+        console.info(`[loadDatatypes] Hidden ${validDatatypes.length - dbSpecificDatatypes.length} GENERIC fallback records`)
+      }
+      setDatatypes(dbSpecificDatatypes)
+    } catch (err) {
+      setDatatypesError(err.message || 'Failed to load datatypes')
+    } finally {
+      setDatatypesLoading(false)
+    }
+  }
+
+  // Handle database selection change
+  const handleDatabaseChange = (event) => {
+    const dbtype = event.target.value
+    setSelectedDatabase(dbtype)
+    loadDatatypes(dbtype)
+  }
 
   const fetchParameters = async () => {
     try {
@@ -116,6 +212,25 @@ export default function ParameterPage() {
     }))
   }
 
+  // Handle datatype form actions
+  const handleEditDatatype = (datatype) => {
+    setEditingDatatype(datatype)
+    setShowDatatypeForm(true)
+  }
+
+  const handleDeleteDatatype = () => {
+    loadDatatypes(selectedDatabase)
+  }
+
+  const handleDatatypeFormSubmit = () => {
+    loadDatatypes(selectedDatabase)
+  }
+
+  const handleWizardSuccess = () => {
+    loadDatabases()
+    loadDatatypes(selectedDatabase)
+  }
+
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A'
     try {
@@ -137,7 +252,11 @@ export default function ParameterPage() {
       param.PRDESC.toLowerCase().includes(lowercasedQuery) ||
       param.PRVAL.toLowerCase().includes(lowercasedQuery)
 
-    return typeMatch && searchMatch
+    // Filter out ALL datatypes from System Parameters
+    // Datatypes should only be shown in Datatypes Management tab
+    const isNotDatatype = param.PRTYP !== 'Datatype'
+
+    return typeMatch && searchMatch && isNotDatatype
   })
 
   return (
@@ -154,81 +273,120 @@ export default function ParameterPage() {
         gap: 2,
       }}
     >
-      {/* --- Top Controls --- */}
-      <Box
-        sx={{
-          flexShrink: 0,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 1.5,
-        }}
-      >
-        <Typography variant="h5" fontWeight={700}>
-          System Parameters
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
-          <TextField
-            size="small"
-            variant="outlined"
-            label="Search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search..."
-            sx={{
-              width: 250,
-              backgroundColor: theme.palette.background.paper,
-            }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon fontSize="small" />
-                </InputAdornment>
-              ),
-            }}
+      {/* Error Alert */}
+      {error && (
+        <Alert
+          severity="error"
+          onClose={() => setError(null)}
+          sx={{ flexShrink: 0 }}
+        >
+          {error}
+        </Alert>
+      )}
+
+      {/* Tabs */}
+      <Paper sx={{ borderRadius: 2 }}>
+        <Tabs
+          value={currentTab}
+          onChange={(e, value) => setCurrentTab(value)}
+          sx={{ borderBottom: 1, borderColor: 'divider' }}
+        >
+          <Tab
+            label="System Parameters"
+            icon={<StorageIcon />}
+            iconPosition="start"
           />
-          <TextField
-            select
-            size="small"
-            label="Filter by Type"
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
+          <Tab
+            label="Datatypes Management"
+            icon={<DashboardIcon />}
+            iconPosition="start"
+          />
+          <Tab
+            label="Validation"
+            icon={<CheckIcon />}
+            iconPosition="start"
+          />
+        </Tabs>
+      </Paper>
+
+      {/* Tab 1: System Parameters */}
+      {currentTab === 0 && (
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* --- Top Controls --- */}
+          <Box
             sx={{
-              minWidth: 180,
-              backgroundColor: theme.palette.background.paper,
+              flexShrink: 0,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 1.5,
             }}
           >
-            <MenuItem value="">
-              <em>All Types</em>
-            </MenuItem>
-            {types.map((type) => (
-              <MenuItem key={type} value={type}>
-                {type}
-              </MenuItem>
-            ))}
-          </TextField>
-          <Tooltip title={loading ? 'Refreshing...' : 'Refresh Data'} arrow>
-            <span>
-              <IconButton
-                color="primary"
-                onClick={fetchParameters}
-                disabled={loading}
+            <Typography variant="h5" fontWeight={700}>
+              System Parameters
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+              <TextField
+                size="small"
+                variant="outlined"
+                label="Search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search..."
+                sx={{
+                  width: 250,
+                  backgroundColor: theme.palette.background.paper,
+                }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" />
+                    </InputAdornment>
+                  ),
+                }}
+              />
+              <TextField
+                select
+                size="small"
+                label="Filter by Type"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                sx={{
+                  minWidth: 180,
+                  backgroundColor: theme.palette.background.paper,
+                }}
               >
-                <RefreshIcon />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Button
-            variant={showAddForm ? 'outlined' : 'contained'}
-            startIcon={showAddForm ? <CancelIcon /> : <AddIcon />}
-            onClick={() => setShowAddForm(!showAddForm)}
-            color={'primary'}
-          >
-            {'Add Parameter'}
-          </Button>
-        </Box>
-      </Box>
+                <MenuItem value="">
+                  <em>All Types</em>
+                </MenuItem>
+                {types.map((type) => (
+                  <MenuItem key={type} value={type}>
+                    {type}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <Tooltip title={loading ? 'Refreshing...' : 'Refresh Data'} arrow>
+                <span>
+                  <IconButton
+                    color="primary"
+                    onClick={fetchParameters}
+                    disabled={loading}
+                  >
+                    <RefreshIcon />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Button
+                variant={showAddForm ? 'outlined' : 'contained'}
+                startIcon={showAddForm ? <CancelIcon /> : <AddIcon />}
+                onClick={() => setShowAddForm(!showAddForm)}
+                color={'primary'}
+              >
+                {'Add Parameter'}
+              </Button>
+            </Box>
+          </Box>
 
       {/* --- Add Parameter Dialog --- */}
       <Dialog
@@ -319,16 +477,6 @@ export default function ParameterPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
-      {error && (
-        <Alert
-          severity="error"
-          onClose={() => setError(null)}
-          sx={{ flexShrink: 0 }}
-        >
-          {error}
-        </Alert>
-      )}
 
       {/* --- Main Table --- */}
       <Paper
@@ -429,6 +577,135 @@ export default function ParameterPage() {
           </TableContainer>
         )}
       </Paper>
+        </Box>
+      )}
+
+      {/* Tab 2: Datatypes Management */}
+      {currentTab === 1 && (
+        <Box 
+          sx={{ 
+            flex: 1, 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: 2,
+            overflow: 'auto'
+          }}
+        >
+          {/* Database Selector */}
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <TextField
+              select
+              label="Select Database"
+              value={selectedDatabase}
+              onChange={handleDatabaseChange}
+              sx={{ minWidth: 250 }}
+              disabled={databases.length === 0}
+            >
+              {databases.map((db) => (
+                <MenuItem key={db.DBTYP} value={db.DBTYP}>
+                  {db.DBTYP} - {db.DBDESC || 'No description'}
+                </MenuItem>
+              ))}
+            </TextField>
+
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setShowWizard(true)}
+            >
+              Add Database
+            </Button>
+
+            <Button
+              variant="outlined"
+              onClick={() => loadDatatypes(selectedDatabase)}
+              disabled={datatypesLoading || !selectedDatabase}
+            >
+              {datatypesLoading ? <CircularProgress size={24} /> : 'Refresh'}
+            </Button>
+
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => {
+                setEditingDatatype(null)
+                setShowDatatypeForm(true)
+              }}
+              disabled={!selectedDatabase}
+            >
+              Add Datatype
+            </Button>
+          </Box>
+
+          {datatypesError && (
+            <Alert severity="error" onClose={() => setDatatypesError('')}>
+              {datatypesError}
+            </Alert>
+          )}
+
+          {/* Datatypes Table - No extra container, just the table */}
+          {datatypesLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <DatatypesTable
+              datatypes={datatypes}
+              selectedDatabase={selectedDatabase}
+              onEdit={handleEditDatatype}
+              onDelete={handleDeleteDatatype}
+              onRefresh={() => loadDatatypes(selectedDatabase)}
+            />
+          )}
+        </Box>
+      )}
+
+      {/* Tab 3: Validation */}
+      {currentTab === 2 && (
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <TextField
+            select
+            label="Select Database to Validate"
+            value={selectedDatabase}
+            onChange={handleDatabaseChange}
+            sx={{ maxWidth: 300 }}
+          >
+            {databases.map((db) => (
+              <MenuItem key={db.DBTYP} value={db.DBTYP}>
+                {db.DBTYP}
+              </MenuItem>
+            ))}
+          </TextField>
+          {selectedDatabase ? (
+            <ValidationResults
+              selectedDatabase={selectedDatabase}
+              onRefresh={() => {}}
+            />
+          ) : (
+            <Alert severity="info">No active non-GENERIC databases available for validation.</Alert>
+          )}
+        </Box>
+      )}
+
+      {/* Datatype Form Dialog */}
+      <DatatypeForm
+        open={showDatatypeForm}
+        onClose={() => {
+          setShowDatatypeForm(false)
+          setEditingDatatype(null)
+        }}
+        onSubmit={handleDatatypeFormSubmit}
+        initialData={editingDatatype}
+        selectedDatabase={selectedDatabase}
+        existingDatatypes={datatypes}
+      />
+
+      {/* Database Wizard Dialog */}
+      <DatabaseWizard
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+        onSuccess={handleWizardSuccess}
+      />
     </Box>
   )
 }

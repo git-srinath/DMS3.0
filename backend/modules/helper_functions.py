@@ -216,16 +216,16 @@ def add_parameter_mapping(conn, type, code, desc, value, dbtyp='GENERIC', create
         if db_type == "POSTGRESQL":
             # PostgreSQL: use unquoted identifiers (will be lowercase in DB, but we normalize in SELECT)
             query = """
-                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, PRRECCRDT, PRRECUPDT)
-                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """
-            cursor.execute(query, (type, code, desc, value, dbtyp, created_by))
+            cursor.execute(query, (type, code, desc, value, dbtyp))
         else:  # Oracle
             query = """
-                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, PRRECCRDT, PRRECUPDT)
-                VALUES (:1, :2, :3, :4, :5, :6, sysdate, sysdate)
+                INSERT INTO DMS_PARAMS (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT)
+                VALUES (:1, :2, :3, :4, :5, sysdate, sysdate)
             """
-            cursor.execute(query, [type, code, desc, value, dbtyp, created_by])
+            cursor.execute(query, [type, code, desc, value, dbtyp])
         
         cursor.close()
         cursor = None
@@ -797,6 +797,7 @@ def call_delete_mapping_details(connection, p_mapref, p_trgclnm):
 
 # Datatype compatibility matrix - maps generic datatypes to database-specific types
 DATATYPE_COMPATIBILITY_MATRIX = {
+    # Legacy standard datatypes (backward compatibility)
     'INT': {
         'ORACLE': 'NUMBER(10,0)',
         'POSTGRESQL': 'INTEGER',
@@ -837,22 +838,6 @@ DATATYPE_COMPATIBILITY_MATRIX = {
         'SNOWFLAKE': 'VARCHAR(16777216)',
         'GENERIC': 'VARCHAR_LARGE'
     },
-    'DATE': {
-        'ORACLE': 'DATE',
-        'POSTGRESQL': 'DATE',
-        'MYSQL': 'DATE',
-        'SQLSERVER': 'DATE',
-        'SNOWFLAKE': 'DATE',
-        'GENERIC': 'DATE'
-    },
-    'TIMESTAMP': {
-        'ORACLE': 'TIMESTAMP',
-        'POSTGRESQL': 'TIMESTAMP',
-        'MYSQL': 'DATETIME',
-        'SQLSERVER': 'DATETIME2',
-        'SNOWFLAKE': 'TIMESTAMP_NTZ',
-        'GENERIC': 'TIMESTAMP'
-    },
     'BOOLEAN': {
         'ORACLE': 'CHAR(1)',
         'POSTGRESQL': 'BOOLEAN',
@@ -876,6 +861,214 @@ DATATYPE_COMPATIBILITY_MATRIX = {
         'SQLSERVER': 'NVARCHAR(MAX)',
         'SNOWFLAKE': 'VARIANT',
         'GENERIC': 'JSON'
+    },
+    
+    # Date and Timestamp datatypes
+    'Date': {
+        'ORACLE': 'DATE',
+        'POSTGRESQL': 'DATE',
+        'MYSQL': 'DATE',
+        'SQLSERVER': 'DATE',
+        'SNOWFLAKE': 'DATE',
+        'GENERIC': 'DATE'
+    },
+    'DATE': {
+        'ORACLE': 'DATE',
+        'POSTGRESQL': 'DATE',
+        'MYSQL': 'DATE',
+        'SQLSERVER': 'DATE',
+        'SNOWFLAKE': 'DATE',
+        'GENERIC': 'DATE'
+    },
+    'timestamp': {
+        'ORACLE': 'TIMESTAMP',
+        'POSTGRESQL': 'TIMESTAMP',
+        'MYSQL': 'DATETIME',
+        'SQLSERVER': 'DATETIME2',
+        'SNOWFLAKE': 'TIMESTAMP_NTZ',
+        'GENERIC': 'TIMESTAMP'
+    },
+    'Timestamp': {
+        'ORACLE': 'TIMESTAMP',
+        'POSTGRESQL': 'TIMESTAMP',
+        'MYSQL': 'DATETIME',
+        'SQLSERVER': 'DATETIME2',
+        'SNOWFLAKE': 'TIMESTAMP_NTZ',
+        'GENERIC': 'TIMESTAMP'
+    },
+    'TIMESTAMP': {
+        'ORACLE': 'TIMESTAMP',
+        'POSTGRESQL': 'TIMESTAMP',
+        'MYSQL': 'DATETIME',
+        'SQLSERVER': 'DATETIME2',
+        'SNOWFLAKE': 'TIMESTAMP_NTZ',
+        'GENERIC': 'TIMESTAMP'
+    },
+    
+    # String datatypes (varchar with different lengths)
+    'String1': {
+        'ORACLE': 'VARCHAR2(1)',
+        'POSTGRESQL': 'VARCHAR(1)',
+        'MYSQL': 'VARCHAR(1)',
+        'SQLSERVER': 'VARCHAR(1)',
+        'SNOWFLAKE': 'VARCHAR(1)',
+        'GENERIC': 'VARCHAR(1)'
+    },
+    'String3': {
+        'ORACLE': 'VARCHAR2(3)',
+        'POSTGRESQL': 'VARCHAR(3)',
+        'MYSQL': 'VARCHAR(3)',
+        'SQLSERVER': 'VARCHAR(3)',
+        'SNOWFLAKE': 'VARCHAR(3)',
+        'GENERIC': 'VARCHAR(3)'
+    },
+    'String5': {
+        'ORACLE': 'VARCHAR2(5)',
+        'POSTGRESQL': 'VARCHAR(5)',
+        'MYSQL': 'VARCHAR(5)',
+        'SQLSERVER': 'VARCHAR(5)',
+        'SNOWFLAKE': 'VARCHAR(5)',
+        'GENERIC': 'VARCHAR(5)'
+    },
+    'String10': {
+        'ORACLE': 'VARCHAR2(10)',
+        'POSTGRESQL': 'VARCHAR(10)',
+        'MYSQL': 'VARCHAR(10)',
+        'SQLSERVER': 'VARCHAR(10)',
+        'SNOWFLAKE': 'VARCHAR(10)',
+        'GENERIC': 'VARCHAR(10)'
+    },
+    'String20': {
+        'ORACLE': 'VARCHAR2(20)',
+        'POSTGRESQL': 'VARCHAR(20)',
+        'MYSQL': 'VARCHAR(20)',
+        'SQLSERVER': 'VARCHAR(20)',
+        'SNOWFLAKE': 'VARCHAR(20)',
+        'GENERIC': 'VARCHAR(20)'
+    },
+    'String30': {
+        'ORACLE': 'VARCHAR2(30)',
+        'POSTGRESQL': 'VARCHAR(30)',
+        'MYSQL': 'VARCHAR(30)',
+        'SQLSERVER': 'VARCHAR(30)',
+        'SNOWFLAKE': 'VARCHAR(30)',
+        'GENERIC': 'VARCHAR(30)'
+    },
+    'String50': {
+        'ORACLE': 'VARCHAR2(50)',
+        'POSTGRESQL': 'VARCHAR(50)',
+        'MYSQL': 'VARCHAR(50)',
+        'SQLSERVER': 'VARCHAR(50)',
+        'SNOWFLAKE': 'VARCHAR(50)',
+        'GENERIC': 'VARCHAR(50)'
+    },
+    'String100': {
+        'ORACLE': 'VARCHAR2(100)',
+        'POSTGRESQL': 'VARCHAR(100)',
+        'MYSQL': 'VARCHAR(100)',
+        'SQLSERVER': 'VARCHAR(100)',
+        'SNOWFLAKE': 'VARCHAR(100)',
+        'GENERIC': 'VARCHAR(100)'
+    },
+    'String250': {
+        'ORACLE': 'VARCHAR2(250)',
+        'POSTGRESQL': 'VARCHAR(250)',
+        'MYSQL': 'VARCHAR(250)',
+        'SQLSERVER': 'VARCHAR(250)',
+        'SNOWFLAKE': 'VARCHAR(250)',
+        'GENERIC': 'VARCHAR(250)'
+    },
+    'String4000': {
+        'ORACLE': 'VARCHAR2(4000)',
+        'POSTGRESQL': 'VARCHAR(4000)',
+        'MYSQL': 'TEXT',
+        'SQLSERVER': 'VARCHAR(MAX)',
+        'SNOWFLAKE': 'VARCHAR(4000)',
+        'GENERIC': 'VARCHAR(4000)'
+    },
+    
+    # Numeric datatypes (integer/number with different precisions)
+    'Numeric1': {
+        'ORACLE': 'NUMBER(1)',
+        'POSTGRESQL': 'NUMERIC(1)',
+        'MYSQL': 'DECIMAL(1,0)',
+        'SQLSERVER': 'DECIMAL(1,0)',
+        'SNOWFLAKE': 'NUMBER(1,0)',
+        'GENERIC': 'NUMERIC(1)'
+    },
+    'Numeric3': {
+        'ORACLE': 'NUMBER(3)',
+        'POSTGRESQL': 'NUMERIC(3)',
+        'MYSQL': 'DECIMAL(3,0)',
+        'SQLSERVER': 'DECIMAL(3,0)',
+        'SNOWFLAKE': 'NUMBER(3,0)',
+        'GENERIC': 'NUMERIC(3)'
+    },
+    'Numeric5': {
+        'ORACLE': 'NUMBER(5)',
+        'POSTGRESQL': 'NUMERIC(5)',
+        'MYSQL': 'DECIMAL(5,0)',
+        'SQLSERVER': 'DECIMAL(5,0)',
+        'SNOWFLAKE': 'NUMBER(5,0)',
+        'GENERIC': 'NUMERIC(5)'
+    },
+    'Numeric10': {
+        'ORACLE': 'NUMBER(10)',
+        'POSTGRESQL': 'NUMERIC(10)',
+        'MYSQL': 'DECIMAL(10,0)',
+        'SQLSERVER': 'DECIMAL(10,0)',
+        'SNOWFLAKE': 'NUMBER(10,0)',
+        'GENERIC': 'NUMERIC(10)'
+    },
+    'Numeric20': {
+        'ORACLE': 'NUMBER(20)',
+        'POSTGRESQL': 'NUMERIC(20)',
+        'MYSQL': 'DECIMAL(20,0)',
+        'SQLSERVER': 'DECIMAL(20,0)',
+        'SNOWFLAKE': 'NUMBER(20,0)',
+        'GENERIC': 'NUMERIC(20)'
+    },
+    'Numeric30': {
+        'ORACLE': 'NUMBER(30)',
+        'POSTGRESQL': 'NUMERIC(30)',
+        'MYSQL': 'DECIMAL(30,0)',
+        'SQLSERVER': 'DECIMAL(30,0)',
+        'SNOWFLAKE': 'NUMBER(30,0)',
+        'GENERIC': 'NUMERIC(30)'
+    },
+    
+    # Money datatypes (decimal with fixed scale)
+    'Money10': {
+        'ORACLE': 'NUMBER(10,6)',
+        'POSTGRESQL': 'NUMERIC(10,6)',
+        'MYSQL': 'DECIMAL(10,6)',
+        'SQLSERVER': 'DECIMAL(10,6)',
+        'SNOWFLAKE': 'NUMBER(10,6)',
+        'GENERIC': 'NUMERIC(10,6)'
+    },
+    'Money12': {
+        'ORACLE': 'NUMBER(12,6)',
+        'POSTGRESQL': 'NUMERIC(12,6)',
+        'MYSQL': 'DECIMAL(12,6)',
+        'SQLSERVER': 'DECIMAL(12,6)',
+        'SNOWFLAKE': 'NUMBER(12,6)',
+        'GENERIC': 'NUMERIC(12,6)'
+    },
+    'Money18': {
+        'ORACLE': 'NUMBER(18,6)',
+        'POSTGRESQL': 'NUMERIC(18,6)',
+        'MYSQL': 'DECIMAL(18,6)',
+        'SQLSERVER': 'DECIMAL(18,6)',
+        'SNOWFLAKE': 'NUMBER(18,6)',
+        'GENERIC': 'NUMERIC(18,6)'
+    },
+    'Money28': {
+        'ORACLE': 'NUMBER(28,6)',
+        'POSTGRESQL': 'NUMERIC(28,6)',
+        'MYSQL': 'DECIMAL(28,6)',
+        'SQLSERVER': 'DECIMAL(28,6)',
+        'SNOWFLAKE': 'NUMBER(28,6)',
+        'GENERIC': 'NUMERIC(28,6)'
     }
 }
 
@@ -893,18 +1086,18 @@ def get_supported_databases(conn):
         
         if db_type == "POSTGRESQL":
             query = f"""
-                SELECT DBTYP, DBDESC, DBVRSN, STTS, RECCRDT, CRTBY, RECUPDT, UPDBY
+                SELECT DBID, DBTYP, DBDESC, DBVRSN, STATUS, CRTDBY, CRTDT, UPDTDBY, UPDTDT
                 FROM {dms_db_ref}
-                WHERE STTS = 'ACTIVE'
-                ORDER BY RECCRDT DESC
+                WHERE STATUS = 'ACTIVE'
+                ORDER BY CRTDT DESC
             """
             cursor.execute(query)
         else:  # Oracle
             query = f"""
-                SELECT DBTYP, DBDESC, DBVRSN, STTS, RECCRDT, CRTBY, RECUPDT, UPDBY
+                SELECT DBID, DBTYP, DBDESC, DBVRSN, STATUS, CRTDBY, CRTDT, UPDTDBY, UPDTDT
                 FROM {dms_db_ref}
-                WHERE STTS = 'ACTIVE'
-                ORDER BY RECCRDT DESC
+                WHERE STATUS = 'ACTIVE'
+                ORDER BY CRTDT DESC
             """
             cursor.execute(query)
         
@@ -948,13 +1141,13 @@ def add_supported_database(conn, dbtyp, dbdesc, dbvrsn, created_by):
         # Insert new database type
         if db_type == "POSTGRESQL":
             insert_query = f"""
-                INSERT INTO {dms_db_ref} (DBTYP, DBDESC, DBVRSN, STTS, CRTBY, RECCRDT, UPDBY, RECUPDT)
+                INSERT INTO {dms_db_ref} (DBTYP, DBDESC, DBVRSN, STATUS, CRTDBY, CRTDT, UPDTDBY, UPDTDT)
                 VALUES (%s, %s, %s, 'ACTIVE', %s, NOW(), %s, NOW())
             """
             cursor.execute(insert_query, (dbtyp, dbdesc, dbvrsn, created_by, created_by))
         else:  # Oracle
             insert_query = f"""
-                INSERT INTO {dms_db_ref} (DBTYP, DBDESC, DBVRSN, STTS, CRTBY, RECCRDT, UPDBY, RECUPDT)
+                INSERT INTO {dms_db_ref} (DBTYP, DBDESC, DBVRSN, STATUS, CRTDBY, CRTDT, UPDTDBY, UPDTDT)
                 VALUES (:1, :2, :3, 'ACTIVE', :4, SYSDATE, :5, SYSDATE)
             """
             cursor.execute(insert_query, [dbtyp, dbdesc, dbvrsn, created_by, created_by])
@@ -977,10 +1170,10 @@ def get_database_status(conn, dbtyp):
         dms_db_ref = _get_table_ref(cursor, db_type, 'DMS_SUPPORTED_DATABASES')
         
         if db_type == "POSTGRESQL":
-            query = f"SELECT STTS FROM {dms_db_ref} WHERE DBTYP = %s"
+            query = f"SELECT STATUS FROM {dms_db_ref} WHERE DBTYP = %s"
             cursor.execute(query, (dbtyp,))
         else:  # Oracle
-            query = f"SELECT STTS FROM {dms_db_ref} WHERE DBTYP = :1"
+            query = f"SELECT STATUS FROM {dms_db_ref} WHERE DBTYP = :1"
             cursor.execute(query, [dbtyp])
         
         row = cursor.fetchone()
@@ -1006,10 +1199,10 @@ def update_database_status(conn, dbtyp, status, updated_by):
             return False, f"Invalid status '{status}'. Must be ACTIVE or INACTIVE"
         
         if db_type == "POSTGRESQL":
-            update_query = f"UPDATE {dms_db_ref} SET STTS = %s, UPDBY = %s, RECUPDT = NOW() WHERE DBTYP = %s"
+            update_query = f"UPDATE {dms_db_ref} SET STATUS = %s, UPDTDBY = %s, UPDTDT = NOW() WHERE DBTYP = %s"
             cursor.execute(update_query, (status, updated_by, dbtyp))
         else:  # Oracle
-            update_query = f"UPDATE {dms_db_ref} SET STTS = :1, UPDBY = :2, RECUPDT = SYSDATE WHERE DBTYP = :3"
+            update_query = f"UPDATE {dms_db_ref} SET STATUS = :1, UPDTDBY = :2, UPDTDT = SYSDATE WHERE DBTYP = :3"
             cursor.execute(update_query, [status, updated_by, dbtyp])
         
         conn.commit()
@@ -1024,6 +1217,7 @@ def update_database_status(conn, dbtyp, status, updated_by):
 def get_parameter_mapping_datatype_for_db(conn, db_type_filter=None):
     """
     Fetch datatype parameters from DMS_PARAMS, optionally filtered by DBTYP.
+    If db_type_filter is provided, returns datatypes matching that DBTYP or GENERIC (fallback).
     If db_type_filter is None, returns all datatypes.
     Returns list of datatype parameter dictionaries.
     """
@@ -1035,35 +1229,65 @@ def get_parameter_mapping_datatype_for_db(conn, db_type_filter=None):
         
         if db_type_filter:
             if db_type == "POSTGRESQL":
+                # Prefer database-specific, fall back to GENERIC
                 query = f"""
-                    SELECT PRCD, PRDESC, PRVAL, DBTYP
-                    FROM {dms_params_ref}
-                    WHERE PRTYP = 'Datatype' AND DBTYP = %s
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT
+                    FROM (
+                        SELECT PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT,
+                               ROW_NUMBER() OVER (PARTITION BY PRCD ORDER BY CASE WHEN DBTYP = %s THEN 0 ELSE 1 END) as rn
+                        FROM {dms_params_ref}
+                        WHERE PRTYP = 'Datatype' 
+                          AND (DBTYP = %s OR DBTYP = 'GENERIC')
+                          AND PRCD IS NOT NULL 
+                          AND TRIM(PRCD) != ''
+                          AND DBTYP IS NOT NULL
+                          AND TRIM(DBTYP) != ''
+                    ) subq
+                    WHERE rn = 1
                     ORDER BY PRCD
                 """
-                cursor.execute(query, (db_type_filter,))
+                cursor.execute(query, (db_type_filter, db_type_filter))
             else:  # Oracle
+                # Use ROW_NUMBER to get only one row per PRCD, prioritizing database-specific
                 query = f"""
-                    SELECT PRCD, PRDESC, PRVAL, DBTYP
-                    FROM {dms_params_ref}
-                    WHERE PRTYP = 'Datatype' AND DBTYP = :1
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT
+                    FROM (
+                        SELECT PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT,
+                               ROW_NUMBER() OVER (PARTITION BY PRCD ORDER BY CASE WHEN DBTYP = :1 THEN 0 ELSE 1 END) as rn
+                        FROM {dms_params_ref}
+                        WHERE PRTYP = 'Datatype' 
+                          AND (DBTYP = :1 OR DBTYP = 'GENERIC')
+                          AND PRCD IS NOT NULL 
+                          AND TRIM(PRCD) IS NOT NULL
+                          AND DBTYP IS NOT NULL
+                          AND TRIM(DBTYP) IS NOT NULL
+                    )
+                    WHERE rn = 1
                     ORDER BY PRCD
                 """
-                cursor.execute(query, [db_type_filter])
+                cursor.execute(query, [db_type_filter, db_type_filter])
         else:
             if db_type == "POSTGRESQL":
                 query = f"""
-                    SELECT PRCD, PRDESC, PRVAL, DBTYP
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT
                     FROM {dms_params_ref}
                     WHERE PRTYP = 'Datatype'
+                      AND PRCD IS NOT NULL 
+                      AND TRIM(PRCD) != ''
+                      AND DBTYP IS NOT NULL
+                      AND TRIM(DBTYP) != ''
                     ORDER BY DBTYP, PRCD
                 """
                 cursor.execute(query)
             else:  # Oracle
                 query = f"""
-                    SELECT PRCD, PRDESC, PRVAL, DBTYP
+                    SELECT PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT
                     FROM {dms_params_ref}
                     WHERE PRTYP = 'Datatype'
+                      AND PRCD IS NOT NULL 
+                      AND TRIM(PRCD) IS NOT NULL
+                      AND DBTYP IS NOT NULL
+                      AND TRIM(DBTYP) IS NOT NULL
                     ORDER BY DBTYP, PRCD
                 """
                 cursor.execute(query)
@@ -1146,32 +1370,49 @@ def clone_datatypes_from_generic(conn, target_dbtype, mappings, created_by):
         dms_params_ref = _get_table_ref(cursor, db_type, 'DMS_PARAMS')
         
         # Get GENERIC datatypes
+        info(f"[clone_datatypes] Fetching GENERIC datatypes from database")
         generic_datatypes = get_parameter_mapping_datatype_for_db(conn, 'GENERIC')
+        
+        info(f"[clone_datatypes] Found {len(generic_datatypes) if generic_datatypes else 0} GENERIC datatypes")
+        if generic_datatypes:
+            info(f"[clone_datatypes] Generic datatype codes: {[dt['PRCD'] for dt in generic_datatypes]}")
         
         if not generic_datatypes:
             cursor.close()
+            warning(f"[clone_datatypes] No GENERIC datatypes found in DMS_PARAMS table")
             return False, 0, 0, "No GENERIC datatypes found to clone"
         
         created_count = 0
         skipped_count = 0
         
+        info(f"[clone_datatypes] Target database: {target_dbtype}, Mappings provided: {bool(mappings)}")
+        info(f"[clone_datatypes] Compatibility matrix keys: {list(DATATYPE_COMPATIBILITY_MATRIX.keys())}")
+        
         for generic_dt in generic_datatypes:
             prcd = generic_dt['PRCD']
             prdesc = generic_dt['PRDESC']
             
+            info(f"[clone_datatypes] Processing PRCD={prcd}")
+            
             # Determine target value
             if prcd in mappings and mappings[prcd]:
                 target_prval = mappings[prcd]
+                info(f"[clone_datatypes]   Using custom mapping: {prcd} -> {target_prval}")
             else:
                 # Use default from compatibility matrix
                 if prcd in DATATYPE_COMPATIBILITY_MATRIX:
                     target_prval = DATATYPE_COMPATIBILITY_MATRIX[prcd].get(target_dbtype)
                     if not target_prval:
-                        skipped_count += 1
-                        continue
+                        # Fallback: Use GENERIC PRVAL if no specific mapping exists for target DB
+                        target_prval = generic_dt.get('PRVAL')
+                        warning(f"[clone_datatypes]   FALLBACK: {prcd} not in matrix for {target_dbtype}, using GENERIC value: {target_prval}")
+                    else:
+                        info(f"[clone_datatypes]   Using compatibility matrix: {prcd} -> {target_prval}")
                 else:
-                    skipped_count += 1
-                    continue
+                    # Smart fallback: Use GENERIC PRVAL directly for custom datatypes not in matrix
+                    target_prval = generic_dt.get('PRVAL')
+                    warning(f"[clone_datatypes]   CUSTOM DATATYPE: {prcd} not in compatibility matrix, using GENERIC value as-is: {target_prval}")
+                    info(f"[clone_datatypes]   TIP: Add {prcd} to DATATYPE_COMPATIBILITY_MATRIX for database-specific mappings")
             
             # Check if already exists
             if db_type == "POSTGRESQL":
@@ -1182,26 +1423,30 @@ def clone_datatypes_from_generic(conn, target_dbtype, mappings, created_by):
                 cursor.execute(check_query, [prcd, target_dbtype])
             
             if cursor.fetchone()[0] > 0:
+                info(f"[clone_datatypes]   SKIPPED: {prcd} already exists for {target_dbtype}")
                 skipped_count += 1
                 continue
             
             # Insert cloned datatype
+            info(f"[clone_datatypes]   INSERTING: {prcd} = {target_prval} for {target_dbtype}")
             if db_type == "POSTGRESQL":
                 insert_query = f"""
-                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, RECCRDT, UPDBY, RECUPDT)
-                    VALUES ('Datatype', %s, %s, %s, %s, %s, NOW(), %s, NOW())
+                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT)
+                    VALUES ('Datatype', %s, %s, %s, %s, NOW(), NOW())
                 """
-                cursor.execute(insert_query, ('Datatype', prcd, prdesc, target_prval, target_dbtype, created_by, created_by))
+                cursor.execute(insert_query, (prcd, prdesc, target_prval, target_dbtype))
             else:  # Oracle
                 insert_query = f"""
-                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, CRTBY, RECCRDT, UPDBY, RECUPDT)
-                    VALUES ('Datatype', :1, :2, :3, :4, :5, SYSDATE, :6, SYSDATE)
+                    INSERT INTO {dms_params_ref} (PRTYP, PRCD, PRDESC, PRVAL, DBTYP, PRRECCRDT, PRRECUPDT)
+                    VALUES ('Datatype', :1, :2, :3, :4, SYSDATE, SYSDATE)
                 """
-                cursor.execute(insert_query, ['Datatype', prcd, prdesc, target_prval, target_dbtype, created_by, created_by])
+                cursor.execute(insert_query, [prcd, prdesc, target_prval, target_dbtype])
             
+            info(f"[clone_datatypes]   SUCCESS: Inserted {prcd}")
             created_count += 1
         
         conn.commit()
+        info(f"[clone_datatypes] COMMIT: Created {created_count}, Skipped {skipped_count}")
         cursor.close()
         return True, created_count, skipped_count, f"Cloned {created_count} datatypes, skipped {skipped_count}"
     except Exception as e:

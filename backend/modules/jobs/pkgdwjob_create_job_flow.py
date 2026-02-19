@@ -423,6 +423,31 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
     # Execute ETL logic for each combination
 ''')
     
+    # NEW: Detect target database type for DBTYP filtering (Phase 3)
+    target_dbtype = 'GENERIC'
+    try:
+        if db_type == "POSTGRESQL":
+            cursor.execute(f"""
+                SELECT COALESCE(dc.dbtyp, 'GENERIC')
+                FROM {table_prefix}{dms_job_ref}{table_suffix} j
+                LEFT JOIN {table_prefix}dms_dbconnect{table_suffix} dc ON dc.conid = j.trgconid
+                WHERE j.jobid = %s
+            """, (jobid,))
+        else:  # Oracle
+            cursor.execute(f"""
+                SELECT COALESCE(dc.DBTYP, 'GENERIC')
+                FROM {schema}.DMS_JOB j
+                LEFT JOIN {schema}.DMS_DBCONNECT dc ON dc.CONID = j.TRGCONID
+                WHERE j.JOBID = :jobid
+            """, {'jobid': jobid})
+        
+        dbtype_row = cursor.fetchone()
+        if dbtype_row:
+            target_dbtype = dbtype_row[0] or 'GENERIC'
+    except Exception as dbtype_err:
+        print(f"Warning: Could not determine target database type, using GENERIC: {str(dbtype_err)}")
+        target_dbtype = 'GENERIC'
+    
     # Generate code for each combination - simplified to call external modules
     for idx, (mapcmbcd, kseq, scdtyp, maxexcseq) in enumerate(combinations, 1):
         # Get details for this combination
@@ -436,13 +461,14 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                 JOIN {table_prefix}{dms_jobdtl_ref}{table_suffix} jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
                 LEFT JOIN {table_prefix}{dms_maprsql_ref}{table_suffix} s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
                 JOIN {table_prefix}{dms_params_ref}{table_suffix} p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                                                                      AND (p.dbtyp = %s OR p.dbtyp = 'GENERIC')
                 WHERE j.jobid = %s
                   AND j.stflg = 'A'
                   AND j.curflg = 'Y'
                   AND COALESCE(jd.scdtyp, 1) = %s
                   AND COALESCE(jd.mapcmbcd, '#') = COALESCE(%s, '#')
-                ORDER BY CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END, jd.excseq
-            """, (jobid, scdtyp, mapcmbcd))
+                ORDER BY CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END, jd.excseq, p.dbtyp DESC NULLS LAST
+            """, (target_dbtype, jobid, scdtyp, mapcmbcd))
         else:  # Oracle
             cursor.execute(f"""
                 SELECT j.mapref, j.trgschm, j.trgtbtyp, j.trgtbnm, j.trgconid,
@@ -453,13 +479,14 @@ def execute_job(metadata_connection, source_connection, target_connection, sessi
                 JOIN {schema}.DMS_JOBDTL jd ON jd.mapref = j.mapref AND jd.curflg = 'Y'
                 LEFT JOIN {schema}.DMS_MAPRSQL s ON s.maprsqlcd = jd.maprsqlcd AND s.curflg = 'Y'
                 JOIN {schema}.DMS_PARAMS p ON p.prtyp = 'Datatype' AND p.prcd = jd.trgcldtyp
+                                            AND (p.dbtyp = :dbtyp OR p.dbtyp = 'GENERIC')
                 WHERE j.jobid = :jobid
                   AND j.stflg = 'A'
                   AND j.curflg = 'Y'
                   AND NVL(jd.scdtyp, 1) = :scdtyp
                   AND NVL(jd.mapcmbcd, '#') = NVL(:mapcmbcd, '#')
-                ORDER BY CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END, jd.excseq
-            """, {'jobid': jobid, 'scdtyp': scdtyp, 'mapcmbcd': mapcmbcd})
+                ORDER BY CASE WHEN jd.trgkeyseq IS NOT NULL THEN 1 ELSE 2 END, jd.excseq, p.dbtyp DESC
+            """, {'dbtyp': target_dbtype, 'jobid': jobid, 'scdtyp': scdtyp, 'mapcmbcd': mapcmbcd})
         
         combo_details = cursor.fetchall()
         
