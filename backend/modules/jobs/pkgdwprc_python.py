@@ -17,7 +17,7 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 try:
-    from backend.modules.logger import info, error, warning
+    from backend.modules.logger import info, error, warning, debug
     from backend.modules.common.id_provider import next_id as get_next_id
     from backend.modules.common.db_table_utils import (
         _detect_db_type,
@@ -25,7 +25,7 @@ try:
     )
     from backend.modules.jobs.scheduler_frequency import build_trigger
 except ImportError:  # Fallback for Flask-style imports
-    from modules.logger import info, error, warning  # type: ignore
+    from modules.logger import info, error, warning, debug  # type: ignore
     from modules.common.id_provider import next_id as get_next_id  # type: ignore
     from modules.common.db_table_utils import (  # type: ignore
         _detect_db_type,
@@ -165,11 +165,18 @@ def _calculate_next_run_time(
         Next run datetime or None if cannot be calculated
     """
     try:
-        from pytz import timezone as tz
-        from datetime import time as dt_time
-        
-        # Get timezone object
-        tz_obj = tz(timezone) if timezone else tz('UTC')
+        from datetime import time as dt_time, timezone as dt_timezone
+
+        # Prefer stdlib zoneinfo (Python 3.9+) to avoid external pytz dependency.
+        try:
+            from zoneinfo import ZoneInfo
+            tz_obj = ZoneInfo(timezone) if timezone else dt_timezone.utc
+        except Exception:
+            warning(
+                f"Invalid/unsupported timezone '{timezone}'. Falling back to UTC for next-run calculation."
+            )
+            tz_obj = dt_timezone.utc
+
         now = datetime.now(tz_obj)
         
         # Build schedule row dict for build_trigger
@@ -179,12 +186,12 @@ def _calculate_next_run_time(
             hour = frequency_hour if frequency_hour is not None else 0
             minute = frequency_minute if frequency_minute is not None else 0
             start_dt = datetime.combine(start_date, dt_time(hour, minute))
-            start_dt = tz_obj.localize(start_dt) if start_dt.tzinfo is None else start_dt
+            start_dt = start_dt.replace(tzinfo=tz_obj) if start_dt.tzinfo is None else start_dt
         
         end_dt = None
         if end_date:
             end_dt = datetime.combine(end_date, dt_time(23, 59, 59))
-            end_dt = tz_obj.localize(end_dt) if end_dt.tzinfo is None else end_dt
+            end_dt = end_dt.replace(tzinfo=tz_obj) if end_dt.tzinfo is None else end_dt
         
         schedule_row = {
             "FRQCD": frequency_code,

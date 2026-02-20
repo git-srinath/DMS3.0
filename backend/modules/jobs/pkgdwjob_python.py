@@ -554,6 +554,44 @@ def create_update_job(connection, p_mapref: str) -> Optional[int]:
         
         # Get target connection ID from mapping (if specified) - get it early for comparison
         trgconid = map_rec.get('TRGCONID')
+
+        # Resolve target schema from connection metadata when target connection is provided.
+        # Priority: SCHNM (new mandatory field) -> USRNM (legacy fallback).
+        if trgconid is not None:
+            try:
+                if db_type == "POSTGRESQL":
+                    cursor.execute(
+                        f"""
+                        SELECT COALESCE(schnm, usrnm)
+                        FROM {schema}.DMS_DBCONDTLS
+                        WHERE conid = %s
+                          AND curflg = 'Y'
+                        """,
+                        (trgconid,),
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        SELECT COALESCE(schnm, usrnm)
+                        FROM {schema}.DMS_DBCONDTLS
+                        WHERE conid = :conid
+                          AND curflg = 'Y'
+                        """,
+                        {"conid": trgconid},
+                    )
+
+                conn_schema_row = cursor.fetchone()
+                if conn_schema_row and conn_schema_row[0]:
+                    resolved_schema = str(conn_schema_row[0]).strip()
+                    if resolved_schema:
+                        map_rec['TRGSCHM'] = resolved_schema
+                else:
+                    raise Exception(
+                        f"Could not resolve schema for target connection ID {trgconid}. "
+                        "Ensure DMS_DBCONDTLS.SCHNM is populated."
+                    )
+            except Exception as schema_resolve_err:
+                _raise_error(w_procnm, '103', f"{w_parm}::Invalid target schema resolution", schema_resolve_err)
         
         if job_row:
             job_rec = dict(zip(job_columns, job_row))
@@ -572,9 +610,23 @@ def create_update_job(connection, p_mapref: str) -> Optional[int]:
             # Normalize checkpoint enabled (default to 'Y' if None)
             job_chkpntenbld = job_rec.get('CHKPNTENBLD') or 'Y'
             map_chkpntenbld = map_rec.get('CHKPNTENBLD') or 'Y'
+
+            # Normalize key mapping attributes for robust change detection.
+            job_trgschm = (str(job_rec.get('TRGSCHM') or '')).strip().upper()
+            map_trgschm = (str(map_rec.get('TRGSCHM') or '')).strip().upper()
+            job_trgtbtyp = (str(job_rec.get('TRGTBTYP') or '')).strip().upper()
+            map_trgtbtyp = (str(map_rec.get('TRGTBTYP') or '')).strip().upper()
+            job_trgtbnm = (str(job_rec.get('TRGTBNM') or '')).strip().upper()
+            map_trgtbnm = (str(map_rec.get('TRGTBNM') or '')).strip().upper()
+            job_srcsystm = (str(job_rec.get('SRCSYSTM') or '')).strip().upper()
+            map_srcsystm = (str(map_rec.get('SRCSYSTM') or '')).strip().upper()
             
             if (job_rec['FRQCD'] == map_rec['FRQCD'] and
                 job_rec['STFLG'] == map_rec['STFLG'] and
+                job_trgschm == map_trgschm and
+                job_trgtbtyp == map_trgtbtyp and
+                job_trgtbnm == map_trgtbnm and
+                job_srcsystm == map_srcsystm and
                 job_rec.get('BLKPRCROWS', -1) == map_rec.get('BLKPRCROWS', -1) and
                 (job_trgconid == trgconid or (job_trgconid is None and trgconid is None)) and
                 job_chkpntstrtgy == map_chkpntstrtgy and

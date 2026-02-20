@@ -1,6 +1,7 @@
 import os
 import importlib
 import sqlite3
+import re
 from urllib.parse import urlparse, parse_qsl
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
@@ -171,9 +172,9 @@ def create_postgresql_connection():
         psycopg2 = _load_db_driver("POSTGRESQL")
         # Import logger inside the function to avoid circular imports
         try:
-            from backend.modules.logger import info, error, debug
+            from backend.modules.logger import info, error, debug, warning
         except ImportError:
-            from modules.logger import info, error, debug
+            from modules.logger import info, error, debug, warning
         
         # Verify we have required parameters
         if not db_connection_string and not all([db_host, db_name, db_user, db_password]):
@@ -274,13 +275,13 @@ def create_target_connection(connection_id):
         # Fetch connection details from DMS_DBCONDTLS
         if metadata_db_type == "POSTGRESQL":
             cursor.execute("""
-                SELECT connm, dbhost, dbport, dbsrvnm, usrnm, passwd, constr, dbtyp
+                SELECT connm, dbhost, dbport, dbsrvnm, usrnm, schnm, passwd, constr, dbtyp
                 FROM DMS_DBCONDTLS
                 WHERE conid = %s AND curflg = 'Y'
             """, (connection_id,))
         else:  # Oracle
             cursor.execute("""
-                SELECT connm, dbhost, dbport, dbsrvnm, usrnm, passwd, constr, dbtyp
+                SELECT connm, dbhost, dbport, dbsrvnm, usrnm, schnm, passwd, constr, dbtyp
                 FROM DMS_DBCONDTLS
                 WHERE conid = :1 AND curflg = 'Y'
             """, [connection_id])
@@ -291,7 +292,8 @@ def create_target_connection(connection_id):
             metadata_conn.close()
             raise Exception(f"Connection ID {connection_id} not found or inactive")
         
-        connm, dbhost, dbport, dbsrvnm, usrnm, passwd, constr, dbtyp = row
+        connm, dbhost, dbport, dbsrvnm, usrnm, schnm, passwd, constr, dbtyp = row
+        effective_schema = (schnm or usrnm or "").strip()
         
         # Close metadata connection
         cursor.close()
@@ -314,6 +316,12 @@ def create_target_connection(connection_id):
                     password=passwd
                 )
             target_conn.autocommit = True
+            if effective_schema:
+                try:
+                    with target_conn.cursor() as schema_cursor:
+                        schema_cursor.execute("SELECT set_config('search_path', %s, false)", (effective_schema,))
+                except Exception as schema_err:
+                    warning(f"Could not set PostgreSQL search_path to '{effective_schema}' for connection {connection_id}: {schema_err}")
         elif target_db_type in ["MSSQL", "SQL_SERVER"]:
             pyodbc = _load_db_driver("MSSQL")
             if constr and constr.strip():
@@ -382,6 +390,19 @@ def create_target_connection(connection_id):
                     password=passwd,
                     dsn=f"{dbhost}:{dbport}/{dbsrvnm}"
                 )
+            if effective_schema:
+                try:
+                    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", effective_schema):
+                        schema_cursor = target_conn.cursor()
+                        schema_cursor.execute(f"ALTER SESSION SET CURRENT_SCHEMA = {effective_schema.upper()}")
+                        schema_cursor.close()
+                    else:
+                        warning(
+                            f"Skipped ALTER SESSION for connection {connection_id}: "
+                            f"invalid schema name '{effective_schema}'"
+                        )
+                except Exception as schema_err:
+                    warning(f"Could not set Oracle CURRENT_SCHEMA to '{effective_schema}' for connection {connection_id}: {schema_err}")
         
         debug(f"Target connection '{connm}' (ID: {connection_id}, Type: {target_db_type}) established successfully")
         return target_conn

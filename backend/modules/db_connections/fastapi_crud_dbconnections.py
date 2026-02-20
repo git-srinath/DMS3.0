@@ -71,6 +71,7 @@ class DbConnectionBase(BaseModel):
     dbport: Optional[str | int] = None
     dbsrvnm: Optional[str] = None
     usrnm: Optional[str] = None
+    schnm: Optional[str] = None
     passwd: Optional[str] = None
     constr: Optional[str] = None
     dbdescr: Optional[str] = None
@@ -116,6 +117,7 @@ class TestConnectionRequest(BaseModel):
     dbport: Optional[str | int] = None
     dbsrvnm: Optional[str] = None
     usrnm: Optional[str] = None
+    schnm: Optional[str] = None
     passwd: Optional[str] = None
     constr: Optional[str] = None
 
@@ -127,7 +129,7 @@ async def get_all_db_connections():
         conn = create_metadata_connection()
         cursor = conn.cursor()
         cursor.execute(
-            f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, constr, "
+            f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, schnm, constr, "
             f"dbdescr, sslfg, curflg FROM {TABLE_NAME} WHERE curflg = 'Y'"
         )
         columns = [desc[0].lower() for desc in cursor.description]
@@ -160,14 +162,14 @@ async def get_db_connection(conid: int):
 
         if db_type == "POSTGRESQL":
             cursor.execute(
-                f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, constr, "
+                f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, schnm, constr, "
                 f"dbdescr, sslfg, curflg FROM {TABLE_NAME} "
                 "WHERE conid = %s AND curflg = 'Y'",
                 (conid,),
             )
         else:
             cursor.execute(
-                f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, constr, "
+                f"SELECT conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, schnm, constr, "
                 f"dbdescr, sslfg, curflg FROM {TABLE_NAME} "
                 "WHERE conid = :conid AND curflg = 'Y'",
                 {"conid": conid},
@@ -216,14 +218,23 @@ async def create_db_connection(payload: DbConnectionCreate):
         (conid,) = cursor.fetchone()
 
         data = payload.dict()
+        schema_name = (data.get("schnm") or "").strip()
+        if not schema_name:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "message": "Missing required fields: schnm",
+                },
+            )
 
         if db_type == "POSTGRESQL":
             cursor.execute(
                 f"""
                 INSERT INTO {TABLE_NAME} 
-                (conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, passwd, constr, 
+                (conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, schnm, passwd, constr, 
                  dbdescr, sslfg, reccrdt, recupdt, curflg, crtdby) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'Y', %s)
             """,
                 (
@@ -234,6 +245,7 @@ async def create_db_connection(payload: DbConnectionCreate):
                     data.get("dbport"),
                     data.get("dbsrvnm"),
                     data.get("usrnm"),
+                    schema_name,
                     data.get("passwd"),
                     data.get("constr"),
                     data.get("dbdescr"),
@@ -245,10 +257,10 @@ async def create_db_connection(payload: DbConnectionCreate):
             cursor.execute(
                 f"""
                 INSERT INTO {TABLE_NAME} 
-                (conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, passwd, constr, 
+                (conid, connm, dbtyp, dbhost, dbport, dbsrvnm, usrnm, schnm, passwd, constr, 
                  dbdescr, sslfg, reccrdt, recupdt, curflg, crtdby) 
-                VALUES (:conid, :connm, :dbtyp, :dbhost, :dbport, :dbsrvnm, :usrnm, 
-                        :passwd, :constr, :dbdescr, :sslfg, SYSDATE, SYSDATE, 'Y', :crtdby)
+                VALUES (:conid, :connm, :dbtyp, :dbhost, :dbport, :dbsrvnm, :usrnm,
+                    :schnm, :passwd, :constr, :dbdescr, :sslfg, SYSDATE, SYSDATE, 'Y', :crtdby)
             """,
                 {
                     "conid": conid,
@@ -258,6 +270,7 @@ async def create_db_connection(payload: DbConnectionCreate):
                     "dbport": data.get("dbport"),
                     "dbsrvnm": data.get("dbsrvnm"),
                     "usrnm": data.get("usrnm"),
+                    "schnm": schema_name,
                     "passwd": data.get("passwd"),
                     "constr": data.get("constr"),
                     "dbdescr": data.get("dbdescr"),
@@ -309,6 +322,15 @@ async def update_db_connection(conid: int, payload: DbConnectionUpdate):
         db_type = _detect_db_type(conn)
         cursor = conn.cursor()
         data = payload.dict()
+        schema_name = (data.get("schnm") or "").strip()
+        if not schema_name:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "success": False,
+                    "message": "Missing required fields: schnm",
+                },
+            )
 
         if db_type == "POSTGRESQL":
             cursor.execute(
@@ -320,6 +342,7 @@ async def update_db_connection(conid: int, payload: DbConnectionUpdate):
                     dbport = %s,
                     dbsrvnm = %s,
                     usrnm = %s,
+                    schnm = %s,
                     passwd = %s,
                     constr = %s,
                     dbdescr = %s,
@@ -335,6 +358,7 @@ async def update_db_connection(conid: int, payload: DbConnectionUpdate):
                     data.get("dbport"),
                     data.get("dbsrvnm"),
                     data.get("usrnm"),
+                    schema_name,
                     data.get("passwd"),
                     data.get("constr"),
                     data.get("dbdescr"),
@@ -353,6 +377,7 @@ async def update_db_connection(conid: int, payload: DbConnectionUpdate):
                     dbport = :dbport,
                     dbsrvnm = :dbsrvnm,
                     usrnm = :usrnm,
+                    schnm = :schnm,
                     passwd = :passwd,
                     constr = :constr,
                     dbdescr = :dbdescr,
@@ -369,6 +394,7 @@ async def update_db_connection(conid: int, payload: DbConnectionUpdate):
                     "dbport": data.get("dbport"),
                     "dbsrvnm": data.get("dbsrvnm"),
                     "usrnm": data.get("usrnm"),
+                    "schnm": schema_name,
                     "passwd": data.get("passwd"),
                     "constr": data.get("constr"),
                     "dbdescr": data.get("dbdescr"),
@@ -476,6 +502,10 @@ async def test_db_connection(payload: TestConnectionRequest):
             value = getattr(payload, field, None)
             if value is None or (isinstance(value, str) and not value.strip()):
                 missing_fields.append(field)
+
+        schema_name = (payload.schnm or "").strip()
+        if not schema_name:
+            missing_fields.append("schnm")
 
         if missing_fields:
             raise HTTPException(

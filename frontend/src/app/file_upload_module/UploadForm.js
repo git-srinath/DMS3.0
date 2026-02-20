@@ -400,10 +400,11 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
     // Auto-fill target schema when connection is selected
     if (field === 'trgconid' && value) {
       const selectedConnection = connections.find(conn => conn.conid === value || conn.conid === String(value))
-      if (selectedConnection && selectedConnection.usrnm) {
+      const selectedSchema = selectedConnection?.schnm || selectedConnection?.usrnm
+      if (selectedConnection && selectedSchema) {
         setFormData(prev => ({
           ...prev,
-          trgschm: selectedConnection.usrnm,
+          trgschm: selectedSchema,
         }))
       }
     } else if (field === 'trgconid' && !value) {

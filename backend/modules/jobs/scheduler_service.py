@@ -509,7 +509,13 @@ class SchedulerService:
                     except Exception as e:
                         debug(f"[_sync_schedules] Error getting job {job_id}: {e}")
             else:
-                warning("[_sync_schedules] No jobs are currently scheduled in APScheduler!")
+                if len(desired_jobs) == 0:
+                    debug("[_sync_schedules] No active mapper schedules found in DMS_JOBSCH; scheduler is idle.")
+                else:
+                    warning(
+                        f"[_sync_schedules] Found {len(desired_jobs)} active mapper schedules, "
+                        "but none are currently registered in APScheduler."
+                    )
             
             debug(f"[_sync_schedules] Schedule sync complete. Total scheduled jobs: {len(self._scheduled_job_ids)}")
 

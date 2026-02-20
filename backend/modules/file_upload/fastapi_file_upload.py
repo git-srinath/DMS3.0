@@ -422,7 +422,7 @@ async def get_connections():
         
         if db_type == "POSTGRESQL":
             query = f"""
-                SELECT conid, connm, dbhost, dbsrvnm, usrnm
+                SELECT conid, connm, dbhost, dbsrvnm, schnm, usrnm
                 FROM {table_name}
                 WHERE curflg = 'Y'
                 ORDER BY connm
@@ -430,7 +430,7 @@ async def get_connections():
             cursor.execute(query)
         else:  # Oracle, etc.
             query = f"""
-                SELECT conid, connm, dbhost, dbsrvnm, usrnm
+                SELECT conid, connm, dbhost, dbsrvnm, schnm, usrnm
                 FROM {table_name}
                 WHERE curflg = 'Y'
                 ORDER BY connm
@@ -444,7 +444,8 @@ async def get_connections():
                 "connm": row[1],
                 "dbhost": row[2],
                 "dbsrvnm": row[3],
-                "usrnm": row[4] if len(row) > 4 else None,
+                "schnm": row[4] if len(row) > 4 else None,
+                "usrnm": row[5] if len(row) > 5 else None,
             })
         
         cursor.close()

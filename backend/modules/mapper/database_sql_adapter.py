@@ -145,7 +145,9 @@ class DatabaseSQLAdapter:
         if self.db_type == "ORACLE":
             return f"{sequence_name}.nextval"
         elif self.db_type in ["POSTGRESQL", "POSTGRES", "REDSHIFT"]:
-            return f"nextval('{sequence_name}')"
+            # PostgreSQL/Redshift unquoted identifiers are folded to lowercase.
+            # Normalize sequence name to lowercase to avoid mixed-case lookup failures.
+            return f"nextval('{sequence_name.lower()}')"
         elif self.db_type == "SNOWFLAKE":
             return f"{sequence_name}.nextval"
         elif self.db_type in ["MSSQL", "SQL_SERVER"]:
@@ -221,11 +223,11 @@ class DatabaseSQLAdapter:
             so only the table name is returned (no schema prefix).
         """
         if self.db_type == "POSTGRESQL" or self.db_type == "POSTGRES":
+            # Normalize to lowercase for stable behavior across DDL/DML paths.
+            # Target objects created by this application use lowercase identifiers.
             schema_lower = schema.lower() if schema else 'public'
-            # Check if table is uppercase (was created with quotes)
-            if quote_if_uppercase and table != table.lower():
-                return f'{schema_lower}."{table}"'
-            return f'{schema_lower}.{table.lower()}'
+            table_lower = table.lower() if table else table
+            return f'{schema_lower}.{table_lower}'
         elif self.db_type == "MYSQL":
             # MySQL: database is selected in connection, so only use table name
             # Use backticks for identifier quoting (MySQL standard)
@@ -238,11 +240,10 @@ class DatabaseSQLAdapter:
             # Oracle is case-insensitive (unless quoted)
             return f'{schema}.{table}'
         elif self.db_type in ["REDSHIFT", "HIVE"]:
-            # Similar to PostgreSQL
+            # Keep Redshift/Hive behavior aligned with PostgreSQL path.
             schema_lower = schema.lower() if schema else 'public'
-            if quote_if_uppercase and table != table.lower():
-                return f'{schema_lower}."{table}"'
-            return f'{schema_lower}.{table.lower()}'
+            table_lower = table.lower() if table else table
+            return f'{schema_lower}.{table_lower}'
         else:
             # Default to unquoted
             return f'{schema}.{table}'

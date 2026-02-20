@@ -51,6 +51,24 @@ class PostgresAdapter(BaseDbAdapter):
             raise ValueError("No columns provided for ALTER TABLE")
         return f"ALTER TABLE {table_ref} ADD COLUMN " + ", ADD COLUMN ".join(cols)
 
+        def supports_sequence(self) -> bool:
+            return True
+
+        def ensure_sequence(self, cursor, schema: Optional[str], table: str, use_owner_filter: bool) -> None:
+            schema_name = (schema or "public").lower()
+            seq_name = f"{table}_seq".lower()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM information_schema.sequences
+                WHERE sequence_schema = %s
+                  AND sequence_name = %s
+                """,
+                (schema_name, seq_name),
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(f'CREATE SEQUENCE "{schema_name}"."{seq_name}" START WITH 1 INCREMENT BY 1')
+
     def get_skey_column(self, table_type: str) -> Optional[str]:
         if table_type in ("DIM", "FCT", "MRT"):
             return "SKEY BIGINT PRIMARY KEY"

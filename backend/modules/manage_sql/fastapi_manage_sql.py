@@ -86,6 +86,8 @@ class ConnectionItem(BaseModel):
     connm: str
     dbhost: str
     dbsrvnm: str
+    schnm: Optional[str] = None
+    usrnm: Optional[str] = None
 
 
 @router.get(
@@ -369,7 +371,7 @@ async def get_connections():
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT conid, connm, dbhost, dbsrvnm
+            SELECT conid, connm, dbhost, dbsrvnm, schnm, usrnm
             FROM DMS_DBCONDTLS
             WHERE curflg = 'Y'
             ORDER BY connm
@@ -384,6 +386,8 @@ async def get_connections():
                     connm=row[1],
                     dbhost=row[2],
                     dbsrvnm=row[3],
+                    schnm=row[4] if len(row) > 4 else None,
+                    usrnm=row[5] if len(row) > 5 else None,
                 )
             )
 

@@ -15,6 +15,7 @@ const initialForm = {
   dbport: "",
   dbsrvnm: "",
   usrnm: "",
+  schnm: "",
   passwd: "",
   dbdescr: "",
   sslfg: "N",
@@ -128,7 +129,7 @@ const RegisterDBConnectionsPage = () => {
 
   const handleValidate = async () => {
     // Validate required fields
-    if (!form.connm || !form.dbtyp || !form.dbhost || !form.dbport || !form.dbsrvnm || !form.usrnm || !form.passwd) {
+    if (!form.connm || !form.dbtyp || !form.dbhost || !form.dbport || !form.dbsrvnm || !form.usrnm || !form.schnm || !form.passwd) {
       showSnackbar("Please fill in all required fields before testing connection", "warning");
       return;
     }
@@ -245,6 +246,7 @@ const RegisterDBConnectionsPage = () => {
                       <TableCell>Port</TableCell>
                       <TableCell>Service/DB Name</TableCell>
                       <TableCell>User</TableCell>
+                      <TableCell>Schema</TableCell>
                       <TableCell>SSL</TableCell>
                       <TableCell>Description</TableCell>
                       <TableCell align="right">Actions</TableCell>
@@ -253,7 +255,7 @@ const RegisterDBConnectionsPage = () => {
                   <TableBody>
                     {connections.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
+                        <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
                           <Typography variant="body2" color="text.secondary">
                             {loading ? "Loading..." : "No database connections found. Click 'Add Connection' to create one."}
                           </Typography>
@@ -268,6 +270,7 @@ const RegisterDBConnectionsPage = () => {
                           <TableCell>{conn.dbport}</TableCell>
                           <TableCell>{conn.dbsrvnm}</TableCell>
                           <TableCell>{conn.usrnm}</TableCell>
+                          <TableCell>{conn.schnm}</TableCell>
                           <TableCell>{conn.sslfg === "Y" ? "Yes" : "No"}</TableCell>
                           <TableCell>{conn.dbdescr}</TableCell>
                           <TableCell align="right">
@@ -321,6 +324,7 @@ const RegisterDBConnectionsPage = () => {
                 <Grid item xs={12} sm={6}><TextField label="Port" name="dbport" value={form.dbport} type="number" onChange={handleInputChange} fullWidth /></Grid>
                 <Grid item xs={12} sm={6}><TextField label="Service / Database Name" name="dbsrvnm" value={form.dbsrvnm} onChange={handleInputChange} fullWidth /></Grid>
                 <Grid item xs={12} sm={6}><TextField label="Username" name="usrnm" value={form.usrnm} onChange={handleInputChange} fullWidth required /></Grid>
+                <Grid item xs={12} sm={6}><TextField label="Schema" name="schnm" value={form.schnm || ""} onChange={handleInputChange} fullWidth required helperText="Mandatory for all connections; use Username value when not separately applicable." /></Grid>
                 <Grid item xs={12} sm={6}><TextField label="Password" name="passwd" value={form.passwd} onChange={handleInputChange} type="password" fullWidth required /></Grid>
                 <Grid item xs={12} sm={6}><TextField label="SSL (Y/N)" name="sslfg" value={form.sslfg} onChange={handleInputChange} fullWidth /></Grid>
                 <Grid item xs={12}><TextField label="Description" name="dbdescr" value={form.dbdescr} onChange={handleInputChange} multiline minRows={2} fullWidth /></Grid>
@@ -341,7 +345,7 @@ const RegisterDBConnectionsPage = () => {
             <Button onClick={handleDialogClose}>Cancel</Button>
             <Button 
               onClick={handleValidate} 
-              disabled={testingConnection || !form.connm || !form.dbtyp || !form.dbhost || !form.dbport || !form.dbsrvnm || !form.usrnm || !form.passwd} 
+              disabled={testingConnection || !form.connm || !form.dbtyp || !form.dbhost || !form.dbport || !form.dbsrvnm || !form.usrnm || !form.schnm || !form.passwd} 
               variant="outlined" 
               color="primary" 
               sx={{ mr: 1 }}

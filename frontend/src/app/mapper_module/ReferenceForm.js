@@ -276,8 +276,9 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
         (conn) => conn && String(conn.conid) === String(targetConnectionId)
       )
       
-      if (selectedConnection && selectedConnection.usrnm) {
-        const schemaValue = String(selectedConnection.usrnm).toUpperCase().trim()
+      const selectedSchema = selectedConnection?.schnm || selectedConnection?.usrnm
+      if (selectedConnection && selectedSchema) {
+        const schemaValue = String(selectedSchema).toUpperCase().trim()
         if (schemaValue) {
           setFormData((prev) => {
             // Only update if targetSchema is still empty to avoid infinite loops
@@ -680,13 +681,15 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
         (conn) => String(conn.conid) === String(value)
       )
       
-      // If a connection is selected and it has a username, use it as targetSchema
-      // For Oracle, username is typically the schema. For PostgreSQL, it's often the same.
-      if (selectedConnection && selectedConnection.usrnm) {
+      // If a connection is selected and it has a schema name, use it as targetSchema
+      // Backward compatible fallback uses usrnm if schnm is missing.
+      const selectedSchema = selectedConnection?.schnm || selectedConnection?.usrnm
+      if (selectedConnection && selectedSchema) {
+        const schemaUpper = String(selectedSchema).toUpperCase()
         setFormData((prev) => ({
           ...prev,
           [field]: value,
-          targetSchema: selectedConnection.usrnm.toUpperCase(), // Use uppercase for consistency
+          targetSchema: schemaUpper,
         }))
         
         // Track modifications for both fields
@@ -694,7 +697,7 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
           setModifiedFields((prev) => ({
             ...prev,
             [field]: originalFormData[field] !== value,
-            targetSchema: originalFormData.targetSchema !== selectedConnection.usrnm.toUpperCase(),
+            targetSchema: originalFormData.targetSchema !== schemaUpper,
           }))
         }
       } else {
@@ -1154,8 +1157,9 @@ const ReferenceForm = memo(({ handleReturnToReferenceTable, reference, onLockFai
         const selectedConnection = connections.find(
           (conn) => String(conn.conid) === String(formData.targetConnectionId)
         )
-        if (selectedConnection && selectedConnection.usrnm) {
-          finalTargetSchema = selectedConnection.usrnm.toUpperCase()
+        const selectedSchema = selectedConnection?.schnm || selectedConnection?.usrnm
+        if (selectedConnection && selectedSchema) {
+          finalTargetSchema = String(selectedSchema).toUpperCase()
         }
       }
 

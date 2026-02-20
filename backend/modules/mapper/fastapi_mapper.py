@@ -185,7 +185,7 @@ async def get_connections() -> List[Dict[str, Any]]:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT conid, connm, dbhost, dbsrvnm, usrnm
+                SELECT conid, connm, dbhost, dbsrvnm, schnm, usrnm
                 FROM DMS_DBCONDTLS
                 WHERE curflg = 'Y'
                 ORDER BY connm
@@ -200,7 +200,8 @@ async def get_connections() -> List[Dict[str, Any]]:
                         "connm": row[1],
                         "dbhost": row[2],
                         "dbsrvnm": row[3],
-                        "usrnm": row[4] if len(row) > 4 else None,
+                        "schnm": row[4] if len(row) > 4 else None,
+                        "usrnm": row[5] if len(row) > 5 else None,
                     }
                 )
 
@@ -404,7 +405,7 @@ async def save_to_db(payload: SaveToDbRequest):
             # Get targetSchema with fallback - auto-populate from connection if missing
             target_schema = form_data.get("targetSchema", "").strip() if form_data.get("targetSchema") else ""
             
-            # If targetSchema is empty but targetConnectionId is provided, fetch username from connection
+            # If targetSchema is empty but targetConnectionId is provided, fetch schema from connection
             if not target_schema and target_connection_id:
                 try:
                     cursor = conn.cursor()
@@ -414,10 +415,10 @@ async def save_to_db(payload: SaveToDbRequest):
                     table_name = "DMS_DBCONDTLS"
                     
                     if db_type == "POSTGRESQL":
-                        query = f'SELECT usrnm FROM "{table_name}" WHERE conid = %s AND curflg = %s'
+                        query = f'SELECT COALESCE(schnm, usrnm) FROM "{table_name}" WHERE conid = %s AND curflg = %s'
                         cursor.execute(query, (target_connection_id, 'Y'))
                     else:  # Oracle
-                        query = f"SELECT usrnm FROM {table_name} WHERE conid = :conid AND curflg = 'Y'"
+                        query = f"SELECT COALESCE(schnm, usrnm) FROM {table_name} WHERE conid = :conid AND curflg = 'Y'"
                         cursor.execute(query, {"conid": target_connection_id})
                     
                     result = cursor.fetchone()
@@ -426,7 +427,7 @@ async def save_to_db(payload: SaveToDbRequest):
                     if result and result[0]:
                         target_schema = str(result[0]).strip().upper()
                 except Exception as e:
-                    warning(f"Could not fetch username from connection {target_connection_id}: {str(e)}")
+                    warning(f"Could not fetch schema from connection {target_connection_id}: {str(e)}")
                     # Continue with empty target_schema - validation will handle it
             
             mapid = create_update_mapping(

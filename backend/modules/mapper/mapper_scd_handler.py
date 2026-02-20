@@ -5,16 +5,184 @@ No job-specific code - all job data passed as parameters.
 """
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
+import os
 
 # Support both FastAPI (package import) and legacy Flask (relative import) contexts
 try:
-    from backend.modules.mapper.database_sql_adapter import create_adapter_from_type
+    from backend.modules.mapper.database_sql_adapter import create_adapter_from_type, detect_database_type
     from backend.modules.mapper.mapper_transformation_utils import generate_hash
+    from backend.modules.common.id_provider import next_id as get_next_id
     from backend.modules.logger import warning, error, debug
 except ImportError:  # When running Flask app.py directly inside backend
-    from modules.mapper.database_sql_adapter import create_adapter_from_type  # type: ignore
+    from modules.mapper.database_sql_adapter import create_adapter_from_type, detect_database_type  # type: ignore
     from modules.mapper.mapper_transformation_utils import generate_hash  # type: ignore
+    from modules.common.id_provider import next_id as get_next_id  # type: ignore
     from modules.logger import warning, error, debug  # type: ignore
+
+
+def _log_row_error_to_joberr(
+    metadata_conn,
+    mapref: Optional[str],
+    jobid: Optional[int],
+    session_params: Optional[Dict[str, Any]],
+    errtyp: str,
+    errmsg: str,
+    dberrmsg: str,
+    keyvalue: Optional[str],
+) -> None:
+    """Best-effort row-level error logging to DMS_JOBERR."""
+    if metadata_conn is None:
+        return
+
+    cursor = None
+    try:
+        db_type = detect_database_type(metadata_conn)
+        cursor = metadata_conn.cursor()
+
+        schema = (os.getenv("DMS_SCHEMA", "") or "").strip()
+        schema_prefix_pg = f"{schema.lower()}." if schema else ""
+        schema_prefix_oracle = f"{schema}." if schema else ""
+
+        sessionid = None
+        prcid = None
+        if session_params:
+            sessionid = session_params.get("sessionid")
+            prcid = session_params.get("prcid")
+
+        # Prefer batch-scoped JOBLOGID supplied by caller when available.
+        joblogid = None
+        if session_params and session_params.get("joblogid") is not None:
+            try:
+                joblogid = int(session_params.get("joblogid"))
+            except Exception:
+                joblogid = None
+
+        # Resolve JOBLOGID (mandatory in some deployments) using current session/process context.
+        if joblogid is None:
+            try:
+                if db_type == "POSTGRESQL":
+                    cursor.execute(
+                        f"""
+                        SELECT joblogid
+                        FROM {schema_prefix_pg}DMS_JOBLOG
+                        WHERE (%s IS NULL OR sessionid = %s)
+                          AND (%s IS NULL OR prcid = %s)
+                          AND (%s IS NULL OR jobid = %s)
+                        ORDER BY prcdt DESC NULLS LAST, joblogid DESC
+                        LIMIT 1
+                        """,
+                        (
+                            sessionid, sessionid,
+                            prcid, prcid,
+                            jobid, jobid,
+                        ),
+                    )
+                else:
+                    cursor.execute(
+                        f"""
+                        SELECT joblogid
+                        FROM {schema_prefix_oracle}DMS_JOBLOG
+                        WHERE (:sessionid IS NULL OR sessionid = :sessionid)
+                          AND (:prcid IS NULL OR prcid = :prcid)
+                          AND (:jobid IS NULL OR jobid = :jobid)
+                        ORDER BY prcdt DESC, joblogid DESC
+                        FETCH FIRST 1 ROW ONLY
+                        """,
+                        {
+                            "sessionid": sessionid,
+                            "prcid": prcid,
+                            "jobid": jobid,
+                        },
+                    )
+                joblog_row = cursor.fetchone()
+                if joblog_row and joblog_row[0] is not None:
+                    joblogid = int(joblog_row[0])
+            except Exception as joblog_lookup_err:
+                warning(f"Could not resolve JOBLOGID for DMS_JOBERR write: {joblog_lookup_err}")
+
+        if joblogid is None:
+            warning(
+                "Skipping DMS_JOBERR row insert because JOBLOGID could not be resolved "
+                f"(mapref={mapref}, jobid={jobid}, sessionid={sessionid}, prcid={prcid})"
+            )
+            return
+
+        # Try to generate ERRID from ID provider; allow NULL if not available.
+        errid = None
+        try:
+            seq_name = f"{schema}.DMS_JOBERRSEQ" if schema else "DMS_JOBERRSEQ"
+            errid = int(get_next_id(cursor, seq_name))
+        except Exception:
+            pass
+
+        def _insert_with_lengths(errtyp_len: int, errmsg_len: int, dberrmsg_len: int, keyvalue_len: int, mapref_len: int):
+            errtyp_trim = (errtyp or "TGT_LOAD")[:errtyp_len]
+            errmsg_trim = (errmsg or "")[:errmsg_len]
+            dberrmsg_trim = (dberrmsg or "")[:dberrmsg_len]
+            keyvalue_trim = (keyvalue or "")[:keyvalue_len] if keyvalue is not None else None
+            mapref_trim = (mapref or "")[:mapref_len] if mapref is not None else None
+
+            if db_type == "POSTGRESQL":
+                cursor.execute(
+                    f"""
+                    INSERT INTO {schema_prefix_pg}DMS_JOBERR
+                    (JOBLOGID, ERRID, PRCDT, ERRTYP, DBERRMSG, ERRMSG, KEYVALUE, JOBID, SESSIONID, PRCID, MAPREF)
+                    VALUES (%s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        joblogid,
+                        errid,
+                        errtyp_trim,
+                        dberrmsg_trim,
+                        errmsg_trim,
+                        keyvalue_trim,
+                        jobid,
+                        sessionid,
+                        prcid,
+                        mapref_trim,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    INSERT INTO {schema_prefix_oracle}DMS_JOBERR
+                    (JOBLOGID, ERRID, PRCDT, ERRTYP, DBERRMSG, ERRMSG, KEYVALUE, JOBID, SESSIONID, PRCID, MAPREF)
+                    VALUES (:joblogid, :errid, SYSTIMESTAMP, :errtyp, :dberrmsg, :errmsg, :keyvalue, :jobid, :sessionid, :prcid, :mapref)
+                    """,
+                    {
+                        "joblogid": joblogid,
+                        "errid": errid,
+                        "errtyp": errtyp_trim,
+                        "dberrmsg": dberrmsg_trim,
+                        "errmsg": errmsg_trim,
+                        "keyvalue": keyvalue_trim,
+                        "jobid": jobid,
+                        "sessionid": sessionid,
+                        "prcid": prcid,
+                        "mapref": mapref_trim,
+                    },
+                )
+
+        try:
+            # Primary attempt with practical but bounded lengths.
+            _insert_with_lengths(errtyp_len=10, errmsg_len=1000, dberrmsg_len=4000, keyvalue_len=1000, mapref_len=100)
+        except Exception as first_err:
+            first_err_text = str(first_err).lower()
+            if ("value too long" in first_err_text) or ("ora-12899" in first_err_text):
+                # Retry with conservative lengths for stricter schemas.
+                _insert_with_lengths(errtyp_len=10, errmsg_len=255, dberrmsg_len=1000, keyvalue_len=255, mapref_len=30)
+            else:
+                raise
+
+        metadata_conn.commit()
+    except Exception as log_err:
+        warning(f"Could not write row error to DMS_JOBERR: {log_err}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
 
 
 def process_scd_batch(
@@ -28,7 +196,11 @@ def process_scd_batch(
     all_columns: List[str],
     scd_type: int,
     target_type: str,
-    db_type: str = "ORACLE"
+    db_type: str = "ORACLE",
+    metadata_conn=None,
+    mapref: Optional[str] = None,
+    jobid: Optional[int] = None,
+    session_params: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, int, int]:
     """
     Process SCD batch operations (insert, update SCD Type 1, expire SCD Type 2).
@@ -68,14 +240,29 @@ def process_scd_batch(
         # Process SCD Type 1 updates
         if rows_to_update_scd1:
             updated_count = _update_scd1_records(
-                cursor, formatted_table_name, rows_to_update_scd1, all_columns, db_type
+                cursor,
+                formatted_table_name,
+                rows_to_update_scd1,
+                all_columns,
+                db_type,
+                metadata_conn=metadata_conn,
+                mapref=mapref,
+                jobid=jobid,
+                session_params=session_params,
             )
         
         # Process inserts
         if rows_to_insert:
             inserted_count = _insert_records(
                 cursor, formatted_table_name, rows_to_insert, all_columns, 
-                target_type, db_type, target_schema, target_table
+                target_type,
+                db_type,
+                target_schema,
+                target_table,
+                metadata_conn=metadata_conn,
+                mapref=mapref,
+                jobid=jobid,
+                session_params=session_params,
             )
         
         cursor.close()
@@ -136,7 +323,11 @@ def _update_scd1_records(
     full_table_name: str,
     rows_to_update: List[Dict[str, Any]],
     all_columns: List[str],
-    db_type: str
+    db_type: str,
+    metadata_conn=None,
+    mapref: Optional[str] = None,
+    jobid: Optional[int] = None,
+    session_params: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Update SCD Type 1 records."""
     if not rows_to_update:
@@ -179,11 +370,49 @@ def _update_scd1_records(
                 WHERE {where_clause}
             """
         
-        cursor.executemany(query, params)
-        
-        updated_count = cursor.rowcount if cursor.rowcount is not None else len(rows_to_update)
-        debug(f"Updated {updated_count} SCD Type 1 records")
-        return updated_count
+        try:
+            cursor.executemany(query, params)
+            updated_count = cursor.rowcount if cursor.rowcount is not None else len(rows_to_update)
+            debug(f"Updated {updated_count} SCD Type 1 records")
+            return updated_count
+        except Exception as batch_err:
+            err_text = str(batch_err)
+            if "ORA-01438" not in err_text:
+                raise
+
+            warning(
+                "SCD Type 1 bulk update hit ORA-01438; retrying row-by-row and skipping invalid rows"
+            )
+            updated_count = 0
+            skipped_rows = 0
+            for index, param_row in enumerate(params):
+                try:
+                    cursor.execute(query, param_row)
+                    updated_count += 1
+                except Exception as row_err:
+                    if "ORA-01438" in str(row_err):
+                        skipped_rows += 1
+                        _log_row_error_to_joberr(
+                            metadata_conn,
+                            mapref,
+                            jobid,
+                            session_params,
+                            errtyp="TARGET_LOAD",
+                            errmsg="SCD Type 1 row skipped due to precision overflow",
+                            dberrmsg=str(row_err),
+                            keyvalue=str(param_row),
+                        )
+                        if skipped_rows <= 5:
+                            warning(
+                                f"Skipped SCD1 update row {index + 1} due to ORA-01438: {row_err}"
+                            )
+                        continue
+                    raise
+
+            warning(
+                f"SCD Type 1 row-wise fallback completed: updated={updated_count}, skipped={skipped_rows}"
+            )
+            return updated_count
     except Exception as e:
         error(f"Error updating SCD Type 1 records: {e}")
         return 0
@@ -197,7 +426,11 @@ def _insert_records(
     target_type: str,
     db_type: str,
     target_schema: str = None,
-    target_table: str = None
+    target_table: str = None,
+    metadata_conn=None,
+    mapref: Optional[str] = None,
+    jobid: Optional[int] = None,
+    session_params: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Insert new records."""
     if not rows_to_insert:
@@ -206,6 +439,24 @@ def _insert_records(
     try:
         adapter = create_adapter_from_type(db_type)
         timestamp = adapter.get_current_timestamp()
+
+        # Ensure sequence exists for PostgreSQL/Redshift targets.
+        # This protects existing tables created before sequence support was added.
+        db_type_upper = (db_type or "").upper()
+        if db_type_upper in {"POSTGRESQL", "POSTGRES", "REDSHIFT"} and target_schema and target_table:
+            schema_name = str(target_schema).lower()
+            seq_name = f"{target_table}_seq".lower()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM information_schema.sequences
+                WHERE sequence_schema = %s
+                  AND sequence_name = %s
+                """,
+                (schema_name, seq_name),
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(f'CREATE SEQUENCE "{schema_name}"."{seq_name}" START WITH 1 INCREMENT BY 1')
         
         # Exclude SKEY, RECCRDT, RECUPDT from insert (handled separately)
         insert_cols = [col for col in all_columns 
@@ -244,11 +495,49 @@ def _insert_records(
                 VALUES ({seq_nextval}, {vals_str}, {timestamp}, {timestamp})
             """
         
-        cursor.executemany(query, params)
-        
-        inserted_count = cursor.rowcount if cursor.rowcount is not None else len(rows_to_insert)
-        debug(f"Inserted {inserted_count} records")
-        return inserted_count
+        try:
+            cursor.executemany(query, params)
+            inserted_count = cursor.rowcount if cursor.rowcount is not None else len(rows_to_insert)
+            debug(f"Inserted {inserted_count} records")
+            return inserted_count
+        except Exception as batch_err:
+            err_text = str(batch_err)
+            if "ORA-01438" not in err_text:
+                raise
+
+            warning(
+                "Bulk insert hit ORA-01438; retrying row-by-row and skipping invalid rows"
+            )
+            inserted_count = 0
+            skipped_rows = 0
+            for index, param_row in enumerate(params):
+                try:
+                    cursor.execute(query, param_row)
+                    inserted_count += 1
+                except Exception as row_err:
+                    if "ORA-01438" in str(row_err):
+                        skipped_rows += 1
+                        _log_row_error_to_joberr(
+                            metadata_conn,
+                            mapref,
+                            jobid,
+                            session_params,
+                            errtyp="TARGET_LOAD",
+                            errmsg="Insert row skipped due to precision overflow",
+                            dberrmsg=str(row_err),
+                            keyvalue=str(param_row),
+                        )
+                        if skipped_rows <= 5:
+                            warning(
+                                f"Skipped insert row {index + 1} due to ORA-01438: {row_err}"
+                            )
+                        continue
+                    raise
+
+            warning(
+                f"Row-wise insert fallback completed: inserted={inserted_count}, skipped={skipped_rows}"
+            )
+            return inserted_count
     except Exception as e:
         error(f"Error inserting records: {e}")
         return 0

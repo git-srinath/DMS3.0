@@ -215,6 +215,22 @@ def execute_mapper_job(
             checkpoint_config.get('strategy', 'AUTO'),
             checkpoint_config.get('columns', [])
         )
+
+        # Create one run-level JOBLOG row early so row-level DMS_JOBERR writes have a stable JOBLOGID.
+        run_session_params = dict(session_params)
+        run_joblogid = log_batch_progress(
+            metadata_conn,
+            mapref,
+            jobid,
+            0,
+            0,
+            0,
+            0,
+            session_params,
+        )
+        if run_joblogid is not None:
+            run_session_params['joblogid'] = run_joblogid
+            metadata_conn.commit()
         
         # Apply checkpoint to query
         source_query, query_bind_params = apply_checkpoint_to_query(
@@ -299,7 +315,7 @@ def execute_mapper_job(
             return _execute_mapper_job_parallel(
                 metadata_conn, source_conn, target_conn,
                 job_config, source_query, query_bind_params, transformation_func,
-                checkpoint_config, session_params,
+                checkpoint_config, run_session_params,
                 source_columns, source_db_type, target_db_type,
                 parallel_config, estimated_rows
             )
@@ -439,7 +455,11 @@ def execute_mapper_job(
                     all_columns,
                     scd_type,
                     target_type,
-                    target_db_type
+                    target_db_type,
+                    metadata_conn=metadata_conn,
+                    mapref=mapref,
+                    jobid=jobid,
+                    session_params=run_session_params,
                 )
                 
                 target_count += inserted + updated
@@ -458,16 +478,33 @@ def execute_mapper_job(
             update_process_log_progress(metadata_conn, session_params, source_count, target_count)
             
             batch_error_rows = error_count - batch_error_start
-            log_batch_progress(
-                metadata_conn,
-                mapref,
-                jobid,
-                batch_num,
-                batch_size,
-                batch_target_rows,
-                batch_error_rows,
-                session_params
-            )
+
+            # Update the single run-level JOBLOG row (or create once lazily if initial create failed).
+            if run_joblogid is None:
+                run_joblogid = log_batch_progress(
+                    metadata_conn,
+                    mapref,
+                    jobid,
+                    batch_num,
+                    source_count,
+                    target_count,
+                    error_count,
+                    session_params,
+                )
+                if run_joblogid is not None:
+                    run_session_params['joblogid'] = run_joblogid
+            else:
+                log_batch_progress(
+                    metadata_conn,
+                    mapref,
+                    jobid,
+                    batch_num,
+                    source_count,
+                    target_count,
+                    error_count,
+                    session_params,
+                    joblogid=run_joblogid,
+                )
             metadata_conn.commit()
             
             # Update checkpoint (KEY strategy)
@@ -717,6 +754,8 @@ def _execute_mapper_job_parallel(
                         target_db_type=target_db_type,
                         metadata_conn=metadata_conn,
                         mapref=mapref,
+                        jobid=jobid,
+                        session_params=session_params,
                         checkpoint_columns=checkpoint_config.get('columns', []) if checkpoint_config.get('enabled') and checkpoint_config.get('strategy') == 'KEY' else None,
                         retry_handler=retry_handler,
                         source_conn_id=source_conn_id,
@@ -946,6 +985,8 @@ def _process_mapper_chunk(
     target_db_type: str,
     metadata_conn,
     mapref: str,
+    jobid: Optional[int] = None,
+    session_params: Optional[Dict[str, Any]] = None,
     checkpoint_columns: Optional[List[str]] = None,
     retry_handler = None,
     source_conn_id: Optional[int] = None,
@@ -1117,7 +1158,11 @@ def _process_mapper_chunk(
                 all_columns,
                 scd_type,
                 target_type,
-                target_db_type
+                target_db_type,
+                metadata_conn=metadata_conn,
+                mapref=mapref,
+                jobid=jobid,
+                session_params=session_params,
             )
         
         try:

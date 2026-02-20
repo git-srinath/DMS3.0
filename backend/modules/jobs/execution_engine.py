@@ -149,14 +149,19 @@ class JobExecutionEngine:
             source_db_type = _detect_db_type(source_conn)
             target_db_type = _detect_db_type(target_conn)
 
-            if source_db_type != "ORACLE":
+            try:
+                get_db_adapter(source_db_type)
+            except Exception as e:
                 raise SchedulerRepositoryError(
-                    f"Invalid source DB type for {mapref}: expected ORACLE, got {source_db_type}."
-                )
-            if target_db_type != "MYSQL":
+                    f"Unsupported source DB type for {mapref}: {source_db_type}. Adapter not found."
+                ) from e
+
+            try:
+                get_db_adapter(target_db_type)
+            except Exception as e:
                 raise SchedulerRepositoryError(
-                    f"Invalid target DB type for {mapref}: expected MYSQL, got {target_db_type}."
-                )
+                    f"Unsupported target DB type for {mapref}: {target_db_type}. Adapter not found."
+                ) from e
 
             info(f"Using source connection (ID: {sqlconid}, type: {source_db_type}) for SELECT queries")
             info(f"Using target connection (ID: {trgconid}, type: {target_db_type}) for DML/DDL operations")

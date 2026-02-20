@@ -30,28 +30,60 @@ def check_stop_request(
     Returns:
         True if stop request exists, False otherwise
     """
+    cursor = None
     try:
         cursor = metadata_conn.cursor()
         adapter = create_adapter(metadata_conn)
-        
-        # Build query with database-agnostic parameter placeholder
+
+        # First attempt: adapter-detected parameter style
         placeholder = adapter.get_parameter_placeholder('mapref')
         params = adapter.format_parameters({'mapref': mapref}, use_named=True)
-        
-        cursor.execute(f"""
+        query_template = """
             SELECT COUNT(*) 
             FROM DMS_PRCREQ 
-            WHERE mapref = {placeholder} 
+            WHERE mapref = {placeholder}
               AND request_type = 'STOP' 
               AND status IN ('NEW', 'CLAIMED')
-        """, params)
-        
+        """
+
+        try:
+            cursor.execute(query_template.format(placeholder=placeholder), params)
+        except Exception as primary_err:
+            # Fallback for intermittent DB-type mis-detection (e.g., ':' on PostgreSQL)
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            cursor = metadata_conn.cursor()
+
+            if placeholder == "%s":
+                fallback_placeholder = ":mapref"
+                fallback_params = {'mapref': mapref}
+            else:
+                fallback_placeholder = "%s"
+                fallback_params = (mapref,)
+
+            debug(
+                f"Stop request check retry for {mapref}: primary placeholder '{placeholder}' failed "
+                f"({primary_err}); retrying with '{fallback_placeholder}'"
+            )
+            cursor.execute(
+                query_template.format(placeholder=fallback_placeholder),
+                fallback_params
+            )
+
         stop_count = cursor.fetchone()[0]
-        cursor.close()
         return stop_count > 0
     except Exception as e:
         warning(f"Could not check stop request for {mapref}: {e}")
         return False
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
 
 
 def log_batch_progress(
@@ -62,11 +94,12 @@ def log_batch_progress(
     batch_source_rows: int,
     batch_target_rows: int,
     batch_error_rows: int,
-    session_params: Dict[str, Any]
-) -> None:
+    session_params: Dict[str, Any],
+    joblogid: Optional[int] = None,
+) -> Optional[int]:
     """
-    Insert batch-level statistics into DMS_JOBLOG so the UI can display accurate
-    progress information. Each call records a single batch.
+    Insert or update batch-level statistics in DMS_JOBLOG so the UI can display
+    accurate progress information.
     
     Args:
         metadata_conn: Metadata database connection
@@ -77,6 +110,10 @@ def log_batch_progress(
         batch_target_rows: Number of target rows inserted/updated in this batch
         batch_error_rows: Number of error rows in this batch
         session_params: Session parameters from DMS_PRCLOG (must contain 'prcid' and 'sessionid')
+        joblogid: Existing DMS_JOBLOG.JOBLOGID to update. If None, a new row is inserted.
+
+    Returns:
+        The joblogid used, or None if logging fails.
     """
     try:
         cursor = metadata_conn.cursor()
@@ -85,62 +122,90 @@ def log_batch_progress(
         prcid = session_params.get('prcid')
         sessionid = session_params.get('sessionid')
         
-        joblog_id = get_next_id(cursor, "DMS_JOBLOGSEQ")
+        joblog_id = int(joblogid) if joblogid is not None else int(get_next_id(cursor, "DMS_JOBLOGSEQ"))
         
         # Get database-specific syntax
         timestamp = adapter.get_current_timestamp()
-        placeholder = adapter.get_parameter_placeholder('joblogid')
-        
-        # Build parameters dictionary
-        params_dict = {
-            'joblogid': joblog_id,
-            'mapref': mapref,
-            'jobid': jobid,
-            'srcrows': batch_source_rows,
-            'trgrows': batch_target_rows,
-            'errrows': batch_error_rows,
-            'prcid': prcid,
-            'sessionid': sessionid
-        }
-        
-        # Format parameters for database
-        params = adapter.format_parameters(params_dict, use_named=True)
         
         # Build query with database-agnostic syntax
         if adapter.supports_named_parameters():
-            # Use named parameters
-            query = f"""
-                INSERT INTO DMS_JOBLOG (
-                    joblogid, prcdt, mapref, jobid,
-                    srcrows, trgrows, errrows,
-                    reccrdt, prcid, sessionid
-                ) VALUES (
-                    :joblogid, {timestamp}, :mapref, :jobid,
-                    :srcrows, :trgrows, :errrows,
-                    {timestamp}, :prcid, :sessionid
-                )
-            """
+            if joblogid is None:
+                query = f"""
+                    INSERT INTO DMS_JOBLOG (
+                        joblogid, prcdt, mapref, jobid,
+                        srcrows, trgrows, errrows,
+                        reccrdt, prcid, sessionid
+                    ) VALUES (
+                        :joblogid, {timestamp}, :mapref, :jobid,
+                        :srcrows, :trgrows, :errrows,
+                        {timestamp}, :prcid, :sessionid
+                    )
+                """
+            else:
+                query = f"""
+                    UPDATE DMS_JOBLOG
+                    SET srcrows = :srcrows,
+                        trgrows = :trgrows,
+                        errrows = :errrows
+                    WHERE joblogid = :joblogid
+                """
         else:
-            # Use positional parameters - need correct number of placeholders
             ph = adapter.get_parameter_placeholder()
-            query = f"""
-                INSERT INTO DMS_JOBLOG (
-                    joblogid, prcdt, mapref, jobid,
-                    srcrows, trgrows, errrows,
-                    reccrdt, prcid, sessionid
-                ) VALUES (
-                    {ph}, {timestamp}, {ph}, {ph},
-                    {ph}, {ph}, {ph},
-                    {timestamp}, {ph}, {ph}
-                )
-            """
+            if joblogid is None:
+                query = f"""
+                    INSERT INTO DMS_JOBLOG (
+                        joblogid, prcdt, mapref, jobid,
+                        srcrows, trgrows, errrows,
+                        reccrdt, prcid, sessionid
+                    ) VALUES (
+                        {ph}, {timestamp}, {ph}, {ph},
+                        {ph}, {ph}, {ph},
+                        {timestamp}, {ph}, {ph}
+                    )
+                """
+            else:
+                query = f"""
+                    UPDATE DMS_JOBLOG
+                    SET srcrows = {ph},
+                        trgrows = {ph},
+                        errrows = {ph}
+                    WHERE joblogid = {ph}
+                """
+
+        if joblogid is None:
+            params_dict = {
+                'joblogid': joblog_id,
+                'mapref': mapref,
+                'jobid': jobid,
+                'srcrows': batch_source_rows,
+                'trgrows': batch_target_rows,
+                'errrows': batch_error_rows,
+                'prcid': prcid,
+                'sessionid': sessionid
+            }
+        else:
+            params_dict = {
+                'srcrows': batch_source_rows,
+                'trgrows': batch_target_rows,
+                'errrows': batch_error_rows,
+                'joblogid': joblog_id
+            }
+
+        # Format parameters for database
+        params = adapter.format_parameters(params_dict, use_named=True)
         
         cursor.execute(query, params)
         cursor.close()
-        debug(f"Logged batch {batch_number} progress: {batch_source_rows} source, "
-              f"{batch_target_rows} target, {batch_error_rows} errors")
+        if joblogid is None:
+            debug(f"Logged batch {batch_number} progress: {batch_source_rows} source, "
+                  f"{batch_target_rows} target, {batch_error_rows} errors")
+        else:
+            debug(f"Updated batch {batch_number} progress in JOBLOGID={joblog_id}: "
+                  f"{batch_source_rows} source, {batch_target_rows} target, {batch_error_rows} errors")
+        return joblog_id
     except Exception as log_err:
         warning(f"Could not log batch {batch_number} to DMS_JOBLOG: {log_err}")
+        return None
 
 
 def update_process_log_progress(
