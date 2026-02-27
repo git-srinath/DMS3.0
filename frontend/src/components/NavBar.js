@@ -55,6 +55,8 @@ const getPageTitle = (pathname) => {
         return 'Report Scheduler';
     case '/report_runs':
       return 'Report Runs';
+    case '/dashboard_creator':
+      return 'Dashboards';
     case '/file_upload_module':
       return 'File Upload';
     case '/file_upload_history':
@@ -89,6 +91,8 @@ const getIcon = (pathname) => {
       return <EventNoteOutlined className="w-4 h-4" />;
     case '/report_runs':
       return <HistoryOutlined className="w-4 h-4" />;
+    case '/dashboard_creator':
+      return <DescriptionOutlined className="w-4 h-4" />;
     case '/file_upload_module':
       return <DescriptionOutlined className="w-4 h-4" />;
     case '/file_upload_history':

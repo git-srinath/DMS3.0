@@ -44,7 +44,7 @@ export default function LayoutWrapper({ children }) {
                         showProfile={showProfile}
                         setShowProfile={setShowProfile}
                     />
-                    <main className="flex-1 p-3">
+                    <main className="flex-1 p-1">
                         {children}
                     </main>
                     <Notification />

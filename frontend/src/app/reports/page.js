@@ -118,6 +118,10 @@ const ReportsPage = () => {
   const [importingColumns, setImportingColumns] = useState(false);
   const [showFinalSql, setShowFinalSql] = useState(false);
   const [groupByAlert, setGroupByAlert] = useState({ show: false, fields: [] });
+  const [historyDialog, setHistoryDialog] = useState({ open: false, report: null });
+  const [historyRuns, setHistoryRuns] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(20);
 
   const showNotification = (message, severity = "info") => {
     setNotification({ open: true, message, severity });
@@ -778,6 +782,33 @@ const ReportsPage = () => {
     }
   };
 
+  const fetchReportHistory = async (reportId, limit = historyLimit) => {
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        reportId: String(reportId),
+      });
+      const response = await axios.get(`${apiBase}/api/report-runs?${params.toString()}`);
+      setHistoryRuns(response.data.data || []);
+    } catch (err) {
+      showNotification("Failed to load report history", "error");
+      setHistoryRuns([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const openHistoryDialog = async (report) => {
+    setHistoryDialog({ open: true, report });
+    await fetchReportHistory(report.reportId, historyLimit);
+  };
+
+  const closeHistoryDialog = () => {
+    setHistoryDialog({ open: false, report: null });
+    setHistoryRuns([]);
+  };
+
   if (!showReportForm) {
     return (
       <Box
@@ -868,7 +899,7 @@ const ReportsPage = () => {
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="View History">
-                          <IconButton size="small" color="info" onClick={() => window.location.href = `/report_runs?reportId=${report.reportId}`}>
+                          <IconButton size="small" color="info" onClick={() => openHistoryDialog(report)}>
                             <History fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -1184,6 +1215,112 @@ const ReportsPage = () => {
             <Button variant="contained" color="primary" onClick={handleRunReport} disabled={runningReport} startIcon={<PlayArrow />}>
               {runningReport ? "Running..." : "Run Report"}
             </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={historyDialog.open} onClose={closeHistoryDialog} fullWidth maxWidth="lg">
+          <DialogTitle>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+              <Typography variant="h6">
+                Report History: {historyDialog.report?.reportName}
+              </Typography>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <TextField
+                  size="small"
+                  type="number"
+                  label="Limit"
+                  value={historyLimit}
+                  onChange={(e) => setHistoryLimit(Number(e.target.value) || 10)}
+                  sx={{ width: 110 }}
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<Refresh />}
+                  onClick={() => {
+                    if (historyDialog.report?.reportId) {
+                      fetchReportHistory(historyDialog.report.reportId, historyLimit);
+                    }
+                  }}
+                  disabled={historyLoading}
+                >
+                  Refresh
+                </Button>
+              </Stack>
+            </Stack>
+          </DialogTitle>
+          <DialogContent dividers>
+            {historyLoading ? (
+              <Box py={4} display="flex" justifyContent="center">
+                <CircularProgress />
+              </Box>
+            ) : historyRuns.length === 0 ? (
+              <Box py={3} textAlign="center">
+                <Typography variant="body2" color="text.secondary">
+                  No report runs found for this report.
+                </Typography>
+              </Box>
+            ) : (
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Run ID</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Rows</TableCell>
+                      <TableCell>Start</TableCell>
+                      <TableCell>End</TableCell>
+                      <TableCell>Formats</TableCell>
+                      <TableCell>Message</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {historyRuns.map((run) => (
+                      <TableRow key={run.runId}>
+                        <TableCell>{run.runId}</TableCell>
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            color={
+                              run.status === "SUCCESS"
+                                ? "success"
+                                : run.status === "FAILED"
+                                ? "error"
+                                : run.status === "RUNNING"
+                                ? "info"
+                                : "default"
+                            }
+                            label={run.status}
+                          />
+                        </TableCell>
+                        <TableCell>{run.rowCount ?? "-"}</TableCell>
+                        <TableCell>{formatDateTime(run.startAt)}</TableCell>
+                        <TableCell>{formatDateTime(run.endAt)}</TableCell>
+                        <TableCell>
+                          <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                            {(run.outputFormats || []).map((format) => (
+                              <Chip key={`${run.runId}-${format}`} size="small" label={format} variant="outlined" />
+                            ))}
+                          </Stack>
+                        </TableCell>
+                        <TableCell>
+                          {run.message ? (
+                            <Tooltip title={run.message}>
+                              <span>{run.message.length > 40 ? `${run.message.slice(0, 40)}...` : run.message}</span>
+                            </Tooltip>
+                          ) : (
+                            "-"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeHistoryDialog}>Close</Button>
           </DialogActions>
         </Dialog>
 

@@ -7,7 +7,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/app/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, History, Upload, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LayoutDashboard, PieChart, Database, Settings, UserCog, Layers, Briefcase, ActivitySquare, LineChart, Code, ShieldCheck, FileText, CalendarClock, Upload, Clock } from 'lucide-react';
 import CustomDbIcon from './CustomDbIcon';
 import CustomParameterIcon from './CustomParameterIcon';
 import CustomJobsIcon from './CustomJobsIcon';
@@ -161,7 +161,7 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
   // Function to check if a sidebar item should be visible
   const isItemVisible = (item) => {
     if (!item) return false;
-    // Always show items without accessKey (Home, DB Connections, Parameters, Reports, Report Runs, User Profile)
+    // Always show items without accessKey (Home, DB Connections, Parameters, Reports, User Profile)
     if (!item.accessKey) return true;
     // Check admin-only items
     if (item.requiresAdmin && !isAdmin) return false;
@@ -300,14 +300,14 @@ const Sidebar = ({ sidebarOpen, setSidebarOpen }) => {
         /> 
         )}
 
-        {/* Report Runs - requires 'reports' access (same as Reports) */}
-        {isItemVisible({ accessKey: 'reports' }) && (
+        {/* Dashboard Creator - requires 'dashboard_creator' access */}
+        {isItemVisible({ accessKey: 'dashboard_creator' }) && (
         <SidebarItem 
-          icon={<History />} 
-          text="Report Runs" 
-          active={pathname === '/report_runs'} 
+          icon={<PieChart />} 
+          text="Dashboards" 
+          active={pathname === '/dashboard_creator'} 
           expanded={sidebarOpen}
-          href="/report_runs"
+          href="/dashboard_creator"
         /> 
         )}
 

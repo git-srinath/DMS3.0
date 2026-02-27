@@ -39,6 +39,13 @@ AVAILABLE_MODULES = [
         'group': 'report_management',
     },
     {
+        'key': 'dashboard_creator',
+        'title': 'Dashboard Creator',
+        'description': 'Create and manage business dashboards.',
+        'path': '/dashboard_creator',
+        'group': 'report_management',
+    },
+    {
         'key': 'reports',
         'title': 'Reports',
         'description': 'Define report mappings and preview outputs.',

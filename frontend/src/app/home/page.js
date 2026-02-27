@@ -167,6 +167,15 @@ const Page = () => {
       delay: 0.63,
     },
     {
+      title: 'Dashboard Creator',
+      accessKey: 'dashboard_creator',
+      path: '/dashboard_creator',
+      gradient: 'linear-gradient(135deg, #14B8A6 0%, #0F766E 100%)',
+      description: 'Create custom dashboards with charts and filters.',
+      icon: <Dashboard sx={{ fontSize: '2rem', color: '#fff' }} />,
+      delay: 0.64,
+    },
+    {
       title: 'User Profile',
       path: '/profile',
       gradient: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
@@ -225,6 +234,7 @@ const Page = () => {
   const reportTitles = [
     'Reports',
     'Report Runs',
+    'Dashboard Creator',
   ];
   const logsStatusDashboardTitles = [
     'Logs & Status',

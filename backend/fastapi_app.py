@@ -36,6 +36,9 @@ from backend.modules.license.fastapi_license import (
 from backend.modules.dashboard.fastapi_dashboard import (
     router as dashboard_router,
 )
+from backend.modules.dashboard.fastapi_dashboard_creator import (
+    router as dashboard_creator_router,
+)
 from backend.modules.admin.fastapi_access_control import (
     router as access_control_router,
 )
@@ -113,6 +116,7 @@ app.include_router(jobs_router, prefix="/job")
 app.include_router(reports_router, prefix="/api")
 app.include_router(license_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/dashboard")
+app.include_router(dashboard_creator_router, prefix="/api")
 app.include_router(access_control_router, prefix="/access-control")
 app.include_router(admin_router, prefix="/admin")
 app.include_router(security_router, prefix="/security")

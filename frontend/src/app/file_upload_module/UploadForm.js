@@ -29,6 +29,8 @@ import {
 } from '@mui/material'
 import {
   CloudUpload as CloudUploadIcon,
+  ArrowBack as ArrowBackIcon,
+  Save as SaveIcon,
   Add as AddIcon,
   Clear as ClearIcon,
   AutoAwesome as AutoAwesomeIcon,
@@ -46,7 +48,6 @@ import { message } from 'antd'
 import { useTheme } from '@/context/ThemeContext'
 import { API_BASE_URL } from '@/app/config'
 import ColumnMappingTable from './ColumnMappingTable'
-import { useSaveContext } from '@/context/SaveContext'
 import FileDataTypeDialog from './FileDataTypeDialog'
 
 // Frequency code options with descriptions
@@ -142,7 +143,6 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
   const [fileSize, setFileSize] = useState(0)
   const [tableExists, setTableExists] = useState(false)
   const [showDataTypeDialog, setShowDataTypeDialog] = useState(false)
-  const saveContext = useSaveContext()
 
   // For editing, we prefer to load the latest values from the backend (see loadExistingConfigurationDetails below),
   // so we only use `upload` here to seed the filename chip quickly.
@@ -734,28 +734,6 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
       setSaving(false)
     }
   }, [formData, columnMappings, handleReturnToUploadTable])
-  // Register global Save/Back handlers in NavBar when this form is active
-  useEffect(() => {
-    if (!saveContext || !saveContext.registerHandlers) return
-
-    saveContext.registerHandlers({
-      moduleId: 'file_upload_module',
-      onSave: handleSave,
-      onBack: handleReturnToUploadTable,
-      canSave: !saving,
-      canBack: true,
-      label: upload ? 'Update' : 'Save',
-    })
-
-    return () => {
-      if (saveContext && saveContext.clearHandlers) {
-        saveContext.clearHandlers('file_upload_module')
-      }
-    }
-  }, [saveContext, handleSave, handleReturnToUploadTable, saving, upload])
-
-
-
   return (
     <Box sx={{ width: '100%' }}>
       <Paper
@@ -770,8 +748,8 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
         <Box
           sx={{
             position: 'sticky',
-            top: 0,
-            zIndex: 2,
+            top: 48,
+            zIndex: 20,
             backgroundColor: darkMode ? alpha(muiTheme.palette.background.paper, 0.92) : alpha('#fff', 0.96),
             mb: 2,
             borderBottom: `1px solid ${darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
@@ -786,7 +764,28 @@ const UploadForm = ({ handleReturnToUploadTable, upload }) => {
             >
               Upload Configuration
             </Typography>
-            {/* Back and Save actions are provided in the global NavBar via SaveContext */}
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<ArrowBackIcon />}
+                onClick={handleReturnToUploadTable}
+                sx={{ textTransform: 'none' }}
+              >
+                Back
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
+                onClick={handleSave}
+                disabled={saving}
+                sx={{ textTransform: 'none' }}
+              >
+                {saving ? 'Saving...' : upload ? 'Update' : 'Save'}
+              </Button>
+            </Box>
           </Box>
         </Box>
 
